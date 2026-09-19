@@ -1,0 +1,441 @@
+/* ═══════════════════════════════════════════════════════════════
+   TradesTable — interactive live feed
+   Column widths pinned via <colgroup> + table-layout: fixed.
+   ═══════════════════════════════════════════════════════════════ */
+
+.container {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  background: var(--ink-1);
+  overflow: hidden;
+  position: relative;
+}
+
+.tableWrap {
+  overflow-y: auto; overflow-x: auto;
+  flex: 1; min-height: 0;
+  scrollbar-gutter: stable;
+  position: relative;
+}
+
+.freezeBadge {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 3;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+  color: var(--paper-2);
+  background: color-mix(in oklch, var(--ink-2) 88%, transparent);
+  border: 1px solid var(--line-soft);
+  pointer-events: none;
+}
+
+.table {
+  width: 100%;
+  min-width: 760px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+/* ── Column widths (percent-based, flex with table) ─────────── */
+.cTime   { width: 11%; }
+.cSide   { width: 7%;  }
+.cPrice  { width: 14%; }
+.cTokens { width: 13%; }
+.cTotal  { width: 17%; }
+.cTrader { width: 38%; }
+
+/* ── Header ──────────────────────────────────────────────────── */
+.table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--ink-2);
+  color: var(--paper-4);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  user-select: none;
+}
+.thLeft  { text-align: left; }
+.thRight { text-align: right; }
+.table thead th::after {
+  content: "";
+  position: absolute; inset: auto 0 -1px 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent,
+    color-mix(in oklch, var(--line) 80%, transparent),
+    transparent);
+  opacity: 0.6;
+}
+.thLabel {
+  display: inline-flex; align-items: center; gap: 5px;
+  vertical-align: middle;
+}
+.thRight .thLabel { justify-content: flex-end; }
+.thIcon {
+  display: inline-flex;
+  color: var(--paper-3);
+  transition: color 0.12s;
+}
+.sortable { cursor: pointer; transition: color 0.15s; }
+.sortable:hover, .sortable:hover .thIcon { color: var(--paper-2); }
+
+.thSwitch {
+  color: var(--paper-4);
+  transition: color 0.12s;
+  cursor: pointer;
+}
+.thSwitch:hover { color: var(--paper-2); }
+.thSwitchActive { color: var(--paper); }
+.thSlash { color: var(--paper-4); }
+
+.timeFilterWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+.timeFilterBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: var(--ink-0);
+  color: var(--paper-3);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.timeFilterBtn:hover {
+  color: var(--paper);
+  border-color: color-mix(in oklch, var(--accent) 35%, transparent);
+}
+.timeFilterBtnActive {
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 50%, transparent);
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}
+.timeFilterBadge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0;
+  font-family: var(--font-mono, inherit);
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timeFilterPopover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: 248px;
+  padding: 10px;
+  background: var(--ink-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px color-mix(in oklch, black 50%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+}
+.timeFilterPopoverTitle {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--paper-3);
+  text-transform: uppercase;
+}
+.timeFilterFields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.timeFilterField {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.timeFilterHint {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--paper-4);
+}
+.timeFilterInput {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--ink-0);
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  color: var(--paper);
+  outline: none;
+  font-family: var(--font-mono, inherit);
+  color-scheme: dark;
+}
+.timeFilterActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.timeFilterActionSecondary,
+.timeFilterActionPrimary {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.timeFilterActionSecondary {
+  background: transparent;
+  border: 1px solid var(--line-soft);
+  color: var(--paper-2);
+}
+.timeFilterActionSecondary:disabled {
+  color: var(--paper-4);
+  cursor: not-allowed;
+}
+.timeFilterActionPrimary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--ink-0);
+}
+
+/* ── Rows ────────────────────────────────────────────────────── */
+.table tbody tr { transition: background 0.12s; position: relative; }
+.table tbody td {
+  padding: 9px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in oklch, var(--line-soft) 40%, transparent);
+}
+.tdLeft  { text-align: left; }
+.tdRight { text-align: right; }
+
+.tradeRow:hover { background: var(--ink-2); }
+.tradeRow:hover .rowActions { opacity: 1; }
+
+/* Buy/sell accents — left edge stripe */
+.buy  td:first-child { box-shadow: inset 3px 0 0 0 var(--buy); }
+.sell td:first-child { box-shadow: inset 3px 0 0 0 var(--sell); }
+.tradeRow.buy:hover  { background: color-mix(in oklch, var(--buy-w) 60%, var(--ink-2)); }
+.tradeRow.sell:hover { background: color-mix(in oklch, var(--sell-w) 60%, var(--ink-2)); }
+
+/* Freshly arrived (WS) row flash */
+.tradeRow.fresh.buy  { animation: flashBuy  1.4s ease-out; }
+.tradeRow.fresh.sell { animation: flashSell 1.4s ease-out; }
+
+/* ── Cells ───────────────────────────────────────────────────── */
+.time {
+  color: var(--paper-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--paper);
+  letter-spacing: 0.01em;
+}
+
+.typeBuy  { color: var(--buy);  font-weight: 600; font-size: 12px; letter-spacing: 0.01em; }
+.typeSell { color: var(--sell); font-weight: 600; font-size: 12px; letter-spacing: 0.01em; }
+
+/* ── Total cell — volume bar background ──────────────────────── */
+.solCell {
+  position: relative;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.solCell::before {
+  content: "";
+  position: absolute;
+  inset: 3px 6px 3px auto;
+  right: 6px;
+  width: calc(var(--pct, 0) * 1%);
+  max-width: calc(100% - 12px);
+  border-radius: 2px;
+  background: var(--bar-color, transparent);
+  pointer-events: none;
+  opacity: 0.85;
+  transition: width 0.35s ease-out;
+}
+.solCellBuy  { --bar-color: color-mix(in oklch, var(--buy)  18%, transparent); }
+.solCellSell { --bar-color: color-mix(in oklch, var(--sell) 18%, transparent); }
+
+.solLabel {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: 6px;
+  justify-content: flex-end;
+}
+.solGlyph {
+  color: var(--paper-3);
+  font-size: 11px;
+  line-height: 0;
+  display: inline-flex;
+}
+.amountBuy  { color: var(--buy);  font-weight: 500; }
+.amountSell { color: var(--sell); font-weight: 500; }
+
+/* ── Trader cell ─────────────────────────────────────────────── */
+.traderCell {
+  text-align: right;
+}
+.walletRow {
+  display: flex; align-items: center; gap: 8px;
+  justify-content: flex-end;
+  width: 100%;
+  min-width: 0;
+}
+.addrText {
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.addrBtn {
+  background: none; border: 0; padding: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  transition: color 0.12s;
+  width: 76px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.addrBtn:hover { color: var(--accent); }
+
+.walletFlags {
+  display: inline-flex; align-items: center; justify-content: flex-start; gap: 4px;
+  flex-shrink: 0;
+  width: 64px;
+  overflow: hidden;
+}
+.rowActions {
+  display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px;
+  flex-shrink: 0;
+  width: 52px;
+  opacity: 0.45;
+  transition: opacity 0.12s;
+}
+
+/* ── Flag chips ──────────────────────────────────────────────── */
+.flag {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 9px; font-weight: 700;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: var(--r-2);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  background: color-mix(in oklch, var(--gold) 14%, transparent);
+  color: var(--gold);
+  border: 1px solid color-mix(in oklch, var(--gold) 26%, transparent);
+}
+.flagSniper {
+  background: color-mix(in oklch, var(--sell) 14%, transparent);
+  color: var(--sell);
+  border-color: color-mix(in oklch, var(--sell) 26%, transparent);
+}
+.flagDev {
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 28%, transparent);
+}
+.flagPro {
+  background: color-mix(in oklch, var(--info) 14%, transparent);
+  color: var(--info);
+  border-color: color-mix(in oklch, var(--info) 26%, transparent);
+}
+
+.tradesBadge {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px; font-weight: 700;
+  color: var(--paper-3);
+  background: var(--ink-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  padding: 0 5px;
+  line-height: 1;
+  min-width: 18px;
+  height: 17px;
+}
+
+.iconBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0;
+  width: 22px; height: 22px;
+  border-radius: var(--r-2);
+  color: var(--paper-4);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.iconBtn:hover {
+  background: var(--ink-3);
+  color: var(--paper);
+}
+
+/* ── States ──────────────────────────────────────────────────── */
+.error  { padding: 20px; color: var(--sell); text-align: center; font-size: 12px; }
+.empty  {
+  padding: 48px 16px; text-align: center;
+  color: var(--paper-3); font-size: 12px;
+}
+.emptyIcon { color: var(--paper-4); margin-bottom: 10px; display: block; }
+
+.skRow td { padding: 10px 12px; }
+
+/* ── Infinite-scroll footer ──────────────────────────────────── */
+.sentinel { height: 1px; }
+.loadMoreBar {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--paper-3);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-top: 1px solid var(--line-soft);
+  background: var(--ink-1);
+  flex-shrink: 0;
+}
+.spinner {
+  width: 12px; height: 12px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

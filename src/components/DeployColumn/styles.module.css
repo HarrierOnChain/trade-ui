@@ -1,0 +1,81 @@
+.column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card2);
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.count {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.search {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 7px;
+  width: 100px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.search:focus { border-color: var(--accent); }
+.search::placeholder { color: var(--text3); }
+
+.list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.error {
+  padding: 16px;
+  color: var(--sell);
+  font-size: 12px;
+  text-align: center;
+}
+.empty {
+  padding: 24px;
+  color: var(--text3);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Skeleton rows */
+.skeleton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.skImg   { width: 36px; height: 36px; border-radius: 4px; flex-shrink: 0; }
+.skLines { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.skLine  { height: 10px; border-radius: 3px; }

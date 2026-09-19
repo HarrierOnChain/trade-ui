@@ -1,0 +1,276 @@
+/* ═══════════════════════════════════════════════════════════════
+   HoldersTable — ranked positions
+   Column widths are pinned via <colgroup> + table-layout: fixed
+   so every header tile sits directly above its value column.
+   ═══════════════════════════════════════════════════════════════ */
+
+.container {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  background: var(--ink-1);
+  overflow: hidden;
+}
+
+.tableWrap {
+  overflow-y: auto; overflow-x: auto;
+  flex: 1; min-height: 0;
+  scrollbar-gutter: stable;
+}
+
+.table {
+  width: 100%;
+  min-width: 920px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+/* ── Column widths (percentages so they flex with the row) ──
+   Sum = 100. table-layout: fixed turns these into literal % of
+   table width; min-width on .table caps how narrow the row can
+   get before horizontal scroll kicks in. */
+.cRank    { width: 5%;  }
+.cWallet  { width: 22%; }
+.cFunding { width: 10%; }
+.cNum     { width: 13%; }
+.cPnl     { width: 11%; }
+.cHeld    { width: 19%; }
+.cAge     { width: 7%;  }
+
+/* ── Header ──────────────────────────────────────────────────── */
+.table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--ink-2);
+  color: var(--paper-4);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  user-select: none;
+}
+.thLeft  { text-align: left; }
+.thRight { text-align: right; }
+.table thead th::after {
+  content: "";
+  position: absolute; inset: auto 0 -1px 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent,
+    color-mix(in oklch, var(--line) 80%, transparent), transparent);
+  opacity: 0.6;
+}
+
+/* ── Rows ────────────────────────────────────────────────────── */
+.row { transition: background 0.12s; }
+.row:hover { background: var(--ink-2); }
+.row:hover .rowActions { opacity: 1; }
+
+.table tbody td {
+  padding: 9px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid color-mix(in oklch, var(--line-soft) 40%, transparent);
+}
+.tdLeft  { text-align: left; }
+.tdRight { text-align: right; }
+
+/* ── Rank ────────────────────────────────────────────────────── */
+.rank {
+  color: var(--paper-4);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.rankTop  { color: var(--gold); font-weight: 700; }
+.rankHigh { color: var(--paper-2); font-weight: 600; }
+
+/* ── Wallet cell ─────────────────────────────────────────────── */
+.walletRow {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.addrText {
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.addrBtn {
+  background: none; border: 0; padding: 0;
+  font: inherit; color: inherit; cursor: pointer;
+  transition: color 0.12s;
+  width: 96px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.addrBtn:hover { color: var(--accent); }
+
+.walletFlags {
+  display: inline-flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+}
+.rowActions {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+  opacity: 0.45;
+  transition: opacity 0.12s;
+}
+
+.iconBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: 0;
+  width: 22px; height: 22px;
+  border-radius: var(--r-2);
+  color: var(--paper-4);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.iconBtn:hover {
+  background: var(--ink-3);
+  color: var(--paper);
+}
+
+/* ── Flags / chips ───────────────────────────────────────────── */
+.flag {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 9px; font-weight: 700;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: var(--r-2);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  background: color-mix(in oklch, var(--gold) 14%, transparent);
+  color: var(--gold);
+  border: 1px solid color-mix(in oklch, var(--gold) 24%, transparent);
+}
+.flagSniper {
+  background: color-mix(in oklch, var(--sell) 14%, transparent);
+  color: var(--sell);
+  border-color: color-mix(in oklch, var(--sell) 24%, transparent);
+}
+.lpTag {
+  display: inline-flex; align-items: center;
+  font-family: var(--font-mono);
+  font-size: 9px; font-weight: 700;
+  color: var(--info);
+  background: color-mix(in oklch, var(--info) 12%, transparent);
+  border: 1px solid color-mix(in oklch, var(--info) 28%, transparent);
+  border-radius: var(--r-2);
+  padding: 0 5px;
+  height: 17px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+.tradesBadge {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px; font-weight: 700;
+  color: var(--paper-2);
+  background: var(--ink-3);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  padding: 0 5px;
+  min-width: 18px;
+  height: 17px;
+  line-height: 1;
+}
+
+/* ── Numeric stack cells (Bought / Sold / Held) ────────────── */
+.stack {
+  display: flex; flex-direction: column;
+  align-items: flex-end;
+  gap: 1px; line-height: 1.25;
+}
+.primary {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--paper);
+  letter-spacing: 0.01em;
+}
+.sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--paper-4);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.dim { color: var(--paper-3); }
+.sol {
+  color: var(--paper-3);
+  margin-right: 2px;
+  font-size: 10.5px;
+  display: inline-flex;
+  line-height: 0;
+  vertical-align: -1px;
+}
+
+.buyCount  { color: var(--buy);  font-weight: 600; }
+.sellCount { color: var(--sell); font-weight: 600; }
+
+/* ── PnL ─────────────────────────────────────────────────────── */
+.profit, .loss, .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.profit { color: var(--buy);  font-weight: 600; }
+.loss   { color: var(--sell); font-weight: 600; }
+.mono   { color: var(--paper); }
+
+/* ── Held % bar (full cell width, right-anchored) ──────────── */
+.pctWrap {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%;
+}
+.pctBarBg {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  background: var(--ink-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.pctBar {
+  position: absolute; inset: 0 auto 0 0;
+  border-radius: 2px;
+  transition: width 0.3s ease-out;
+}
+.pctLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  min-width: 46px;
+  text-align: right;
+  letter-spacing: 0.02em;
+}
+
+/* ── Funding cell ────────────────────────────────────────────── */
+.fundingCell { display: flex; align-items: center; }
+
+/* ── States ──────────────────────────────────────────────────── */
+.error  { padding: 20px; color: var(--sell); text-align: center; font-size: 12px; }
+.empty  {
+  padding: 40px 16px; text-align: center;
+  color: var(--paper-3); font-size: 12px;
+}
+.emptyIcon { color: var(--paper-4); margin-bottom: 8px; display: block; }
+
+.skRow td { padding: 10px 12px; }
+.sentinel { height: 1px; }

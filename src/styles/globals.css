@@ -1,0 +1,892 @@
+/* ═══════════════════════════════════════════════════════════════
+   RAZE TERMINAL · design tokens
+   warm-dark editorial terminal
+   ═══════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@100;200;300;400;500;600;700;800;900&display=swap');
+
+:root {
+  /* ── surfaces ─────────────────────────────────────────── */
+  --ink-0:  oklch(0.14 0.006 65);   /* page */
+  --ink-1:  oklch(0.17 0.006 65);   /* panel */
+  --ink-2:  oklch(0.20 0.007 65);   /* raised */
+  --ink-3:  oklch(0.24 0.008 65);   /* hover */
+  --line:   oklch(0.28 0.008 65);   /* borders */
+  --line-soft: oklch(0.22 0.007 65);
+
+  /* ── text ─────────────────────────────────────────────── */
+  --paper:  oklch(0.96 0.012 85);   /* primary text, warm cream */
+  --paper-2: oklch(0.82 0.010 82);  /* secondary */
+  --paper-3: oklch(0.60 0.008 80);  /* tertiary */
+  --paper-4: oklch(0.44 0.006 75);  /* quiet */
+
+  /* ── accents ──────────────────────────────────────────── */
+  /* Brand accent — green default (#3DD96F). Use --buy for trading-green semantics. */
+  --accent:   #3DD96F;
+  --accent-d: #2BAA56;
+  --accent-w: rgb(61 217 111 / 0.14);
+
+  --gold:   oklch(0.82 0.17 72);
+  --gold-d: oklch(0.68 0.15 72);
+  --gold-w: oklch(0.82 0.17 72 / 0.14);
+
+  /* amber — used by the Auth gate to brand the sign-in screen. */
+  --amber:   #3DD96F;
+  --amber-d: #2BAA56;
+  --amber-w: rgb(61 217 111 / 0.14);
+
+  /* semantic — buy stays a real green (charts, PnL, buy buttons). */
+  --buy:    oklch(0.78 0.16 150);
+  --buy-w:  oklch(0.78 0.16 150 / 0.13);
+  --sell:   oklch(0.68 0.19 25);
+  --sell-w: oklch(0.68 0.19 25 / 0.13);
+  --warn:   oklch(0.80 0.14 85);
+  --info:   oklch(0.75 0.10 230);
+
+  /* dex colors */
+  --dex-pump:    var(--buy);
+  --dex-mayhem:  #A413E5;
+  --dex-meteora: oklch(0.70 0.17 25);
+  --dex-raydium: oklch(0.78 0.12 210);
+  --dex-orca:    oklch(0.80 0.14 170);
+
+  /* ── type ─────────────────────────────────────────────── */
+  --font-ui:   "Geist", -apple-system, system-ui, sans-serif;
+  --font-mono: "Geist", -apple-system, system-ui, sans-serif;
+  --font-dis:  "Geist", -apple-system, system-ui, sans-serif;
+
+  /* legacy aliases (used by existing components) */
+  --bg:         var(--ink-0);
+  --card:       var(--ink-1);
+  --card2:      var(--ink-2);
+  --border:     var(--line);
+  --text:       var(--paper);
+  --text2:      var(--paper-2);
+  --text3:      var(--paper-3);
+  --accent-dim: var(--accent-w);
+  --warning:    var(--warn);
+  --font:       var(--font-ui);
+  /* uikit compat: any imported atom referencing --green resolves to brand accent */
+  --green:      var(--accent);
+
+  /* ── scale ────────────────────────────────────────────── */
+  --t-10: 10px; --t-11: 11px; --t-12: 12px; --t-13: 13px;
+  --t-14: 14px; --t-16: 16px; --t-18: 18px; --t-22: 22px;
+  --t-l:  28px;
+
+  /* ── radii ────────────────────────────────────────────── */
+  --r-1: 2px; --r-2: 4px; --r-3: 6px; --r-4: 10px; --r-5: 14px;
+
+  /* ── shadows ──────────────────────────────────────────── */
+  --shadow-sm: 0 1px 0 oklch(0 0 0 / 0.4), 0 0 0 1px var(--line-soft);
+  --shadow-md: 0 8px 24px -12px oklch(0 0 0 / 0.6), 0 0 0 1px var(--line);
+  --shadow-pop: 0 24px 48px -16px oklch(0 0 0 / 0.7), 0 0 0 1px var(--line);
+  --glow-accent: 0 0 0 1px var(--accent), 0 0 24px -4px var(--accent-w);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; font-family: var(--font-ui); }
+
+html, body {
+  background: var(--ink-0);
+  color: var(--paper);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  height: 100%;
+  overflow: hidden;
+}
+body { letter-spacing: -0.005em; }
+
+/* density modes */
+[data-density="compact"] { font-size: 12px; }
+[data-density="normal"]  { font-size: 13px; }
+[data-density="comfy"]   { font-size: 14px; }
+
+/* numbers always mono & tabular */
+.num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.ser { font-family: var(--font-dis); letter-spacing: -0.01em; }
+
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+input, textarea { font-family: inherit; color: inherit; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ink-3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--line); }
+
+/* ── motion ───────────────────────────────────────────────── */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes flashgreen {
+  0%   { background: var(--accent-w); }
+  100% { background: transparent; }
+}
+@keyframes flashBuy {
+  0%   { background: var(--buy-w); }
+  100% { background: transparent; }
+}
+@keyframes flashSell {
+  0%   { background: var(--sell-w); }
+  100% { background: transparent; }
+}
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+@keyframes flashPrice {
+  0%   { filter: brightness(1.6) saturate(1.3); }
+  100% { filter: brightness(1) saturate(1); }
+}
+/* ── Shared celebration overlay (DEX paid, migration, …) ───────────── */
+@keyframes celebration-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes celebration-card-in {
+  0%   { opacity: 0; transform: scale(0.85) translateY(8px); }
+  60%  { opacity: 1; transform: scale(1.04)  translateY(0); }
+  100% { opacity: 1; transform: scale(1)     translateY(0); }
+}
+@keyframes celebration-glow {
+  0%, 100% { box-shadow: 0 0 0 1px currentColor, 0 0 40px -4px currentColor; }
+  50%      { box-shadow: 0 0 0 1px currentColor, 0 0 88px  0   currentColor; }
+}
+/* Confetti uses CSS variables (--tx, --rot, --dur, --delay) per particle so
+ * one keyframe handles every confetti without per-particle stylesheets. */
+@keyframes celebration-confetti-fall {
+  0%   { transform: translate3d(0, -10vh, 0) rotate(0); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translate3d(var(--tx, 0), 110vh, 0) rotate(var(--rot, 720deg)); opacity: 0; }
+}
+@keyframes celebration-progress {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer {
+  0%   { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+@keyframes dropdownPop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes marqueeScroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes tooltipIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes quickBuyIn {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes quickBuyPulse {
+  0%, 100% { box-shadow:
+    -14px 0 28px -6px oklch(0 0 0 / 0.7),
+    -2px 0 6px -2px oklch(0 0 0 / 0.55),
+    inset 1px 0 0 color-mix(in oklch, var(--accent) 70%, transparent),
+    inset 0 0 24px -4px color-mix(in oklch, var(--accent) 28%, transparent); }
+  50%      { box-shadow:
+    -16px 0 36px -4px oklch(0 0 0 / 0.75),
+    -2px 0 8px -2px oklch(0 0 0 / 0.6),
+    inset 1px 0 0 color-mix(in oklch, var(--accent) 90%, transparent),
+    inset 0 0 36px -4px color-mix(in oklch, var(--accent) 42%, transparent); }
+}
+@keyframes quickBuyBoltSpin {
+  0%   { transform: rotate(0); }
+  60%  { transform: rotate(-14deg) scale(1.18); }
+  100% { transform: rotate(0) scale(1); }
+}
+@keyframes radialFanIn {
+  from { opacity: 0; transform: scaleX(0.08); }
+  to   { opacity: 1; transform: scaleX(1); }
+}
+.radial-quick-buy-svg {
+  animation: radialFanIn 130ms ease-out;
+  transform-origin: left center;
+}
+.radial-quick-sell-svg {
+  animation: radialFanIn 130ms ease-out;
+  transform-origin: right center;
+}
+.radial-quick-sell-sector path {
+  transition: fill 90ms, stroke 90ms;
+}
+.radial-quick-sell-sector:hover path {
+  fill: color-mix(in oklch, var(--sell) 30%, var(--ink-1));
+  stroke: var(--sell);
+}
+.radial-quick-buy-sector path {
+  transition: fill 90ms, stroke 90ms;
+}
+.radial-quick-buy-sector:hover path {
+  fill: color-mix(in oklch, var(--accent) 30%, var(--ink-1));
+  stroke: var(--accent);
+}
+
+.quick-buy-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  background: transparent;
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  border: 0;
+  border-left: 1px solid color-mix(in oklch, var(--accent) 35%, transparent);
+  box-shadow:
+    -12px 0 24px -8px oklch(0 0 0 / 0.65),
+    -2px 0 6px -2px oklch(0 0 0 / 0.55),
+    inset 1px 0 0 oklch(1 0 0 / 0.06);
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  animation: quickBuyIn 140ms ease-out;
+  transition: border-left-color 140ms, color 140ms, padding 140ms;
+}
+.quick-buy-overlay:hover,
+.quick-buy-overlay:focus-visible {
+  outline: none;
+  padding: 0 18px;
+  border-left-color: color-mix(in oklch, var(--accent) 75%, transparent);
+  color: color-mix(in oklch, var(--accent) 85%, var(--paper) 15%);
+  animation: quickBuyIn 140ms ease-out, quickBuyPulse 1.4s ease-in-out 140ms infinite;
+}
+.quick-buy-overlay:hover .quick-buy-overlay__icon {
+  animation: quickBuyBoltSpin 600ms ease-out infinite;
+}
+.quick-buy-overlay:active {
+  transform: scale(0.97);
+  transition: transform 80ms;
+}
+
+/* Inline ⚡ buttons in the wallet sidebar (Sidebar.tsx WalletRow). Resting
+   state shows a subtle radial gradient; hover ramps it up and spins the
+   bolt. Two tones — `.sidebar-bolt-buy` (green) and `.sidebar-bolt-sell`
+   (red) — share a base ruleset and override the accent colors. */
+.sidebar-bolt-btn {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition:
+    background 160ms ease-out,
+    border-color 160ms ease-out,
+    box-shadow 200ms ease-out,
+    transform 80ms ease-out,
+    color 160ms ease-out;
+  overflow: visible;
+}
+.sidebar-bolt-btn:disabled {
+  cursor: not-allowed;
+  background: var(--ink-2);
+  color: var(--paper-4);
+  border-color: transparent;
+  box-shadow: none;
+}
+.sidebar-bolt-btn > svg {
+  position: relative;
+  z-index: 1;
+  transition: transform 160ms ease-out;
+}
+.sidebar-bolt-btn:not(:disabled):active {
+  transform: scale(0.92);
+}
+
+.sidebar-bolt-buy {
+  background: radial-gradient(
+    circle at 30% 30%,
+    color-mix(in oklch, var(--accent) 32%, transparent) 0%,
+    color-mix(in oklch, var(--accent) 14%, transparent) 55%,
+    transparent 100%
+  );
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 28%, transparent);
+}
+.sidebar-bolt-buy:not(:disabled):hover,
+.sidebar-bolt-buy:not(:disabled):focus-visible {
+  outline: none;
+  background: radial-gradient(
+    circle at 30% 30%,
+    color-mix(in oklch, var(--accent) 65%, transparent) 0%,
+    color-mix(in oklch, var(--accent) 30%, transparent) 60%,
+    transparent 100%
+  );
+  border-color: color-mix(in oklch, var(--accent) 70%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--accent) 35%, transparent),
+    0 0 14px -2px color-mix(in oklch, var(--accent) 50%, transparent),
+    inset 0 0 8px -2px color-mix(in oklch, var(--accent) 40%, transparent);
+  color: color-mix(in oklch, var(--accent) 80%, var(--paper) 20%);
+}
+.sidebar-bolt-buy:not(:disabled):hover > svg,
+.sidebar-bolt-buy:not(:disabled):focus-visible > svg {
+  animation: quickBuyBoltSpin 700ms ease-out infinite;
+}
+
+.sidebar-bolt-sell {
+  background: radial-gradient(
+    circle at 70% 30%,
+    color-mix(in oklch, var(--sell, #f87171) 28%, transparent) 0%,
+    color-mix(in oklch, var(--sell, #f87171) 12%, transparent) 55%,
+    transparent 100%
+  );
+  color: var(--sell, #f87171);
+  border-color: color-mix(in oklch, var(--sell, #f87171) 26%, transparent);
+}
+.sidebar-bolt-sell:not(:disabled):hover,
+.sidebar-bolt-sell:not(:disabled):focus-visible {
+  outline: none;
+  background: radial-gradient(
+    circle at 70% 30%,
+    color-mix(in oklch, var(--sell, #f87171) 60%, transparent) 0%,
+    color-mix(in oklch, var(--sell, #f87171) 28%, transparent) 60%,
+    transparent 100%
+  );
+  border-color: color-mix(in oklch, var(--sell, #f87171) 70%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--sell, #f87171) 35%, transparent),
+    0 0 14px -2px color-mix(in oklch, var(--sell, #f87171) 50%, transparent),
+    inset 0 0 8px -2px color-mix(in oklch, var(--sell, #f87171) 40%, transparent);
+  color: color-mix(in oklch, var(--sell, #f87171) 80%, var(--paper) 20%);
+}
+.sidebar-bolt-sell:not(:disabled):hover > svg,
+.sidebar-bolt-sell:not(:disabled):focus-visible > svg {
+  animation: quickBuyBoltSpin 700ms ease-out infinite;
+}
+
+/* Hover-only fan-out preset menu. The bolt button stays at the row's
+   left/right edge; on hover, three pill buttons fan out radially with
+   the user's 2nd/3rd/4th preset values from `instantPresets[active]`.
+   The wrap gets z-index bump on hover so the fan layers above adjacent
+   rows. */
+.sidebar-bolt-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.sidebar-bolt-wrap:hover,
+.sidebar-bolt-wrap:focus-within {
+  z-index: 8;
+}
+
+/* The fan is rendered to document.body via a portal, so it can spread
+   wherever it likes without being clipped by the wallet list's
+   `overflow: auto` or covered by the SOL header above. `left` / `top`
+   come in inline (centered on the bolt's getBoundingClientRect). */
+.sidebar-bolt-fan {
+  position: fixed;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 50;
+  transition: opacity 110ms ease-out;
+}
+.sidebar-bolt-fan-open {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 30ms;
+}
+
+.sidebar-bolt-preset {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 34px;
+  height: 22px;
+  margin: -11px 0 0 -17px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  /* Rest at origin so the open animation comes from under the bolt. */
+  transform: rotate(0deg) translateX(0) rotate(0deg);
+  transition:
+    transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    background 140ms,
+    border-color 140ms,
+    color 140ms,
+    box-shadow 160ms;
+}
+
+/* Buy fan — opens eastward (into the row). Preset pills carry their own
+   solid dark fill (no wide row-spanning backdrop) so the SOL header
+   stays visible above the wallet list when a row is hovered. */
+.sidebar-bolt-fan-buy .sidebar-bolt-preset {
+  background:
+    radial-gradient(circle at 30% 30%,
+      color-mix(in oklch, var(--accent) 22%, transparent) 0%,
+      transparent 70%),
+    var(--ink-1);
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  color: color-mix(in oklch, var(--accent) 82%, var(--paper) 18%);
+  box-shadow:
+    0 4px 14px -4px oklch(0 0 0 / 0.6),
+    inset 0 0 0 1px oklch(0 0 0 / 0.2);
+}
+.sidebar-bolt-fan-buy .sidebar-bolt-preset:hover {
+  background:
+    radial-gradient(circle at 30% 30%,
+      color-mix(in oklch, var(--accent) 55%, transparent) 0%,
+      color-mix(in oklch, var(--accent) 18%, transparent) 70%,
+      transparent 100%),
+    var(--ink-1);
+  border-color: color-mix(in oklch, var(--accent) 90%, transparent);
+  color: var(--paper);
+  box-shadow:
+    0 0 10px -1px color-mix(in oklch, var(--accent) 55%, transparent),
+    0 4px 14px -4px oklch(0 0 0 / 0.7);
+}
+.sidebar-bolt-fan-open.sidebar-bolt-fan-buy .p1 {
+  transform: rotate(-35deg) translateX(32px) rotate(35deg);
+}
+.sidebar-bolt-fan-open.sidebar-bolt-fan-buy .p2 {
+  transform: rotate(0deg) translateX(36px);
+}
+.sidebar-bolt-fan-open.sidebar-bolt-fan-buy .p3 {
+  transform: rotate(35deg) translateX(32px) rotate(-35deg);
+}
+
+/* Sell fan — opens westward (into the row). */
+.sidebar-bolt-fan-sell .sidebar-bolt-preset {
+  background:
+    radial-gradient(circle at 70% 30%,
+      color-mix(in oklch, var(--sell, #f87171) 22%, transparent) 0%,
+      transparent 70%),
+    var(--ink-1);
+  border-color: color-mix(in oklch, var(--sell, #f87171) 55%, transparent);
+  color: color-mix(in oklch, var(--sell, #f87171) 85%, var(--paper) 15%);
+  box-shadow:
+    0 4px 14px -4px oklch(0 0 0 / 0.6),
+    inset 0 0 0 1px oklch(0 0 0 / 0.2);
+}
+.sidebar-bolt-fan-sell .sidebar-bolt-preset:hover {
+  background:
+    radial-gradient(circle at 70% 30%,
+      color-mix(in oklch, var(--sell, #f87171) 55%, transparent) 0%,
+      color-mix(in oklch, var(--sell, #f87171) 18%, transparent) 70%,
+      transparent 100%),
+    var(--ink-1);
+  border-color: color-mix(in oklch, var(--sell, #f87171) 90%, transparent);
+  color: var(--paper);
+  box-shadow:
+    0 0 10px -1px color-mix(in oklch, var(--sell, #f87171) 55%, transparent),
+    0 4px 14px -4px oklch(0 0 0 / 0.7);
+}
+.sidebar-bolt-fan-open.sidebar-bolt-fan-sell .p1 {
+  transform: rotate(-145deg) translateX(32px) rotate(145deg);
+}
+.sidebar-bolt-fan-open.sidebar-bolt-fan-sell .p2 {
+  transform: rotate(180deg) translateX(36px) rotate(-180deg);
+}
+.sidebar-bolt-fan-open.sidebar-bolt-fan-sell .p3 {
+  transform: rotate(145deg) translateX(32px) rotate(-145deg);
+}
+.marquee-mask {
+  position: relative;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+.marquee-track {
+  display: inline-flex;
+  width: max-content;
+  animation: marqueeScroll linear infinite;
+  will-change: transform;
+}
+.marquee-mask:hover .marquee-track { animation-play-state: paused; }
+
+.new-in { animation: slideIn 280ms cubic-bezier(0.16, 1, 0.3, 1), flashgreen 1.4s ease-out; }
+
+/* ── Toast rail / cards ───────────────────────────────────────────────
+   Bottom-right stack, newest closest to the corner via column-reverse.
+   The rail itself is click-through; only the cards capture pointer
+   events so the floating trade panel and other UI underneath stay
+   reachable. */
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(20px) translateY(2px); filter: blur(2px); }
+  to   { opacity: 1; transform: translateX(0)   translateY(0);   filter: blur(0); }
+}
+@keyframes toastProgress {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+.toast-rail {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  z-index: 60;
+  pointer-events: none;
+  max-height: calc(100vh - 80px);
+  overflow: visible;
+}
+
+.toast-card {
+  --toast-accent: var(--accent);
+  --toast-accent-w: var(--accent-w);
+  --toast-duration: 4200ms;
+
+  position: relative;
+  min-width: 240px;
+  max-width: 420px;
+  padding: 7px 14px 8px 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+
+  font-family: var(--font-ui);
+  color: var(--paper);
+  background: color-mix(in oklch, var(--ink-1) 88%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  box-shadow:
+    0 14px 32px -18px oklch(0 0 0 / 0.7),
+    0 2px 6px -2px oklch(0 0 0 / 0.5),
+    inset 0 1px 0 oklch(1 0 0 / 0.04),
+    -10px 0 28px -18px var(--toast-accent-w);
+  pointer-events: auto;
+  overflow: hidden;
+  isolation: isolate;
+  animation: toastIn 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.toast-card--buy  { --toast-accent: var(--buy);   --toast-accent-w: var(--buy-w); }
+.toast-card--sell { --toast-accent: var(--sell);  --toast-accent-w: var(--sell-w); }
+
+.toast-card__rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: var(--toast-accent);
+  box-shadow:
+    0 0 12px -1px var(--toast-accent),
+    inset 0 0 6px var(--toast-accent);
+}
+
+.toast-card__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--toast-accent);
+  box-shadow: 0 0 8px -1px var(--toast-accent);
+  flex-shrink: 0;
+}
+
+.toast-card__kicker-tone {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--toast-accent);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.toast-card__kicker-sep {
+  color: var(--paper-4);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.toast-card__title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-2);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.toast-card__msg {
+  font-size: 12px;
+  color: var(--paper);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toast-card__mute {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -1px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--paper-4);
+  cursor: pointer;
+  transition: color 140ms, background 140ms, border-color 140ms;
+}
+.toast-card__mute:hover {
+  color: var(--sell);
+  background: var(--sell-w);
+  border-color: color-mix(in oklch, var(--sell) 35%, transparent);
+}
+.toast-card__mute[aria-pressed="true"] {
+  color: var(--accent);
+  cursor: default;
+  background: transparent;
+  border-color: transparent;
+}
+
+.toast-card__progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1px;
+  transform-origin: left center;
+  background: linear-gradient(
+    to right,
+    var(--toast-accent) 0%,
+    color-mix(in oklch, var(--toast-accent) 50%, transparent) 100%
+  );
+  opacity: 0.7;
+  animation: toastProgress var(--toast-duration) linear forwards;
+}
+.flash-buy  { animation: flashBuy  1.2s ease-out; }
+.flash-sell { animation: flashSell 1.2s ease-out; }
+.new-token-card { animation: slideIn 280ms cubic-bezier(0.16, 1, 0.3, 1), flashgreen 1.4s ease-out; }
+
+.dot-live {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--buy); animation: pulseDot 1.8s ease-in-out infinite;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--ink-1) 25%, var(--ink-2) 50%, var(--ink-1) 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.2s infinite linear;
+  border-radius: var(--r-2);
+}
+
+/* ── utility ──────────────────────────────────────────────── */
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.eyebrow {
+  font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--paper-3);
+}
+.rule { height: 1px; background: var(--line-soft); }
+.vrule { width: 1px; background: var(--line-soft); align-self: stretch; }
+.kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  font-family: var(--font-mono); font-size: 10px; color: var(--paper-2);
+  background: var(--ink-1);
+}
+
+/* Hide the per-column search input when the column is too narrow (e.g. high zoom). */
+@container (max-width: 320px) {
+  [data-col-search] { display: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE · MOBILE FOUNDATION
+   ───────────────────────────────────────────────────────────────
+   Breakpoint contract — MUST mirror src/hooks/useMediaQuery.ts:
+     phone  : (max-width: 480px)   — aggressive condensing
+     mobile : (max-width: 768px)   — tablet-and-below = "mobile chrome"
+   Inline styles can't express @media, so breakpoint-varying *values*
+   are published as CSS custom props here and read via var() inline;
+   structural layout flips use the useIsMobile()/useIsPhone() hooks.
+   This block is purely ADDITIVE — it only adds new tokens/utilities and
+   never rewrites the desktop defaults above.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* safe-area insets (0 on devices without a notch / home indicator) */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+
+  /* breakpoint-varying scalar tokens (desktop defaults; overridden below) */
+  --pad-x: 24px;          /* page horizontal padding */
+  --pad-y: 20px;          /* page vertical padding */
+  --gap:   12px;          /* default grid/flex gap */
+
+  /* z-index scale — single source of truth for stacking */
+  --z-drawer:   35;       /* mobile sidebar drawer (below modals) */
+  --z-dropdown: 50;       /* menus / popovers */
+  --z-modal:    40;       /* Modal + BottomSheet (matches existing Modal) */
+  --z-toast:    60;       /* toast rail (above modals) */
+}
+
+@media (max-width: 768px) {
+  :root { --pad-x: 14px; --pad-y: 14px; --gap: 10px; }
+}
+@media (max-width: 480px) {
+  :root { --pad-x: 12px; --pad-y: 12px; }
+}
+
+/* dvh-aware full height (falls back to vh on browsers without dvh) */
+.app-vh    { height: 100vh; height: 100dvh; }
+.app-minvh { min-height: 100vh; min-height: 100dvh; }
+
+/* opt-in scroll containers (pages use these instead of inheriting overflow:hidden) */
+.app-scroll {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+/* keep horizontal scrollability on dense mobile strips but hide the scrollbar */
+.scroll-x-hide { scrollbar-width: none; -ms-overflow-style: none; }
+.scroll-x-hide::-webkit-scrollbar { display: none; }
+
+/* generic responsive show/hide helpers */
+@media (max-width: 768px) { .hide-mobile { display: none !important; } }
+@media (max-width: 480px) { .hide-phone  { display: none !important; } }
+@media (min-width: 769px) { .only-mobile { display: none !important; } }
+
+/* touch-device affordances */
+@media (pointer: coarse) {
+  .tap-target { min-width: 44px; min-height: 44px; }
+}
+@media (hover: none) {
+  /* reveal hover-only row actions on touch devices */
+  .row-actions-hover { opacity: 1 !important; }
+}
+
+/* ── sidebar drawer (mobile overlay) ──────────────────────────────── */
+.drawer-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-drawer);
+  background: oklch(0.08 0.005 65 / 0.6);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+  animation: drawerFade 160ms ease-out;
+}
+.drawer-panel {
+  position: fixed; top: 0; left: 0; bottom: 0;
+  z-index: calc(var(--z-drawer) + 1);
+  max-width: 86vw;
+  padding-top: var(--safe-t);
+  padding-bottom: var(--safe-b);
+  padding-left: var(--safe-l);
+  box-shadow: var(--shadow-pop);
+  animation: drawerSlideIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes drawerFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes drawerSlideIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+
+/* ── bottom sheet (mobile Modal variant) ──────────────────────────── */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  background: oklch(0.08 0.005 65 / 0.7);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: flex; align-items: flex-end; justify-content: center;
+  animation: drawerFade 160ms ease-out;
+}
+.sheet-panel {
+  width: 100%;
+  max-height: 92vh; max-height: 92dvh;
+  background: var(--ink-1);
+  border: 1px solid var(--line); border-bottom: 0;
+  border-top-left-radius: 16px; border-top-right-radius: 16px;
+  box-shadow: var(--shadow-pop);
+  display: flex; flex-direction: column;
+  padding-bottom: var(--safe-b);
+  animation: sheetUp 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.sheet-grabber {
+  width: 36px; height: 4px; border-radius: 999px;
+  background: var(--line); margin: 8px auto 4px; flex-shrink: 0;
+}
+
+/* ── responsive table → card flip (≤480px) ───────────────────────────
+   Add class "table-cards" to a <table>, and data-label="Header" to each
+   <td>. On phones the table becomes a stack of cards with label/value rows.
+   Cells that should stay full-width (e.g. an embedded chart) get
+   data-label="" to suppress the label pseudo-element. */
+@media (max-width: 480px) {
+  .table-cards thead { display: none; }
+  .table-cards, .table-cards tbody, .table-cards tr, .table-cards td { display: block; width: auto; }
+  /* Neutralise any per-module `min-width` on the table so it can't force a
+     horizontal scroll once flipped to card layout (overrides one-class module
+     rules regardless of stylesheet order). */
+  .table-cards { min-width: 0 !important; max-width: 100%; }
+  .table-cards tr {
+    border: 1px solid var(--line-soft); border-radius: 8px;
+    margin-bottom: 8px; padding: 8px 10px; background: var(--ink-1);
+  }
+  .table-cards td {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 3px 0; border: 0; text-align: right; white-space: normal;
+  }
+  .table-cards td::before {
+    content: attr(data-label);
+    color: var(--paper-3); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; text-align: left; flex-shrink: 0;
+  }
+  /* Suppress the label pseudo-element on full-width cells (data-label="") AND
+     on status/loading/colSpan cells that carry no data-label attribute at all,
+     so they don't render an empty label box. */
+  .table-cards td[data-label=""]::before,
+  .table-cards td:not([data-label])::before { content: none; }
+  .table-cards td:not([data-label]) { justify-content: flex-start; }
+}
+
+/* ── chrome / overlay mobile adjustments ─────────────────────────────── */
+@media (max-width: 768px) {
+  /* toast rail: shrink and lift above the status footer + home indicator */
+  .toast-rail {
+    bottom: max(12px, calc(var(--safe-b) + 40px));
+    right: max(10px, var(--safe-r));
+    left: max(10px, var(--safe-l));
+    align-items: stretch;
+  }
+  .toast-card { min-width: 0; max-width: 100%; }
+}
+@media (max-width: 480px) {
+  /* per-column search already hidden by the @container rule above on narrow
+     columns; nothing extra needed here. */
+  .toast-rail { bottom: max(10px, calc(var(--safe-b) + 36px)); }
+}

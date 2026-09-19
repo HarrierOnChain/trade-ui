@@ -1,0 +1,95 @@
+.wrap {
+  position: relative;
+  flex: 1;
+  max-width: 360px;
+}
+
+.input {
+  width: 100%;
+  background: var(--bg, #0A0A0A);
+  border: 1px solid var(--border, #252525);
+  border-radius: 4px;
+  color: var(--text, #fff);
+  font-size: 12px;
+  padding: 5px 10px;
+  outline: none;
+  transition: border-color 0.15s;
+  font-family: inherit;
+}
+.input:focus { border-color: var(--accent, #BA49EE); }
+.input::placeholder { color: var(--text3, #555); }
+
+.spinner {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px;
+  height: 12px;
+  border: 2px solid #333;
+  border-top-color: var(--accent, #BA49EE);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: translateY(-50%) rotate(360deg); } }
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--card, #141414);
+  border: 1px solid var(--border, #252525);
+  border-radius: 6px;
+  max-height: 320px;
+  /* Never spill horizontally past the viewport on phones. */
+  max-width: calc(100vw - 16px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: none;
+  color: var(--text, #fff);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  border-bottom: 1px solid var(--border, #252525);
+  transition: background 0.1s;
+}
+.row:last-child { border-bottom: none; }
+.row:hover,
+.rowActive { background: rgba(255,255,255,0.04); }
+
+.symbol  { font-weight: 700; flex-shrink: 0; }
+.name    { color: var(--text2, #888); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platform { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; flex-shrink: 0; }
+.mint    { font-size: 10px; color: var(--text3, #555); font-family: "Geist", -apple-system, system-ui, sans-serif; flex-shrink: 0; }
+
+/* On phones let the symbol/mint shrink so the row never bumps off-screen. */
+@media (max-width: 480px) {
+  /* Phone-only: drop the dropdown under modals/sheets via the z-scale.
+     Desktop keeps its original z-index: 100. */
+  .dropdown { z-index: var(--z-dropdown, 50); }
+  .row { gap: 6px; }
+  .symbol { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mint { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+.empty {
+  padding: 14px;
+  text-align: center;
+  color: var(--text3, #555);
+  font-size: 12px;
+}

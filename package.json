@@ -1,0 +1,35 @@
+{
+  "name": "trade-ui",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Self-hosted multi-chain trading UI for the Raze market-data API",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "NODE_ENV=production node server.cjs",
+    "electron": "electron .",
+    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3000 && env TRADE_UI_URL=http://127.0.0.1:3000 electron .\""
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "@razedotbot/charts": "^0.5.0",
+    "@solana/web3.js": "^1.98.4",
+    "lightweight-charts": "^5.2.0",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-rnd": "^10.5.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1",
+    "concurrently": "^9.1.2",
+    "electron": "^37.2.0",
+    "typescript": "^5.7.3",
+    "wait-on": "^8.0.3"
+  }
+}

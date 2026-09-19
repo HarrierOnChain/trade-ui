@@ -1,0 +1,265 @@
+"use client";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
+import { RazeWebSocket } from "../api/websocket";
+import { friendlyFetchError } from "../api/chainError";
+import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
+import type { Trade } from "../types";
+
+const PAGE = 50;
+const CAP  = 500; // soft cap so infinite scroll can't balloon memory
+
+export type TradeTimeRange = { fromMs?: number | null; toMs?: number | null };
+
+function timeRangeActive(range?: TradeTimeRange | null): boolean {
+  return (
+    (range?.fromMs != null && isFinite(range.fromMs)) ||
+    (range?.toMs != null && isFinite(range.toMs))
+  );
+}
+
+type TradesResponse = {
+  data?: Trade[];
+  trades?: unknown[];
+  nextCursor?: string | null;
+  hasMore?: boolean;
+};
+
+// Solana returns the camelCase contract under { data: [...] }.
+function extractTrades(res: TradesResponse | null | undefined): Trade[] {
+  return Array.isArray(res?.data) ? res!.data : [];
+}
+
+function tradeTimestampMs(raw: string | number): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!isNaN(n) && n > 0) return n > 1e15 ? n / 1000 : n > 1e12 ? n : n * 1000;
+  return new Date(raw as string).getTime();
+}
+
+function sortTrades(trades: Trade[], sort: "asc" | "desc"): Trade[] {
+  return [...trades].sort((a, b) => {
+    const ta = tradeTimestampMs(a.timestamp);
+    const tb = tradeTimestampMs(b.timestamp);
+    return sort === "asc" ? ta - tb : tb - ta;
+  });
+}
+
+function mergeTrades(existing: Trade[], incoming: Trade[]): Trade[] {
+  const seen = new Set<string>();
+  const out: Trade[] = [];
+  const push = (t: Trade) => {
+    const key = t.signature || `${t.signer}:${t.timestamp}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  };
+  for (const t of existing) push(t);
+  for (const t of incoming) push(t);
+  return out;
+}
+
+function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
+  const inner =
+    (msg.transaction && typeof msg.transaction === "object" && !Array.isArray(msg.transaction))
+      ? (msg.transaction as Record<string, unknown>)
+      : (msg.data && typeof msg.data === "object" && !Array.isArray(msg.data))
+        ? (msg.data as Record<string, unknown>)
+        : msg;
+
+  const tokenMint = String(
+    inner.tokenMint ?? inner.token_mint ?? inner.mint ?? inner.address ?? msg.tokenMint ?? ""
+  );
+  if (!tokenMint) return null;
+
+  return {
+    signature:       String(inner.signature       ?? msg.signature       ?? ""),
+    tokenMint,
+    signer:          String(inner.signer ?? inner.wallet ?? msg.signer ?? msg.wallet ?? ""),
+    transactionType: ((): "buy" | "sell" => {
+      const raw = String(inner.transactionType ?? inner.transaction_type ?? inner.type ?? msg.transactionType ?? "buy");
+      return raw.toLowerCase() === "sell" ? "sell" : "buy";
+    })(),
+    tokensAmount:    Number(inner.tokensAmount     ?? inner.tokenAmount   ?? 0),
+    avgPrice:        Number(inner.avgPrice         ?? inner.avg_price     ?? 0),
+    solAmount:       Number(inner.solAmount        ?? inner.sol_amount    ?? 0),
+    timestamp:       (inner.timestamp ?? msg.timestamp ?? Date.now()) as string | number,
+    marketCap:       inner.marketCap != null ? Number(inner.marketCap) : undefined,
+    isBundle:        Boolean(inner.isBundle        ?? inner.is_bundle),
+    isSniper:        Boolean(inner.isSniper        ?? inner.is_sniper),
+    isProTrader:     Boolean(inner.isProTrader     ?? inner.proTrade       ?? inner.pro_trade),
+  };
+}
+
+export function useTrades(
+  mint: string | null,
+  signer?: string | null,
+  sort: "asc" | "desc" = "desc",
+  timeRange?: TradeTimeRange | null,
+) {
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cursorRef = useRef<string | null>(null);
+  const prevMint = useRef<string | null>(null);
+  const timeFilterActive = timeRangeActive(timeRange);
+  const serverTimeFilter = timeFilterActive;
+
+  // Preview-mode short-circuit: synthetic trades sourced from the deploy
+  // form (one row per planned wallet buy). Re-subscribes whenever the
+  // registry updates, so adding/removing a wallet in the form re-renders.
+  const previewSnapshot = useSyncExternalStore(
+    (cb) => (mint ? subscribePreview(mint, cb) : () => {}),
+    () => (mint ? getPreviewData(mint) : null),
+    () => null,
+  );
+
+  // Initial / filter-change fetch — re-runs whenever sort flips so the
+  // server returns the actually-oldest trades, not just "oldest among the
+  // first page of desc". asc pagination uses `time >` predicate server-side.
+  useEffect(() => {
+    if (!mint) {
+      setTrades([]);
+      setLoading(false);
+      setHasMore(false);
+      setError(null);
+      cursorRef.current = null;
+      return;
+    }
+    if (isPreviewMint(mint)) {
+      setTrades(previewSnapshot?.trades ?? []);
+      setLoading(false);
+      setHasMore(false);
+      setError(null);
+      cursorRef.current = null;
+      return;
+    }
+    // Stream-only (freshly-deployed) mint: no REST history — start empty; the
+    // live WS feed (effect below) fills the table as trades land.
+    if (isStreamOnly(mint)) {
+      setTrades([]);
+      setLoading(false);
+      setHasMore(false);
+      setError(null);
+      cursorRef.current = null;
+      return;
+    }
+    setLoading(true);
+    setTrades([]);
+    setHasMore(false);
+    setError(null);
+    cursorRef.current = null;
+
+    const req = signer
+      ? fetchTradesBySignerMint(signer, mint, PAGE, null, sort, serverTimeFilter ? timeRange ?? undefined : undefined)
+      : fetchTrades(mint, PAGE, sort, null, serverTimeFilter ? timeRange ?? undefined : undefined);
+
+    (req as Promise<TradesResponse>)
+      .then((res) => {
+        const incoming = extractTrades(res);
+        setTrades((prev) =>
+          sortTrades(mergeTrades(prev, incoming), sort).slice(0, CAP),
+        );
+        cursorRef.current = res?.nextCursor ?? null;
+        setHasMore(Boolean(res?.hasMore) && !!res?.nextCursor);
+      })
+      .catch((e) => setError(friendlyFetchError(e)))
+      .finally(() => setLoading(false));
+  }, [mint, signer, sort, previewSnapshot, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs]);
+
+  // Page forward with the stored cursor (direction follows current sort)
+  const loadMore = useCallback(async () => {
+    if (!mint || loadingMore || !hasMore || !cursorRef.current) return;
+    setLoadingMore(true);
+    try {
+      const res = await (signer
+        ? fetchTradesBySignerMint(
+            signer,
+            mint,
+            PAGE,
+            cursorRef.current,
+            sort,
+            serverTimeFilter ? timeRange ?? undefined : undefined,
+          )
+        : fetchTrades(
+            mint,
+            PAGE,
+            sort,
+            cursorRef.current,
+            serverTimeFilter ? timeRange ?? undefined : undefined,
+          )) as TradesResponse;
+      const more = extractTrades(res);
+      setTrades((prev) => {
+        // De-dup by signature in case of overlap
+        const seen = new Set(prev.map((t) => t.signature));
+        const merged = [...prev, ...more.filter((t) => !seen.has(t.signature))];
+        return merged.slice(0, CAP);
+      });
+      cursorRef.current = res?.nextCursor ?? null;
+      setHasMore(Boolean(res?.hasMore) && !!res?.nextCursor);
+    } catch (e) {
+      setError(friendlyFetchError(e));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [mint, signer, sort, loadingMore, hasMore, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs]);
+
+  // WS live updates — only in the default newest-first view, and never
+  // when a signer or time filter is applied (historical drill-down).
+  useEffect(() => {
+    // Preview mints don't exist on-chain, so no WS subscribe.
+    if (!mint || signer || timeFilterActive || sort !== "desc" || isPreviewMint(mint)) return;
+
+    const ws = RazeWebSocket.getInstance();
+    ws.connect();
+
+    if (prevMint.current && prevMint.current !== mint) {
+      ws.unsubscribeToken(prevMint.current);
+    }
+    prevMint.current = mint;
+    ws.subscribeToken(mint);
+
+    function handleTrade(msg: Record<string, unknown>) {
+      const trade = normalizeWsTrade(msg);
+      if (!trade || trade.tokenMint !== mint) return;
+      setTrades((prev) => {
+        if (prev.some((t) => t.signature === trade.signature)) return prev;
+        return [trade, ...prev].slice(0, CAP);
+      });
+    }
+
+    function handleAnalysis(msg: Record<string, unknown>) {
+      const data = (msg.data && typeof msg.data === "object" && !Array.isArray(msg.data))
+        ? (msg.data as Record<string, unknown>)
+        : msg;
+      const sig = String(data.signature ?? msg.signature ?? "");
+      const mintStr = String(data.mint ?? "");
+      if (!sig || (mintStr && mintStr !== mint)) return;
+      const isBundle = data.isBundle != null ? Boolean(data.isBundle) : undefined;
+      const isSniper = data.isSniper != null ? Boolean(data.isSniper) : undefined;
+      setTrades((prev) => prev.map((t) => {
+        if (t.signature !== sig) return t;
+        return {
+          ...t,
+          isBundle: isBundle || t.isBundle,
+          isSniper: isSniper || t.isSniper,
+        };
+      }));
+    }
+
+    const unsub1 = ws.on("trade",       handleTrade);
+    const unsub2 = ws.on("transaction", handleTrade);
+    const unsub3 = ws.on("analysis",    handleAnalysis);
+
+    return () => {
+      unsub1();
+      unsub2();
+      unsub3();
+      ws.unsubscribeToken(mint);
+      prevMint.current = null;
+    };
+  }, [mint, signer, sort, timeFilterActive]);
+
+  return { trades, loading, loadingMore, hasMore, error, loadMore };
+}

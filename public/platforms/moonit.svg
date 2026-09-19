@@ -1,0 +1,6 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect x="32" y="32" width="448" height="448" rx="120" ry="120" fill="#7c5cff"/>
+  <text x="256" y="268" text-anchor="middle" dominant-baseline="central"
+        font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="288"
+        font-weight="700" fill="#ffffff">M</text>
+</svg>
