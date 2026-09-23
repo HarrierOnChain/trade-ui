@@ -13,6 +13,10 @@ const SNAPSHOT_KEYS: Array<keyof TokenEvent> = [
   "mint_address", "signer", "dex", "name", "symbol", "uri", "slot",
   "image", "creatorBuySol", "creatorBuyPrice", "creatorBuyTokens",
   "lastPrice", "created_at", "migrated_at",
+  // The quote. No enrichment hook sets these, so leaving them out froze every
+  // row's market cap and change at whatever its first snapshot said. The API
+  // brings REST rows up to the latest pushed quote, so a poll is fresher.
+  "marketCap", "priceChange", "graduationPercent",
 ];
 
 function rowsEqual(a: TokenEvent, b: TokenEvent): boolean {
@@ -92,4 +96,62 @@ export function reconcileSnapshot(
     return prev;
   }
   return list;
+}
+
+/**
+ * Fold a live frame into the row it updates. Only the fields the frame
+ * actually carries: a frame has no bundle %, volume or socials, and spreading
+ * it whole (`{ ...prev, ...next }`) blanked what the enrichment hooks had
+ * filled — on every quote update, now that the API re-sends rows as they move.
+ */
+export function mergeLiveFrame(prev: TokenEvent, next: TokenEvent): TokenEvent {
+  const merged = { ...prev } as unknown as Record<string, unknown>;
+  for (const [k, v] of Object.entries(next)) {
+    if (v === undefined || v === null || v === "") continue;
+    merged[k] = v;
+  }
+  merged.dex = mergeDexLabel(prev.dex, next.dex);
+  merged.isNew = prev.isNew;
+  return merged as unknown as TokenEvent;
+}
+
+function sameRow(a: TokenEvent, b: TokenEvent): boolean {
+  const x = a as unknown as Record<string, unknown>;
+  const y = b as unknown as Record<string, unknown>;
+  return Object.keys(y).every((k) => x[k] === y[k]);
+}
+
+/**
+ * Apply one live frame to a newest-first column (`tsOf` orders it).
+ *
+ * A row the column holds is merged (`mergeLiveFrame`). A token it does not
+ * hold goes in at its own time, not on top, and not at all when that lands
+ * past `max`: the API re-sends a moving token about once a second, and an
+ * older migration re-sent that way used to jump to the top of the column.
+ * `insertAs` is the row to insert when it must differ from the merge (e.g. a
+ * first sighting with no time of its own yet). Returns `prev` itself when
+ * nothing changes, so React skips the render.
+ */
+export function applyLiveFrame(
+  prev: TokenEvent[],
+  token: TokenEvent,
+  tsOf: (t: TokenEvent) => number,
+  max: number,
+  insertAs: TokenEvent = token,
+): TokenEvent[] {
+  const i = prev.findIndex((t) => t.mint_address === token.mint_address);
+  if (i >= 0) {
+    const merged = mergeLiveFrame(prev[i], token);
+    if (sameRow(prev[i], merged)) return prev;
+    const next = prev.slice();
+    next[i] = merged;
+    return next;
+  }
+  const ts = tsOf(insertAs);
+  let j = 0;
+  while (j < prev.length && tsOf(prev[j]) >= ts) j++;
+  if (j >= max) return prev;
+  const next = prev.slice();
+  next.splice(j, 0, insertAs);
+  return next.slice(0, max);
 }

@@ -6,8 +6,7 @@ import { toArray, normalizeTokenEvent, normalizeRestToken } from "../api/normali
 import { friendlyFetchError } from "../api/chainError";
 import { useChain } from "../contexts/ChainContext";
 import { useClientPageVisible } from "../contexts/ClientPageVisibility";
-import { mergeDexLabel } from "../lib/format";
-import { reconcileSnapshot } from "../lib/streamMerge";
+import { applyLiveFrame, reconcileSnapshot } from "../lib/streamMerge";
 import { useTokenEnrichment } from "./useTokenEnrichment";
 import { useMetaEnrichment } from "./useMetaEnrichment";
 import type { TokenEvent } from "../types";
@@ -28,15 +27,6 @@ function snapshotFromRest(res: unknown): TokenEvent[] {
       return true;
     })
     .sort((a, b) => ts(b) - ts(a));
-}
-
-function insertByCreatedAt(list: TokenEvent[], token: TokenEvent, max: number): TokenEvent[] {
-  const tt = ts(token);
-  let i = 0;
-  while (i < list.length && ts(list[i]) >= tt) i++;
-  const next = list.slice();
-  next.splice(i, 0, token);
-  return next.slice(0, max);
 }
 
 export function useDeployStream(platform?: string) {
@@ -116,22 +106,7 @@ export function useDeployStream(platform?: string) {
       const isNew = !renderedRef.current.has(token.mint_address);
       renderedRef.current.add(token.mint_address);
 
-      setTokens((prev) => {
-        if (!isNew) {
-          return prev.map((t) => {
-            if (t.mint_address !== token.mint_address) return t;
-            return {
-              ...t,
-              ...token,
-              image:  token.image  || t.image,
-              name:   token.name   || t.name,
-              symbol: token.symbol || t.symbol,
-              dex:    mergeDexLabel(t.dex, token.dex),
-            };
-          });
-        }
-        return insertByCreatedAt(prev, { ...token, isNew: true }, MAX);
-      });
+      setTokens((prev) => applyLiveFrame(prev, token, ts, MAX, { ...token, isNew }));
     });
 
     return () => {

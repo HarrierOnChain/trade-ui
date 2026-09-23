@@ -5,8 +5,7 @@ import { RazeWebSocket } from "../api/websocket";
 import { toArray, normalizeTokenEvent, normalizeRestToken } from "../api/normalize";
 import { useChain } from "../contexts/ChainContext";
 import { useClientPageVisible } from "../contexts/ClientPageVisibility";
-import { mergeDexLabel } from "../lib/format";
-import { reconcileSnapshot } from "../lib/streamMerge";
+import { applyLiveFrame, reconcileSnapshot } from "../lib/streamMerge";
 import { useTokenEnrichment } from "./useTokenEnrichment";
 import { useMetaEnrichment } from "./useMetaEnrichment";
 import type { TokenEvent } from "../types";
@@ -109,22 +108,14 @@ export function useMigrationStream(platform?: string) {
       const isNew = !renderedRef.current.has(token.mint_address);
       renderedRef.current.add(token.mint_address);
 
-      setTokens((prev) => {
-        if (!isNew) {
-          return prev.map((t) => {
-            if (t.mint_address !== token.mint_address) return t;
-            return {
-              ...t,
-              ...token,
-              image:  token.image  || t.image,
-              name:   token.name   || t.name,
-              symbol: token.symbol || t.symbol,
-              dex:    mergeDexLabel(t.dex, token.dex),
-            };
-          });
-        }
-        return [{ ...token, isNew: true }, ...prev].slice(0, MAX);
-      });
+      // A first sighting with no migration time yet (a completion frame
+      // without completedAt) is placed at its arrival; a merge never takes it.
+      const insertAs = {
+        ...token,
+        isNew,
+        migrated_at: token.migrated_at ?? new Date().toISOString(),
+      };
+      setTokens((prev) => applyLiveFrame(prev, token, tsMigrated, MAX, insertAs));
     });
 
     return () => {

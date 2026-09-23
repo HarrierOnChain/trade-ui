@@ -136,6 +136,7 @@ export function discoveryToToken(row: Record<string, unknown>, native: number): 
     liquidity: num(row.liquidityUsd ?? row.liquidity),
     holders: num(row.holders),
     priceChange: num(row.change24h ?? row.change1h ?? row.priceChange),
+    graduationPercent: num(launchpad?.graduationPercent),
     signer: (row.creatorAddress ?? row.signer ?? undefined) as string | undefined,
     bundlePercentage: num(safety?.bundlePercentage ?? row.bundlePercentage),
     sniperPercentage: num(safety?.sniperPercentage ?? row.sniperPercentage),

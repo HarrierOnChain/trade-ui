@@ -9,6 +9,7 @@ import { readApiSettings } from "./settings";
 export type WsEventType =
   | "deploy"
   | "migration"
+  | "migrating"
   | "trade"
   | "transaction"
   | "analysis"
@@ -98,9 +99,12 @@ export class RazeWebSocket {
     });
   }
 
-  private mapDeploy(d: Record<string, unknown>, type: "deploy" | "migration" | "alert"): Record<string, unknown> {
+  private mapDeploy(d: Record<string, unknown>, type: "deploy" | "migration" | "migrating" | "alert"): Record<string, unknown> {
     const safety = d.safety && typeof d.safety === "object" && !Array.isArray(d.safety)
       ? d.safety as Record<string, unknown>
+      : null;
+    const launchpad = d.launchpad && typeof d.launchpad === "object" && !Array.isArray(d.launchpad)
+      ? d.launchpad as Record<string, unknown>
       : null;
     return {
       type,
@@ -117,12 +121,23 @@ export class RazeWebSocket {
       signer: d.creatorAddress,
       creator: d.creatorAddress,
       created_at: d.createdAt,
-      migrated_at: d.migratedAt,
+      // A completion frame has no migratedAt yet; its curve's completedAt
+      // (seconds) is the same moment.
+      migrated_at: d.migratedAt ?? (typeof launchpad?.completedAt === "number"
+        ? launchpad.completedAt * 1000
+        : undefined),
       timestamp: d.createdAt ?? d.migratedAt ?? Date.now(),
       marketCap: d.marketCap,
       liquidity: d.liquidityUsd,
       holders: d.holders,
       priceUsd: d.priceUsd,
+      // Percent, like every change on the API. Live frames re-send it as the
+      // quote moves, so the row's change is not the one it was born with.
+      priceChange: d.change24h ?? d.change1h,
+      // Not volume24h: the API's is USD, the columns' filters read it as SOL.
+      graduationPercent: launchpad?.graduationPercent,
+      // The migrating board drops a row on these.
+      completed: launchpad?.completed === true || launchpad?.migrated === true,
       bundlePercentage: safety?.bundlePercentage ?? d.bundlePercentage,
       sniperPercentage: safety?.sniperPercentage ?? d.sniperPercentage,
     };
@@ -175,6 +190,7 @@ export class RazeWebSocket {
     if (type === "deploy") this.dispatch(this.mapDeploy(d, "deploy"));
     else if (type === "migration") this.dispatch(this.mapDeploy(d, "migration"));
     else if (type === "new") this.dispatch(this.mapDeploy(d, "alert"));
+    else if (type === "migrating") this.dispatch(this.mapDeploy(d, "migrating"));
     else if (type === "trade") this.dispatch(this.mapTrade(d));
     else if (type === "bar") this.dispatch(this.mapBar(d));
     else if (type === "stats" && d.price != null) {
@@ -393,7 +409,11 @@ export class RazeWebSocket {
   }
 
   private startEvent(t: WsEventType): void {
-    const channel = t === "deploy" ? "deploys" : t === "migration" ? "migrations" : t === "alert" ? "discovery" : null;
+    const channel = t === "deploy" ? "deploys"
+      : t === "migration" ? "migrations"
+      : t === "migrating" ? "migrating"
+      : t === "alert" ? "discovery"
+      : null;
     if (!channel) return;
     const prev = this.eventSubs.get(t);
     try { prev?.sub.cancel(); } catch { /* ignore */ }
@@ -414,6 +434,7 @@ export class RazeWebSocket {
   private startEventSse(t: WsEventType): void {
     const path = t === "deploy" ? "/discovery/deploys/stream"
       : t === "migration" ? "/discovery/migrations/stream"
+      : t === "migrating" ? "/discovery/launchpad/stream"
       : t === "alert" ? "/discovery/new/stream"
       : null;
     if (!path) return;
