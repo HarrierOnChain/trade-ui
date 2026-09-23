@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { fetchMigrating } from "../api/client";
-import { toArray, normalizeRestToken } from "../api/normalize";
+import { toArray, normalizeRestToken, normalizeTokenEvent } from "../api/normalize";
+import { RazeWebSocket } from "../api/websocket";
+import { mergeLiveFrame } from "../lib/streamMerge";
 import { useChain } from "../contexts/ChainContext";
 import { useClientPageVisible } from "../contexts/ClientPageVisibility";
 import { mergeDexLabel } from "../lib/format";
@@ -10,9 +12,18 @@ import { useMetaEnrichment } from "./useMetaEnrichment";
 import type { TokenEvent } from "../types";
 
 const MAX = 20;
-// History refreshes the migrating snapshot from CH every 5s; mirror that on
-// the client. Same model as useTrending.
-const POLL_INTERVAL = 5_000;
+// The board streams on the `migrating` channel (join, quote moves, graduation).
+// The poll only reconciles membership, like the deploy/migration columns.
+const POLL_INTERVAL = 15_000;
+// Mirrors the API: a row under this progress has left the board.
+const LEAVE_PROGRESS = 10;
+
+// Same ranking as the REST board: furthest up the curve first, then newest.
+function byProgress(list: TokenEvent[]): TokenEvent[] {
+  return list.slice().sort((a, b) =>
+    (b.graduationPercent ?? 0) - (a.graduationPercent ?? 0)
+    || (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+}
 
 // Fields the migrating snapshot is the authoritative source for. Anything
 // outside this set (marketCap, volume24h, holders, …) comes from
@@ -21,6 +32,8 @@ const SNAPSHOT_KEYS: Array<keyof TokenEvent> = [
   "mint_address", "signer", "dex", "name", "symbol", "uri", "slot",
   "image", "creatorBuySol", "creatorBuyPrice", "creatorBuyTokens",
   "lastPrice", "created_at",
+  // The quote and the curve: nothing else ever refreshes them on a row.
+  "marketCap", "priceChange", "graduationPercent",
 ];
 
 function rowsEqual(a: TokenEvent, b: TokenEvent): boolean {
@@ -56,6 +69,8 @@ export function useMigratingStream(platform?: string) {
   const [error, setError] = useState<string | null>(null);
   const [enrichKey, setEnrichKey] = useState(0);
   const enrichMintKeyRef = useRef("");
+  const platformRef = useRef(platform);
+  platformRef.current = platform;
 
   // Diff-merge the latest snapshot into state so unchanged rows keep their
   // reference (React.memo bails) and removed mints disappear.
@@ -129,6 +144,9 @@ export function useMigratingStream(platform?: string) {
     }
     let cancelled = false;
     let hadRows = false;
+    // Another chain's (or platform's) board must not sort in with this one's
+    // replay while the first read is in flight.
+    setTokens([]);
     setLoading(true);
     enrichMintKeyRef.current = "";
 
@@ -154,6 +172,51 @@ export function useMigratingStream(platform?: string) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform, chainId, pageVisible]);
+
+  // Live board: a row joins when its curve crosses the API's floor, moves with
+  // its quote, and leaves on graduation (or when its curve falls back).
+  useEffect(() => {
+    if (!pageVisible) return;
+    const ws = RazeWebSocket.getInstance();
+    ws.connect();
+    ws.subscribe(["migrating"]);
+    const unsub = ws.on("migrating", (msg) => {
+      const token = normalizeTokenEvent(msg as unknown as Record<string, unknown>);
+      if (!token) return;
+      const pct = token.graduationPercent;
+      const leaving = msg.completed === true || (pct != null && (pct >= 100 || pct < LEAVE_PROGRESS));
+      // Before the platform filter: dropping a row is always right, and a row
+      // that got in under another label must still be able to leave.
+      if (leaving) {
+        setTokens((prev) => {
+          const i = prev.findIndex((t) => t.mint_address === token.mint_address);
+          return i < 0 ? prev : prev.filter((_, j) => j !== i);
+        });
+        return;
+      }
+      const wanted = platformRef.current?.toLowerCase().split(",").map((p) => p.trim()).filter(Boolean);
+      if (wanted?.length && token.dex && !wanted.includes(token.dex.toLowerCase())) return;
+      setTokens((prev) => {
+        const i = prev.findIndex((t) => t.mint_address === token.mint_address);
+        if (i >= 0) {
+          const merged = mergeLiveFrame(prev[i], token);
+          const cur = prev[i] as unknown as Record<string, unknown>;
+          const m = merged as unknown as Record<string, unknown>;
+          if (Object.keys(m).every((k) => m[k] === cur[k])) return prev;
+          const next = prev.slice();
+          next[i] = merged;
+          const sorted = byProgress(next);
+          return sorted.every((t, j) => t === next[j]) ? next : sorted;
+        }
+        const next = byProgress([...prev, { ...token, isNew: true }]).slice(0, MAX);
+        return next.some((t) => t.mint_address === token.mint_address) ? next : prev;
+      });
+    });
+    return () => {
+      unsub();
+      ws.unsubscribe(["migrating"]);
+    };
+  }, [chainId, pageVisible]);
 
   useTokenEnrichment(tokens, setTokens, 20, enrichKey);
   useMetaEnrichment(tokens, setTokens, 20, enrichKey);

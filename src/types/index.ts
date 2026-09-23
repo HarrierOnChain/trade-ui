@@ -26,6 +26,8 @@ export interface TokenEvent {
   firstHourTrades?: number;
   firstHourVolume?: number;
   priceChange?: number;
+  /** Bonding-curve completion, 0-100 (launchpad.graduationPercent). */
+  graduationPercent?: number;
   volume24h?: number;
   liquidity?: number;
   holders?: number;

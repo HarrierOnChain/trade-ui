@@ -365,7 +365,10 @@ export function normalizeTokenEvent(
   );
   if (!mint) return null;
 
-  const created_at = String(
+  // The API sends epoch-ms numbers. String(1790163301235) is not a date:
+  // Date.parse gave NaN, every live row sorted as time 0 and fell off the
+  // column, so tokens only appeared with the next REST poll.
+  const created_at = toIso(
     inner.created_at ?? inner.timestamp ?? msg.timestamp ?? new Date().toISOString()
   );
 
@@ -382,8 +385,11 @@ export function normalizeTokenEvent(
     twitter:           (inner.twitter  ?? null) as string | null,
     telegram:          (inner.telegram ?? null) as string | null,
     created_at,
-    migrated_at:       isMigration
-                         ? String(inner.migrated_at ?? msg.timestamp ?? created_at)
+    // Only what the frame says: a completion frame carries no migration time
+    // yet, and the creation time in its place sorted the newest migration to
+    // the bottom and overwrote a good REST value on every re-send.
+    migrated_at:       isMigration && inner.migrated_at != null
+                         ? toIso(inner.migrated_at)
                          : undefined,
     // ⚠️ ALL numeric fields go through toOptionalNumber — upstreams can
     // serialize numerics as JSON strings; a blind `as number` cast lets
@@ -403,6 +409,7 @@ export function normalizeTokenEvent(
     firstHourTrades:   toOptionalNumber(inner.firstHourTrades ?? inner.first_hour_trades),
     firstHourVolume:   toOptionalNumber(inner.firstHourVolume ?? inner.first_hour_volume),
     priceChange:       toOptionalNumber(inner.priceChange ?? inner.price_change ?? inner.change24h ?? inner.change_24h),
+    graduationPercent: toOptionalNumber(inner.graduationPercent),
     volume24h:         toOptionalNumber(inner.volume24h ?? inner.volume_24h ?? inner.volume ?? inner.totalVolume),
     liquidity:         toOptionalNumber(inner.liquidity ?? inner.liquiditySol ?? inner.liquidity_sol),
     holders:           toOptionalNumber(inner.holders ?? inner.holderCount ?? inner.holder_count ?? inner.uniqueTraders ?? inner.unique_traders),
@@ -437,7 +444,10 @@ export function normalizeRestToken(raw: Record<string, unknown>): TokenEvent {
     twitter:           (raw.twitter  ?? null) as string | null,
     telegram:          (raw.telegram ?? null) as string | null,
     created_at:        toIso(raw.created_at ?? raw.createdAt ?? raw.timestamp ?? raw.time ?? ""),
-    migrated_at:       (raw.migrated_at ?? raw.migratedAt ?? raw.migrated ?? undefined) as string | undefined,
+    migrated_at:       (() => {
+      const m = raw.migrated_at ?? raw.migratedAt;
+      return m == null || m === "" ? undefined : toIso(m);
+    })(),
     // ⚠️ Numeric fields: toOptionalNumber, mai cast ciechi (vedi nota in
     // normalizeTokenEvent — upstream può mandare numerici come stringhe JSON).
     marketCap:         toOptionalNumber(raw.marketCap         ?? raw.market_cap),
@@ -458,6 +468,7 @@ export function normalizeRestToken(raw: Record<string, unknown>): TokenEvent {
     firstHourTrades:   toOptionalNumber(raw.firstHourTrades ?? raw.first_hour_trades),
     firstHourVolume:   toOptionalNumber(raw.firstHourVolume ?? raw.first_hour_volume),
     priceChange:       toOptionalNumber(raw.priceChange ?? raw.price_change ?? raw.change24h ?? raw.change_24h),
+    graduationPercent: toOptionalNumber(raw.graduationPercent),
     volume24h:         toOptionalNumber(raw.volume24h ?? raw.volume_24h ?? raw.volume ?? raw.totalVolume),
     liquidity:         toOptionalNumber(raw.liquidity ?? raw.liquiditySol ?? raw.liquidity_sol),
     holders:           toOptionalNumber(raw.holders ?? raw.holderCount ?? raw.holder_count ?? raw.uniqueTraders ?? raw.unique_traders),
