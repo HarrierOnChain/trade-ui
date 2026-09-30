@@ -89,6 +89,22 @@ const EVENT_OF_BOARD: Record<string, WsEventType> = {
 
 /** The API allows 200 per socket; keep headroom for the global channels. */
 const MAX_SUBS = 195;
+/** SSE fallback streams at once: two of the browser's six connections per
+ *  origin stay free for everything else. */
+const MAX_SSE = 4;
+
+/** Which channels keep streaming when only MAX_SSE can: the open token's
+ *  tape and chart first, then prices, its header, and the boards. */
+function ssePriority(spec: Spec): number {
+  switch (spec.channel) {
+    case "trades": return 0;
+    case "candles": return 1;
+    case "prices": return 2;
+    case "token": return 3;
+    case "launchpad": return spec.board === "new" ? 4 : spec.board === "graduating" ? 5 : 6;
+    default: return 7;
+  }
+}
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 function sidOf(spec: Spec): string {
@@ -333,7 +349,7 @@ export class RazeWebSocket {
       cur.rc += 1;
       if (sse) {
         cur.sse += 1;
-        if (cur.sse === 1 && !this.isLive()) this.startSse(sid, cur);
+        if (cur.sse === 1 && this.inFallback()) this.rebalanceSse();
       }
       return sid;
     }
@@ -348,7 +364,7 @@ export class RazeWebSocket {
     this.subs.set(sid, sub);
     if (this.isLive()) this.sendSubscribe(sid, spec);
     else if (!this.opening && !this.reconnectTimer) this.ensureSocket();
-    if (!this.isLive() && sub.sse > 0 && this.reconnectTimer) this.startSse(sid, sub);
+    if (sub.sse > 0 && this.inFallback()) this.rebalanceSse();
     return sid;
   }
 
@@ -358,11 +374,17 @@ export class RazeWebSocket {
     if (sse && cur.sse > 0) cur.sse -= 1;
     if (cur.rc > 1) {
       cur.rc -= 1;
-      if (cur.sse === 0) this.closeSse(sid);
+      if (cur.sse === 0 && this.sse.has(sid)) {
+        this.closeSse(sid);
+        if (this.inFallback()) this.rebalanceSse();
+      }
       return;
     }
     this.subs.delete(sid);
-    this.closeSse(sid);
+    if (this.sse.has(sid)) {
+      this.closeSse(sid);
+      if (this.inFallback()) this.rebalanceSse();
+    }
     this.send({ op: "unsubscribe", id: sid });
   }
 
@@ -403,9 +425,34 @@ export class RazeWebSocket {
     this.sse.delete(sid);
   }
 
+  /** No socket, and the last attempt to open one failed. */
+  private inFallback(): boolean {
+    return !this.isLive() && !this.opening && this.reconnectTimer != null;
+  }
+
   private startAllSse(): void {
-    if (this.isLive()) return;
-    for (const [sid, sub] of this.subs) this.startSse(sid, sub);
+    this.rebalanceSse();
+  }
+
+  /**
+   * Keep at most MAX_SSE streams open, the most useful first. Each SSE stream
+   * holds one of the browser's six HTTP/1.1 connections to this origin for as
+   * long as it lives; with seven open (prices, three boards, the token's
+   * trades/candles/token) every other request — REST, JS chunks — queued
+   * behind them and the token page never finished loading.
+   */
+  private rebalanceSse(): void {
+    if (this.isLive()) {
+      this.abortAllSse();
+      return;
+    }
+    const want = [...this.subs.entries()]
+      .filter(([, sub]) => sub.sse > 0)
+      .sort(([, a], [, b]) => ssePriority(a.spec) - ssePriority(b.spec))
+      .slice(0, MAX_SSE);
+    const keep = new Set(want.map(([sid]) => sid));
+    for (const sid of [...this.sse.keys()]) if (!keep.has(sid)) this.closeSse(sid);
+    for (const [sid, sub] of want) this.startSse(sid, sub);
   }
 
   private startSse(sid: string, sub: Sub): void {
