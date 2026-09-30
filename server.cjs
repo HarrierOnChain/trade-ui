@@ -157,14 +157,16 @@ function proxyUpgrade(req, socket, head) {
     upSocket.setNoDelay(true);
     if (typeof socket.setNoDelay === "function") socket.setNoDelay(true);
     upSocket.setTimeout(0);
-    const close = () => {
+    // An error tears both hops down; a close only ends the other hop, so
+    // whatever is still buffered (a Close frame) is flushed first.
+    const destroyBoth = () => {
       try { upSocket.destroy(); } catch { /* ignore */ }
       try { socket.destroy(); } catch { /* ignore */ }
     };
-    upSocket.on("error", close);
-    upSocket.on("close", close);
-    socket.on("error", close);
-    socket.on("close", close);
+    upSocket.on("error", destroyBoth);
+    socket.on("error", destroyBoth);
+    upSocket.on("close", () => { try { socket.end(); } catch { /* ignore */ } });
+    socket.on("close", () => { try { upSocket.end(); } catch { /* ignore */ } });
     upSocket.pipe(socket);
     socket.pipe(upSocket);
   });
