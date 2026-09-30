@@ -61,6 +61,8 @@ export function fmtSol(raw?: number | null, d = 2): string {
 export function fmtUsd(raw?: number | null): string {
   const v = asNum(raw);
   if (v == null) return "–";
+  // Negatives (a losing PnL) fell through every branch to "$-41906.2556".
+  if (v < 0) return `-${fmtUsd(-v)}`;
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
   if (v >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
   if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;

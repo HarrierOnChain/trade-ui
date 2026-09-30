@@ -628,14 +628,16 @@ function StatsRow({
       <StatCard
         label={`Win rate · ${WINDOW_DAYS}d`}
         primary={`${Math.round(winRate * 100)}%`}
-        sub={`${winningTokens}/${uniqueTokens} tokens`}
-        hint={
+        // The API reports tokens traded but not how many won, and buy/sell
+        // counts only for some periods: show what is known, no made-up 0s.
+        sub={winningTokens > 0 ? `${winningTokens}/${uniqueTokens} tokens` : `${uniqueTokens} tokens`}
+        hint={buys + sells > 0 ? (
           <span>
             <span style={{ color: "var(--accent)" }}>{fmtNum(buys)}B</span>
             <span style={{ color: "var(--paper-4)" }}> · </span>
             <span style={{ color: "var(--sell)" }}>{fmtNum(sells)}S</span>
           </span>
-        }
+        ) : undefined}
         loading={loading}
       />
     </div>
