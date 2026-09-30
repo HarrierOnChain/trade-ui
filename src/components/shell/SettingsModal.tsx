@@ -489,7 +489,7 @@ function NetworkPanel() {
 
   return (
     <Section>
-      <Row label="API base" hint="Public evmapi host. Default is https://api.raze.bot.">
+      <Row label="API base" hint="The market-data API's host root (the UI adds /v1). Default is https://api.raze.bot.">
         <input
           value={apiBase}
           onChange={(e) => setApiBase(e.target.value)}

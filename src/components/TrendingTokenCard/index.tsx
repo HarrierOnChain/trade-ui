@@ -56,7 +56,7 @@ export const TrendingTokenCard = memo(function TrendingTokenCard({
   const isPhone = useIsPhone();
 
   const devBuyValue = t.creatorBuySol != null ? fmtSol(t.creatorBuySol, 2) : null;
-  const creatorRatio = `${t.creatorMigrations ?? 0}/${t.creatorDeploys ?? 1}`;
+  const creatorRatio = `${t.creatorMigrations ?? "–"}/${t.creatorDeploys ?? "–"}`;
   const hasSocials = Boolean(t.twitter || t.telegram || t.website);
   const hasXSignal = Boolean(
     xSignal && (xSignal.mentionCount24h > 0 || xSignal.kolCount24h > 0),

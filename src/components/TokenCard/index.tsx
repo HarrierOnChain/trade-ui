@@ -207,7 +207,7 @@ const TokenCardInner = memo(
             </div>
           )}
           {(token.creatorBuySol != null || token.creatorDeploys != null || token.creatorMigrations != null) && (() => {
-            const ratio = `${token.creatorMigrations ?? 0}/${token.creatorDeploys ?? 1}`;
+            const ratio = `${token.creatorMigrations ?? "–"}/${token.creatorDeploys ?? "–"}`;
             const pill = (
               <span className={styles.devPill}>
                 {token.creatorBuySol != null && (

@@ -70,9 +70,10 @@ export const TokenRow = memo(function TokenRow({
   const fmtSolChip = (v: number, d = 2) => fmtSol(v, d);
   const rowImage = useRowImage(t.mint_address, t.image, rowIndex);
   const devBuyValue = t.creatorBuySol != null ? fmtSolChip(t.creatorBuySol) : null;
-  // Always show the migrations/deploys ratio. Default deploys to 1 when
-  // missing — this token's existence implies at least one deploy.
-  const creatorRatio = `${t.creatorMigrations ?? 0}/${t.creatorDeploys ?? 1}`;
+  // Graduations / launches by the creator. Unknown shows "–", not a made-up
+  // 0 or 1: the API reports launches (safety.creatorLaunches) but not how
+  // many graduated.
+  const creatorRatio = `${t.creatorMigrations ?? "–"}/${t.creatorDeploys ?? "–"}`;
   const rowTs = new Date(
     (showMigrated ? t.migrated_at : undefined) ?? t.created_at ?? 0
   ).getTime();

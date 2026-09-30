@@ -320,9 +320,11 @@ export function TradingPanel({ mint }: Props) {
   // Active manual-amount denomination + its display label/icon (market only).
   const activeDenom = side === "buy" ? buyDenom : sellDenom;
   const devAddr = info?.signer ?? null;
-  const creatorDeploys = info?.creatorDeploys ?? 0;
-  const creatorMigrations = info?.creatorMigrations ?? 0;
-  const creatorBuySol = info?.creatorBuySol ?? 0;
+  // Unknown stays unknown ("–" / hidden): the API reports the creator's
+  // launches but neither their graduations nor the dev's own buy.
+  const creatorDeploys = info?.creatorDeploys;
+  const creatorMigrations = info?.creatorMigrations;
+  const creatorBuySol = info?.creatorBuySol;
   const tokenAge = info?.created_at ? formatAge(info.created_at) : "—";
 
   // All 8 quick-amount slots (4×2 grid). Same preset data as InstantTradePanel.
@@ -873,8 +875,12 @@ export function TradingPanel({ mint }: Props) {
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{UpArrowIcon(10)}</span>
             <span style={{ color: "var(--paper-2)" }}>{shortAddr(devAddr, 4)}</span>
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{Icon.phantom(10)}</span>
-            <span style={{ color: "var(--accent)" }}>{creatorMigrations}/{Math.max(creatorDeploys, creatorMigrations)}</span>
-            <SolAmount iconSize={10} style={{ color: "var(--paper-2)" }}>{creatorBuySol > 0 ? fmtSol(creatorBuySol, 3) : "0"}</SolAmount>
+            <span style={{ color: "var(--accent)" }}>
+              {creatorMigrations ?? "–"}/{creatorDeploys != null ? Math.max(creatorDeploys, creatorMigrations ?? 0) : "–"}
+            </span>
+            {creatorBuySol != null && (
+              <SolAmount iconSize={10} style={{ color: "var(--paper-2)" }}>{creatorBuySol > 0 ? fmtSol(creatorBuySol, 3) : "0"}</SolAmount>
+            )}
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{ClockIcon(10)}</span>
             <span style={{ color: "var(--paper-3)" }}>{tokenAge}</span>
           </div>

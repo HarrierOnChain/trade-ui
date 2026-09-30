@@ -365,17 +365,15 @@ export function TokenHeader({
   );
 }
 
-// ATH mcap is computed server-side as peak SOL price × 1e9 supply × solPrice —
-// exact for standard SOL-quoted 1e9-supply tokens (pump.fun/pumpswap, the bulk
-// of migrations). Non-standard quote decimals (some MeteoraDBC/USDC pairs) skew
-// the stored price scale and inflate the figure, so we only surface a value in a
-// plausible range and fall back to "—" otherwise rather than show a bogus mcap.
+// The API has no all-time high, so the popup shows each token's market cap
+// now. Only a plausible value is surfaced ("—" otherwise): a dust print in an
+// empty pool can price a token at a bogus billion.
 function athMcapOk(v?: number): boolean {
   return typeof v === "number" && v > 0 && v < 1_000_000_000;
 }
 
 /** Hover list for the dev-migration crown — the creator's migrated tokens and
- *  the peak (ATH) market cap each reached. Fetches lazily on open. */
+ *  each one's market cap now. Fetches lazily on open. */
 function DevMigrationsPopup({ signer, count }: { signer: string; count: number }) {
   const { data, loading } = useCreatorMigrations(signer, true);
   const rows = data ?? [];
@@ -398,7 +396,7 @@ function DevMigrationsPopup({ signer, count }: { signer: string; count: number }
           columnGap: 14, rowGap: 5, maxHeight: 240, overflowY: "auto",
         }}>
           <span style={{ color: "var(--paper-4)", fontSize: 9 }}>TOKEN</span>
-          <span style={{ color: "var(--paper-4)", fontSize: 9, textAlign: "right" }}>ATH MCAP</span>
+          <span style={{ color: "var(--paper-4)", fontSize: 9, textAlign: "right" }}>MCAP</span>
           {rows.map((m) => (
             <React.Fragment key={m.mint}>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -411,9 +409,9 @@ function DevMigrationsPopup({ signer, count }: { signer: string; count: number }
               </span>
               <span style={{
                 textAlign: "right", fontWeight: 600,
-                color: athMcapOk(m.athMcap) ? "var(--accent)" : "var(--paper-4)",
+                color: athMcapOk(m.marketCap) ? "var(--accent)" : "var(--paper-4)",
               }}>
-                {athMcapOk(m.athMcap) ? fmtMcap(m.athMcap!) : "—"}
+                {athMcapOk(m.marketCap) ? fmtMcap(m.marketCap!) : "—"}
               </span>
             </React.Fragment>
           ))}

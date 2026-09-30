@@ -814,7 +814,7 @@ function TapeRow({ t, onClick, rowIndex = 0 }: { t: TapeItem; onClick: () => voi
     const devValue = [
       hasDevBuy ? `${t.creatorBuySol!.toFixed(2)}◎` : null,
       hasCreatorCounts
-        ? `${t.creatorMigrations ?? 0}/${t.creatorDeploys ?? 1}`
+        ? `${t.creatorMigrations ?? "–"}/${t.creatorDeploys ?? "–"}`
         : null,
     ]
       .filter(Boolean)
