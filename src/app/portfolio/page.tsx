@@ -60,6 +60,14 @@ type Tab = "wallets" | "holdings" | "activity" | "perps";
 
 /* ── Page ────────────────────────────────────────────────────────────── */
 
+/** The API's valuation of a holding, scaled to `amount` (the scope sums the
+ *  same mint across wallets). Undefined when the API did not value it. */
+function apiValueFor(md: TokenHolding | undefined, amount: number): number | undefined {
+  if (md?.usdValue == null) return undefined;
+  if (!(md.amount > 0)) return md.usdValue;
+  return md.usdValue * (amount / md.amount);
+}
+
 export default function PortfolioPage() {
   const { navigate: clientNav } = useClientNav();
   const { pushToast } = useApp();
@@ -271,7 +279,7 @@ export default function PortfolioPage() {
     }
     return [...amounts.entries()].map(([m, amount]) => {
       const md = holdingMeta.get(m);
-      return { mint: m, amount, decimals: md?.decimals ?? 0, symbol: md?.symbol, name: md?.name, image: md?.image };
+      return { mint: m, amount, decimals: md?.decimals ?? 0, symbol: md?.symbol, name: md?.name, image: md?.image, usdValue: apiValueFor(md, amount) };
     });
   }, [onChainWallets, liveBalances, hiddenMints, holdingMeta]);
 
@@ -293,7 +301,7 @@ export default function PortfolioPage() {
       for (const [mint, amount] of Object.entries(toks)) {
         if (!(amount > 0) || hiddenMints.has(mint)) continue;
         const md = holdingMeta.get(mint);
-        out.push({ mint, amount, decimals: md?.decimals ?? 0, symbol: md?.symbol, name: md?.name, image: md?.image });
+        out.push({ mint, amount, decimals: md?.decimals ?? 0, symbol: md?.symbol, name: md?.name, image: md?.image, usdValue: apiValueFor(md, amount) });
       }
       return out;
     },
@@ -367,6 +375,8 @@ export default function PortfolioPage() {
     if (scope.loading && !scope.pnl) return null;
     const pnlData = scope.pnl?.data;
     if (!pnlData) return null;
+    // No cost basis per token (the API reports none): unknown, not "+value".
+    if (pnlData.tokens.length === 0) return null;
     if (solPrice <= 0) return null;
 
     const heldMints = new Set(spotHoldings.map((h) => h.mint));

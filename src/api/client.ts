@@ -716,36 +716,29 @@ export const fetchWalletPerformance = async (
   }) as WalletPerformanceResponse;
 };
 
+/**
+ * Realized PnL for the window from the wallet profile. The API has no cost
+ * basis per token, so no FIFO lots are returned (`tokens` is empty) and the
+ * UI shows unrealized PnL as unknown instead of deriving one from a made-up
+ * cost.
+ */
 export const fetchWalletPnl = async (
   address: string,
   options: { from?: number; to?: number; limit?: number } = {},
 ) => {
   const native = await nativeUsd(chain()).catch(() => 0);
-  const [stats, holdings] = await Promise.all([
-    fetchWalletStats(address, periodFor(options.from, options.to)),
-    fetchWalletHoldings(address).catch(() => null),
-  ]);
+  const stats = await fetchWalletStats(address, periodFor(options.from, options.to));
   const realized = num(stats.realizedPnlUsd) ?? 0;
-  const tokens = (holdings?.data || []).map((h) => ({
-    mint: h.mint,
-    realizedPnlSol: 0,
-    totalCostBasis: 0,
-    unrealizedCostSol: usdToNative(h.usdValue ?? 0, native) ?? 0,
-    unrealizedTokens: h.amount,
-    unrealizedLots: 1,
-    totalBuys: 0,
-    totalSells: 0,
-  }));
   return {
     success: true,
     address,
     data: {
       totalRealizedPnlSol: usdToNative(realized, native) ?? 0,
       totalRealizedPnlUsd: realized,
-      totalUnrealizedCostSol: tokens.reduce((s, t) => s + t.unrealizedCostSol, 0),
-      totalUnrealizedCostUsd: holdings?.data.reduce((s, h) => s + (h.usdValue || 0), 0) ?? 0,
-      tokenCount: tokens.length,
-      tokens,
+      totalUnrealizedCostSol: 0,
+      totalUnrealizedCostUsd: 0,
+      tokenCount: 0,
+      tokens: [],
     },
     tradesProcessed: num(stats.trades) ?? 0,
     truncated: false,
