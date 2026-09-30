@@ -153,6 +153,10 @@ export class RazeWebSocket {
       window.addEventListener(CHAIN_CHANGED_EVENT, () => this.repointBoards());
       window.addEventListener("trade-ui:api-settings", () => this.resetConnection());
       window.addEventListener("pagehide", () => this.disconnect());
+      // Back from the bfcache: the page is alive again but its socket is not.
+      window.addEventListener("pageshow", (e) => {
+        if ((e as PageTransitionEvent).persisted && this.subs.size) this.ensureSocket();
+      });
     }
   }
 
