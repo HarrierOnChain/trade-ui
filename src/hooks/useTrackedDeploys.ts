@@ -176,6 +176,18 @@ export function useTrackedDeploys(
     ws.subscribe(["deploy"]);
 
     const handler = (msg: Record<string, unknown>) => {
+      // The `new` board: a snapshot of recent launches on (re)subscribe, then
+      // `add` per launch. Updates and removes are not new deploys.
+      if (msg.kind === "snapshot") {
+        const rows = Array.isArray(msg.rows) ? msg.rows as Record<string, unknown>[] : [];
+        for (const row of rows) handleToken(row, false);
+        return;
+      }
+      if (msg.kind !== "add") return;
+      handleToken(msg, true);
+    };
+
+    const handleToken = (msg: Record<string, unknown>, fresh: boolean) => {
       const token = normalizeTokenEvent(msg);
       if (!token || !token.signer) return;
       const wallet = walletByAddrRef.current.get(token.signer);
@@ -187,7 +199,7 @@ export function useTrackedDeploys(
         walletLabel: wallet.label,
         timestampMs: ts,
         live: true,
-        isNew: true,
+        isNew: fresh,
       };
 
       setDeploys((prev) => {
@@ -207,6 +219,7 @@ export function useTrackedDeploys(
     const off = ws.on("deploy", handler);
     return () => {
       off();
+      ws.unsubscribe(["deploy"]);
     };
   }, [addressKey, maxDeploys]);
 

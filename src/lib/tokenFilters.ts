@@ -24,6 +24,21 @@ function matchesAnyKeyword(t: TokenEvent, keywords: string[]): boolean {
 }
 
 /**
+ * Platform gate for a comma-joined platform filter (`platformString`). Same
+ * rule as `passesFilters`: an empty filter or an unknown platform passes, so a
+ * launchpad the chips do not list yet is never hidden; a known one must be
+ * selected.
+ */
+export function platformAllowed(dex: string | undefined, platformFilter?: string): boolean {
+  if (!platformFilter || !dex) return true;
+  const d = dex.trim().toLowerCase();
+  const known = platforms().some((p) => p.value.toLowerCase() === d) ||
+    Object.keys(PLATFORM_FAMILY).some((b) => b.toLowerCase() === d);
+  if (!known) return true;
+  return platformFilter.toLowerCase().split(",").some((p) => p.trim() === d);
+}
+
+/**
  * True if the token passes all enabled filters. Live WS metrics (`live`) augment
  * REST fields where provided so the "last-seen-volume" style filters still work
  * before the next enrichment tick lands.
@@ -67,7 +82,9 @@ export function passesFilters(
 
   // $ Metrics — prefer live where the WS delta has ticked
   const effTradeCount = (t.tradeCount ?? 0) + (live?.tradeCount ?? 0);
-  const effVolume = (t.volume24h ?? t.totalSolVolume ?? 0) + (live?.volumeSol ?? 0);
+  // The Volume filter is in the native coin (SOL/ETH/BNB), like live.volumeSol;
+  // volume24h is USD and must not be mixed in.
+  const effVolume = (t.totalSolVolume ?? 0) + (live?.volumeSol ?? 0);
 
   if (!inRange(t.marketCap,       f.marketCap))       return false;
   if (!inRange(effVolume,         f.volume24h))       return false;

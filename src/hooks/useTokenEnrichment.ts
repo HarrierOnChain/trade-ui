@@ -19,10 +19,15 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
   const patch: Partial<TokenEvent> = {};
   const bundle = num(row.bundle_percentage);
   const sniper = num(row.sniper_percentage);
-  const vol = num(row.total_sol_volume ?? row.volume_24h);
+  // Units stay apart: `volume_24h` is USD, `total_sol_volume` is the chain's
+  // native coin. Storing USD as SOL multiplied every row's volume by ~100.
+  const volUsd = num(row.volume_24h);
+  const volNative = num(row.total_sol_volume);
   const tradeCount = num(row.trade_count);
   const fees = num(row.fees_total);
-  const traders = num(row.unique_traders ?? row.holders);
+  const holders = num(row.holders);
+  const traders = num(row.unique_traders);
+  const change = num(row.priceChange);
   const buyCount = num(row.buy_count);
   const sellCount = num(row.sell_count);
   const deploys = num(row.deploys_by_creator ?? row.creator_deploys ?? row.creatorDeploys);
@@ -35,16 +40,13 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
 
   if (bundle != null) patch.bundlePercentage = bundle;
   if (sniper != null) patch.sniperPercentage = sniper;
-  if (vol != null) {
-    patch.volume24h = vol;
-    patch.totalSolVolume = vol;
-  }
+  if (volUsd != null) patch.volume24h = volUsd;
+  if (volNative != null) patch.totalSolVolume = volNative;
   if (tradeCount != null) patch.tradeCount = tradeCount;
   if (fees != null) patch.feesTotal = fees;
-  if (traders != null) {
-    patch.uniqueTraders = traders;
-    patch.holders = traders;
-  }
+  if (holders != null) patch.holders = holders;
+  if (traders != null) patch.uniqueTraders = traders;
+  if (change != null) patch.priceChange = change;
   if (buyCount != null) patch.buyCount = buyCount;
   if (sellCount != null) patch.sellCount = sellCount;
   if (deploys != null) patch.creatorDeploys = deploys;

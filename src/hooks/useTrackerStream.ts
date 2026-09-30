@@ -28,8 +28,8 @@ export interface TrackedWallet {
 
 /**
  * A single tracker alert — either a historical trade pulled from
- * `/api/sol/trades/signer/{address}` or a live trade pushed over the
- * WebSocket signer subscription.
+ * `/v1/wallets/{chain}/{address}/trades` or a live trade pushed over the
+ * WebSocket's `wallet` channel.
  */
 export interface TrackerAlert {
   /** Stable id (signature + tokenMint + side); used as React key. */
@@ -123,45 +123,6 @@ function tradeToAlert(
     signature: String(trade.signature ?? ""),
     timestamp: ts || Date.now(),
     live,
-  };
-}
-
-/** Match the WS `trade` payload shape against a known signer. */
-function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
-  const inner =
-    msg.transaction && typeof msg.transaction === "object" && !Array.isArray(msg.transaction)
-      ? (msg.transaction as Record<string, unknown>)
-      : msg.data && typeof msg.data === "object" && !Array.isArray(msg.data)
-        ? (msg.data as Record<string, unknown>)
-        : msg;
-
-  const tokenMint = String(
-    inner.tokenMint ?? inner.token_mint ?? inner.mint ?? msg.tokenMint ?? "",
-  );
-  if (!tokenMint) return null;
-
-  const signer = String(inner.signer ?? msg.signer ?? "");
-  if (!signer) return null;
-
-  return {
-    signature: String(inner.signature ?? msg.signature ?? ""),
-    tokenMint,
-    signer,
-    transactionType: ((): "buy" | "sell" => {
-      const raw = String(
-        inner.transactionType ?? inner.transaction_type ?? inner.type ?? msg.transactionType ?? "buy",
-      );
-      return raw.toLowerCase() === "sell" ? "sell" : "buy";
-    })(),
-    tokensAmount: Number(inner.tokensAmount ?? inner.tokenAmount ?? 0),
-    avgPrice: Number(inner.avgPrice ?? inner.avg_price ?? 0),
-    solAmount: Number(inner.solAmount ?? inner.sol_amount ?? 0),
-    timestamp: (inner.timestamp ?? msg.timestamp ?? Date.now()) as string | number,
-    usdValue: inner.usdValue != null ? Number(inner.usdValue) : undefined,
-    marketCap: inner.marketCap != null ? Number(inner.marketCap) : undefined,
-    isBundle: Boolean(inner.isBundle ?? inner.is_bundle),
-    isSniper: Boolean(inner.isSniper ?? inner.is_sniper),
-    isProTrader: Boolean(inner.isProTrader ?? inner.proTrade ?? inner.pro_trade),
   };
 }
 
@@ -324,15 +285,37 @@ export function useTrackerStream(
     ws.subscribeSigners(addresses);
     setConnected(true);
 
+    // The API's `wallet` channel (Solana): a snapshot of recent swaps on every
+    // (re)subscribe — it fills whatever a reconnect missed — then one frame
+    // per swap. EVM wallets have no live channel; their feed is the REST seed.
     const handler = (msg: Record<string, unknown>) => {
-      const trade = normalizeWsTrade(msg);
+      const wallet = walletByAddrRef.current.get(String(msg.wallet ?? ""));
+      if (!wallet) return; // not one of ours (or unsubscribed meanwhile)
+
+      if (msg.snapshot === true) {
+        const trades = Array.isArray(msg.trades) ? msg.trades as Trade[] : [];
+        const seed = trades
+          .map((t) => tradeToAlert(t, wallet, false))
+          .filter((a): a is TrackerAlert => a != null);
+        for (const a of seed) seenLiveIdsRef.current.add(a.id);
+        if (!storeAlerts || seed.length === 0) return;
+        setAlerts((prev) => {
+          const have = new Set(prev.map((a) => a.id));
+          const fresh = seed.filter((a) => !have.has(a.id));
+          if (fresh.length === 0) return prev;
+          return [...prev, ...fresh]
+            .sort((x, y) => y.timestamp - x.timestamp)
+            .slice(0, maxAlerts);
+        });
+        return;
+      }
+
+      const trade = msg.trade as Trade | undefined;
       if (!trade) return;
-      const wallet = walletByAddrRef.current.get(trade.signer);
-      if (!wallet) return; // event isn't from a tracked signer
       const alert = tradeToAlert(trade, wallet, true);
       if (!alert) return;
 
-      // Skip duplicate deliveries — same tx can arrive on both channels.
+      // Skip duplicate deliveries (a snapshot re-sends recent swaps).
       if (seenLiveIdsRef.current.has(alert.id)) return;
       seenLiveIdsRef.current.add(alert.id);
       if (seenLiveIdsRef.current.size > 500) seenLiveIdsRef.current.clear();
@@ -356,12 +339,10 @@ export function useTrackerStream(
       }
     };
 
-    const offTrade = ws.on("trade", handler);
-    const offTransaction = ws.on("transaction", handler);
+    const off = ws.on("wallet_trade", handler);
 
     return () => {
-      offTrade();
-      offTransaction();
+      off();
       ws.unsubscribeSigners(addresses);
       seenLiveIdsRef.current.clear();
       setConnected(false);

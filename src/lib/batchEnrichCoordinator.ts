@@ -36,6 +36,11 @@ export interface BatchEnrichEntry {
   image?: string;
   image_uri?: string;
   sparkline?: number[];
+  /** 24h price change, percent. */
+  priceChange?: number;
+  marketCap?: number;
+  liquidity?: number;
+  graduationPercent?: number;
 }
 
 type PatchCallback = (data: Record<string, BatchEnrichEntry>) => void;

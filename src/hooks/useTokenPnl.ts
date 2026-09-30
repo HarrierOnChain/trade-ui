@@ -17,7 +17,7 @@ export interface TokenPnlData {
   loading: boolean;
 }
 
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 200; // the API's page cap
 const MAX_PAGES = 10;
 const DEMO_REFRESH_MS = 6_000;
 
@@ -115,9 +115,10 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
   useEffect(() => {
     if (!mint || pubkeys.length === 0) return;
 
+    // The mint's own trades channel (held by useLiveTradePrices above) already
+    // carries every swap of these wallets on this token: no per-wallet feed.
     const ws = RazeWebSocket.getInstance();
     ws.connect();
-    ws.subscribeSigners(pubkeys);
 
     const pubkeySet = new Set(pubkeys);
 
@@ -150,12 +151,9 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
     }
 
     const unsub1 = ws.on("trade", handleMsg);
-    const unsub2 = ws.on("transaction", handleMsg);
 
     return () => {
       unsub1();
-      unsub2();
-      ws.unsubscribeSigners(pubkeys);
     };
   }, [mint, pubkeysKey, pubkeys]);
 

@@ -19,8 +19,9 @@ export function useRazeListeners(mint: string | null | undefined): number | null
     setListeners(null);
     if (!mint) return;
 
+    // No listener-count channel on this API: nothing to subscribe, and the
+    // count stays null (hidden) unless something dispatches it.
     const ws = RazeWebSocket.getInstance();
-    ws.subscribeToken(mint);
 
     const handler = (msg: Record<string, unknown>) => {
       if (String(msg.mint ?? msg.address ?? "") !== mint) return;
@@ -39,7 +40,6 @@ export function useRazeListeners(mint: string | null | undefined): number | null
 
     return () => {
       unsub();
-      ws.unsubscribeToken(mint);
       if (typeof window !== "undefined") {
         window.removeEventListener(CHAIN_CHANGED_EVENT, onChain);
       }

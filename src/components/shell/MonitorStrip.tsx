@@ -15,15 +15,17 @@ export function MonitorStrip() {
     const ws = RazeWebSocket.getInstance();
     ws.connect();
     ws.subscribe(["deploy", "migration"]);
-    const unsubDeploy = ws.on("deploy", () => {
-      setDeployCount((n) => n + 1);
+    // Board frames: only an `add` is a new launch / graduation.
+    const unsubDeploy = ws.on("deploy", (msg) => {
+      if (msg.kind === "add") setDeployCount((n) => n + 1);
     });
-    const unsubMigration = ws.on("migration", () => {
-      setMigrationCount((n) => n + 1);
+    const unsubMigration = ws.on("migration", (msg) => {
+      if (msg.kind === "add") setMigrationCount((n) => n + 1);
     });
     return () => {
       unsubDeploy();
       unsubMigration();
+      ws.unsubscribe(["deploy", "migration"]);
     };
   }, []);
 
@@ -80,8 +82,7 @@ function useWsStatus() {
     const ws = RazeWebSocket.getInstance();
     ws.connect();
     const probe = () => {
-      const ref = (ws as unknown as { socket?: WebSocket }).socket;
-      setOk(ref?.readyState === WebSocket.OPEN);
+      setOk(ws.isLive());
     };
     probe();
     const id = setInterval(probe, 1500);

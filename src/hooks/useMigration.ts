@@ -1,22 +1,15 @@
 "use client";
 
 // Per-mint live migration trigger — fires once when a token the user is
-// currently viewing migrates over the WS (pump.fun → PumpSwap).
+// currently viewing graduates from its launchpad (pump.fun → PumpSwap, …).
 // Mirrors `useDexPaid`'s `liveFlipAt` contract.
 //
 // REST baseline (`alreadyMigrated`) is supplied by the parent — it already
 // knows from `useTokenInfo` whether `token.migrated_at` was non-null at
-// mount or whether the quote is a migrated pool. Passing it in saves a
-// duplicate REST round-trip and keeps the hook stateless about identity.
-//
-// Streaming emits payload shape:
-//   {
-//     type: "migration",
-//     data: { platform, mint, pool, pool_dex, slot, quote_mint },
-//     timestamp, signature, priceInfo
-//   }
-// Identifying fields can also be flat on the top-level message — we accept
-// either, same as normalize.ts.
+// mount. Live: the API's `token` channel re-sends the Token (with
+// `launchpad.graduated`) on subscribe and every ≤15 s while it trades, and the
+// `graduated` launchpad board adds the token the moment it moves. The first
+// `token` frame is a baseline too, so an already-graduated token never fires.
 
 import { useEffect, useRef, useState } from "react";
 import { RazeWebSocket } from "../api/websocket";
@@ -55,35 +48,45 @@ export function useMigration(
     if (!mint) return;
 
     const ws = RazeWebSocket.getInstance();
-    ws.subscribeToken(mint);
+    ws.connect();
+    ws.subscribeToken(mint, ["token"], { sse: true });
+    ws.subscribe(["migration"]);
+    let baselineSeen = false;
 
-    const handler = (msg: Record<string, unknown>) => {
-      // Same extractor shape as the backend's `matches()` and normalize.ts
-      // — pump.fun streaming nests identifying fields under `data`, some
-      // pipelines flatten.
-      const data =
-        msg.data && typeof msg.data === "object" && !Array.isArray(msg.data)
-          ? (msg.data as Record<string, unknown>)
-          : msg;
-      const m = String(data.mint ?? msg.mint ?? "");
-      if (m !== mint) return;
+    const fire = (pool: unknown, poolDex: unknown) => {
       if (seenMigrated.current) return;
       seenMigrated.current = true;
-
-      const poolDex =
-        (typeof data.pool_dex === "string" && data.pool_dex) ||
-        (typeof (data as { poolDex?: unknown }).poolDex === "string" &&
-          (data as { poolDex: string }).poolDex) ||
-        null;
-      const pool = typeof data.pool === "string" && data.pool ? data.pool : null;
-
       setState({
         liveMigratedAt: Date.now(),
-        poolDex: poolDex || null,
-        pool: pool || null,
+        poolDex: typeof poolDex === "string" && poolDex ? poolDex : null,
+        pool: typeof pool === "string" && pool ? pool : null,
       });
     };
-    const unsub = ws.on("migration", handler);
+
+    const onToken = (msg: Record<string, unknown>) => {
+      if (msg.tokenMint !== mint) return;
+      const raw = (msg.raw ?? {}) as Record<string, unknown>;
+      const lp = (raw.launchpad ?? null) as Record<string, unknown> | null;
+      const graduated = lp?.graduated === true;
+      if (!baselineSeen) {
+        baselineSeen = true;
+        if (graduated) seenMigrated.current = true;
+        return;
+      }
+      if (!graduated) return;
+      const pool = (raw.pool ?? null) as Record<string, unknown> | null;
+      fire(lp?.graduatedPool, pool?.dex);
+    };
+
+    // The graduated board's `add` is the earliest word of a graduation.
+    const onBoard = (msg: Record<string, unknown>) => {
+      if (msg.kind !== "add" || msg.mint_address !== mint) return;
+      fire(null, msg.dex);
+    };
+
+    const offToken = ws.on("token", onToken);
+    const offBoard = ws.on("migration", onBoard);
+    const unsub = () => { offToken(); offBoard(); };
 
     // Chain change — reset; the WS facade tears subs down for us.
     const onChain = () => {
@@ -96,7 +99,8 @@ export function useMigration(
 
     return () => {
       unsub();
-      ws.unsubscribeToken(mint);
+      ws.unsubscribeToken(mint, ["token"], { sse: true });
+      ws.unsubscribe(["migration"]);
       if (typeof window !== "undefined") {
         window.removeEventListener(CHAIN_CHANGED_EVENT, onChain);
       }

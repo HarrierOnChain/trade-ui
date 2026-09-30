@@ -202,7 +202,8 @@ export function useLiveTradePrices(
       const tokenAmount = extractTokenAmount(
         inner.tokenAmount ?? inner.token_amount ?? inner.tokensAmount
       );
-      const tradeType = String(inner.type ?? inner.transactionType ?? "BUY");
+      // `type` is the event name ("trade"); the side is `transactionType`.
+      const tradeType = String(inner.transactionType ?? inner.type ?? "BUY");
       const bundleAddDelta = analysisDelta(isBundle, tokenAmount, tradeType);
       const sniperAddDelta = analysisDelta(isSniper, tokenAmount, tradeType);
 
@@ -369,9 +370,40 @@ export function useLiveTradePrices(
       }, FLUSH_MS);
     });
 
+    // The trades channel's snapshot (recent trades, newest first) seeds the
+    // sparkline and the price before the first live print. Running totals
+    // (volume, trades, traders) stay "since subscribe": the snapshot is history.
+    const unsubSnapshot = ws.on("trade_snapshot", (msg) => {
+      const mint = String(msg.tokenMint ?? "");
+      if (!mint || !wantedRef.current.has(mint) || !Array.isArray(msg.trades)) return;
+      const prices = (msg.trades as Array<{ avgPrice?: number }>)
+        .map((t) => toNum(t.avgPrice))
+        .filter((p) => isFinite(p) && p > 0)
+        .reverse()
+        .slice(-BUFFER_SIZE);
+      if (!prices.length) return;
+      setMap((prev) => {
+        if (!wantedRef.current.has(mint)) return prev;
+        const cur = prev.get(mint);
+        if (cur && cur.prices.length >= prices.length) return prev;
+        rawBufRef.current.set(mint, prices);
+        const next = new Map(prev);
+        next.set(mint, {
+          ...emptyMetrics(),
+          ...(cur ?? {}),
+          price: prices[prices.length - 1]!,
+          prices: despikeSeries(prices),
+          ts: Date.now(),
+          flash: cur?.flash,
+        });
+        return next;
+      });
+    });
+
     return () => {
       unsub();
       unsubAnalysis();
+      unsubSnapshot();
       if (flushRef.current != null) {
         clearTimeout(flushRef.current);
         flushRef.current = null;

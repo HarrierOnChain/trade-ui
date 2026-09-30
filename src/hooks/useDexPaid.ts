@@ -62,8 +62,9 @@ export function useDexPaid(mint: string | null | undefined): DexPaidState {
     //    emits one `dex_paid` event per (mint, profile) so when one lands
     //    matching us, flip to `true` AND stamp `liveFlipAt` if this is the
     //    transition (so the celebration overlay fires exactly once).
+    //    (The API has no DexScreener-paid channel: no subscription is held,
+    //    and the flag stays unknown unless something dispatches it.)
     const ws = RazeWebSocket.getInstance();
-    ws.subscribeToken(mint);
 
     const handler = (msg: Record<string, unknown>) => {
       if (String(msg.mint ?? "") !== mint) return;
@@ -95,7 +96,6 @@ export function useDexPaid(mint: string | null | undefined): DexPaidState {
     return () => {
       cancelled = true;
       unsub();
-      ws.unsubscribeToken(mint);
       if (typeof window !== "undefined") {
         window.removeEventListener(CHAIN_CHANGED_EVENT, onChain);
       }

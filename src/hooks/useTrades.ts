@@ -83,6 +83,8 @@ function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
     avgPrice:        Number(inner.avgPrice         ?? inner.avg_price     ?? 0),
     solAmount:       Number(inner.solAmount        ?? inner.sol_amount    ?? 0),
     timestamp:       (inner.timestamp ?? msg.timestamp ?? Date.now()) as string | number,
+    usdValue:        inner.usdValue != null ? Number(inner.usdValue) : undefined,
+    avgPriceUSD:     inner.avgPriceUSD != null ? Number(inner.avgPriceUSD) : undefined,
     marketCap:       inner.marketCap != null ? Number(inner.marketCap) : undefined,
     isBundle:        Boolean(inner.isBundle        ?? inner.is_bundle),
     isSniper:        Boolean(inner.isSniper        ?? inner.is_sniper),
@@ -215,10 +217,11 @@ export function useTrades(
     ws.connect();
 
     if (prevMint.current && prevMint.current !== mint) {
-      ws.unsubscribeToken(prevMint.current);
+      ws.unsubscribeToken(prevMint.current, ["trades"], { sse: true });
     }
     prevMint.current = mint;
-    ws.subscribeToken(mint);
+    // The token being viewed: keep it streaming over SSE if the socket is down.
+    ws.subscribeToken(mint, ["trades"], { sse: true });
 
     function handleTrade(msg: Record<string, unknown>) {
       const trade = normalizeWsTrade(msg);
@@ -227,6 +230,14 @@ export function useTrades(
         if (prev.some((t) => t.signature === trade.signature)) return prev;
         return [trade, ...prev].slice(0, CAP);
       });
+    }
+
+    // Sent on every (re)subscribe: after a reconnect it fills the gap.
+    function handleSnapshot(msg: Record<string, unknown>) {
+      if (msg.tokenMint !== mint || !Array.isArray(msg.trades)) return;
+      const incoming = msg.trades as Trade[];
+      if (!incoming.length) return;
+      setTrades((prev) => sortTrades(mergeTrades(prev, incoming), "desc").slice(0, CAP));
     }
 
     function handleAnalysis(msg: Record<string, unknown>) {
@@ -248,15 +259,15 @@ export function useTrades(
       }));
     }
 
-    const unsub1 = ws.on("trade",       handleTrade);
-    const unsub2 = ws.on("transaction", handleTrade);
-    const unsub3 = ws.on("analysis",    handleAnalysis);
+    const unsub1 = ws.on("trade",          handleTrade);
+    const unsub2 = ws.on("trade_snapshot", handleSnapshot);
+    const unsub3 = ws.on("analysis",       handleAnalysis);
 
     return () => {
       unsub1();
       unsub2();
       unsub3();
-      ws.unsubscribeToken(mint);
+      ws.unsubscribeToken(mint, ["trades"], { sse: true });
       prevMint.current = null;
     };
   }, [mint, signer, sort, timeFilterActive]);

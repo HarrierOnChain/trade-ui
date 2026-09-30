@@ -42,12 +42,14 @@ function extractTrade(msg: Record<string, unknown>): WsTrade | null {
   return { tokenMint, signer, type: rawType === "sell" ? "sell" : "buy", tokens, sol, avgPrice, tsIso };
 }
 
-/** Recompute derived fields on a trader after a new trade has been folded in. */
+/** Recompute derived fields on a trader after a new trade has been folded in.
+ *  A trader from the API keeps its PnL (realized + unrealized, which a swap
+ *  at market price does not move); one first seen live gets cash-flow PnL. */
 function recompute(t: LiveTopTrader, solPrice: number): LiveTopTrader {
   const totalTrades = t.totalBuys + t.totalSells;
   const totalVolume = (t.buySol + t.sellSol) * (solPrice || 0);
-  const pnlSol = t.sellSol - t.buySol;
-  const totalPnL = pnlSol * (solPrice || 0);
+  const pnlSol = t.pnlFromApi ? t.pnlSol : t.sellSol - t.buySol;
+  const totalPnL = t.pnlFromApi ? t.totalPnL : pnlSol * (solPrice || 0);
   const avgTradeSize = totalTrades > 0 ? totalVolume / totalTrades : 0;
   const avgBuyPrice  = t.boughtTokens > 0 ? t.buySol / t.boughtTokens : 0;
   const avgSellPrice = t.soldTokens   > 0 ? t.sellSol / t.soldTokens : 0;
@@ -170,10 +172,10 @@ export function useTopTraders(mint: string | null, solPriceUsd: number = 0) {
           }, px);
           pendingRef.current.set(t.signer, updated);
 
-          const bottomVol = next.length >= MAX_TRADERS
-            ? (next[next.length - 1]?.totalVolume ?? 0)
-            : 0;
-          if ((updated.totalVolume ?? 0) <= bottomVol) continue;
+          // The list is the API's "top by profit": a newcomer must beat the
+          // bottom row's PnL (any PnL while the list is not full).
+          if (next.length >= MAX_TRADERS &&
+              (updated.totalPnL ?? 0) <= (next[next.length - 1]?.totalPnL ?? 0)) continue;
 
           pendingRef.current.delete(t.signer);
           promotedCountRef.current += 1;
@@ -186,7 +188,7 @@ export function useTopTraders(mint: string | null, solPriceUsd: number = 0) {
 
         if (!mutated) return prev;
 
-        next.sort((a, b) => (b.totalVolume ?? 0) - (a.totalVolume ?? 0));
+        next.sort((a, b) => (b.totalPnL ?? 0) - (a.totalPnL ?? 0));
         if (next.length > MAX_TRADERS) next.length = MAX_TRADERS;
         return next;
       });

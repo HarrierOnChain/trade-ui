@@ -160,9 +160,9 @@ export function useTrackedPerps(wallets: TrackedWallet[], maxFills = 200) {
     const addresses = addressKey ? addressKey.split(",").filter(Boolean) : [];
     if (addresses.length === 0) return;
 
+    // No perp channel on this API: listen only (a wallet subscription would
+    // stream spot swaps nobody here reads).
     const ws = RazeWebSocket.getInstance();
-    ws.connect();
-    ws.subscribeSigners(addresses);
 
     const handleFill = (msg: Record<string, unknown>) => {
       const data = msg.data as Record<string, unknown> | undefined;
@@ -221,7 +221,6 @@ export function useTrackedPerps(wallets: TrackedWallet[], maxFills = 200) {
     const off = ws.on("perp_fill", handleFill);
     return () => {
       off();
-      ws.unsubscribeSigners(addresses);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addressKey, maxFills]);

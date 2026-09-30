@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { fetchTokenInfo, fetchBatchTokenEnrich } from "../api/client";
+import { fetchTokenInfo } from "../api/client";
+import { RazeWebSocket } from "../api/websocket";
+import { defined } from "../api/mappers";
 import { friendlyFetchError } from "../api/chainError";
 import { fetchMetadataFromUri, fetchPublicMetadata, getCachedPublicMetadata, seedPublicMetadata } from "../api/metadata";
 import { mergeDexLabel } from "../lib/format";
@@ -82,49 +84,9 @@ export function useTokenInfo(mint: string | null) {
       () => ({} as Awaited<ReturnType<typeof fetchPublicMetadata>>)
     );
 
-    const enrichPromise = fetchBatchTokenEnrich([mint], 0)
-      .then((res) => {
-        const row =
-          res?.data && typeof res.data === "object"
-            ? (res.data[mint] as Record<string, unknown> | undefined)
-            : undefined;
-        if (!row) return {} as Partial<TokenEvent>;
-        const patch: Partial<TokenEvent> = {};
-        const mcap = num(row.marketCap ?? row.market_cap);
-        const initMc = num(row.initialMarketCap ?? row.initial_market_cap);
-        const bundle = num(row.bundlePercentage ?? row.bundle_percentage);
-        const sniper = num(row.sniperPercentage ?? row.sniper_percentage);
-        const vol24 = num(row.volume24h ?? row.volume_24h ?? row.total_sol_volume);
-        const holders = num(row.holders ?? row.unique_traders);
-        const change = num(row.priceChange ?? row.price_change);
-        const price = num(row.lastPrice ?? row.last_price);
-        const tradeCount = num(row.trade_count ?? row.tradeCount);
-        const solVolume = num(row.total_sol_volume ?? row.totalSolVolume);
-        const feesTotal = num(row.fees_total ?? row.feesTotal);
-        const buyCount = num(row.buy_count ?? row.buyCount);
-        const sellCount = num(row.sell_count ?? row.sellCount);
-        const uniqueTraders = num(row.unique_traders ?? row.uniqueTraders);
-        if (mcap != null) patch.marketCap = mcap;
-        if (initMc != null) patch.initialMarketCap = initMc;
-        if (bundle != null) patch.bundlePercentage = bundle;
-        if (sniper != null) patch.sniperPercentage = sniper;
-        if (vol24 != null) patch.volume24h = vol24;
-        if (holders != null) patch.holders = holders;
-        if (change != null) patch.priceChange = change;
-        if (price != null) patch.lastPrice = price;
-        if (tradeCount != null) patch.tradeCount = tradeCount;
-        if (solVolume != null) patch.totalSolVolume = solVolume;
-        if (feesTotal != null) patch.feesTotal = feesTotal;
-        if (buyCount != null) patch.buyCount = buyCount;
-        if (sellCount != null) patch.sellCount = sellCount;
-        if (uniqueTraders != null) patch.uniqueTraders = uniqueTraders;
-        if (row.name) patch.name = String(row.name);
-        if (row.symbol) patch.symbol = String(row.symbol);
-        if (row.platform) patch.dex = String(row.platform);
-        if (row.signer) patch.signer = String(row.signer);
-        return patch;
-      })
-      .catch(() => ({} as Partial<TokenEvent>));
+    // The single-token read already carries stats, safety and launchpad; the
+    // batch enrich endpoint would only repeat it.
+    const enrichPromise = Promise.resolve({} as Partial<TokenEvent>);
 
     Promise.all([basePromise, enrichPromise])
       .then(async ([base, enrich]) => {
@@ -211,6 +173,63 @@ export function useTokenInfo(mint: string | null) {
       cancelled = true;
     };
   }, [mint, previewSnapshot]);
+
+  // Live: the API's `token` channel — a `tick` (price, market cap, liquidity)
+  // on every trade and the whole Token again every ≤15 s while it trades
+  // (holders, 24h stats, curve). Coalesced to one render a second: several
+  // components on a token page each hold this hook.
+  useEffect(() => {
+    if (!mint || isPreviewMint(mint)) return;
+    const ws = RazeWebSocket.getInstance();
+    ws.connect();
+    ws.subscribeToken(mint, ["token"], { sse: true });
+    let pending: Partial<TokenEvent> = {};
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      timer = null;
+      const patch = pending;
+      pending = {};
+      setInfo((prev) => (prev && prev.mint_address === mint ? { ...prev, ...patch } : prev));
+    };
+    const queue = (patch: Partial<TokenEvent>) => {
+      Object.assign(pending, defined(patch));
+      if (timer == null) timer = setTimeout(flush, 1_000);
+    };
+    const offTick = ws.on("tick", (msg) => {
+      if (msg.tokenMint !== mint) return;
+      queue({
+        marketCap: num(msg.marketCapUsd),
+        lastPrice: num(msg.lastPrice),
+        liquidity: num(msg.liquidityUsd),
+      });
+    });
+    const offToken = ws.on("token", (msg) => {
+      if (msg.tokenMint !== mint || !msg.token) return;
+      const t = msg.token as TokenEvent;
+      queue({
+        marketCap: t.marketCap,
+        lastPrice: t.lastPrice,
+        liquidity: t.liquidity,
+        holders: t.holders,
+        priceChange: t.priceChange,
+        volume24h: t.volume24h,
+        totalSolVolume: t.totalSolVolume,
+        tradeCount: t.tradeCount,
+        buyCount: t.buyCount,
+        sellCount: t.sellCount,
+        graduationPercent: t.graduationPercent,
+        migrated_at: t.migrated_at,
+        bundlePercentage: t.bundlePercentage,
+        sniperPercentage: t.sniperPercentage,
+      });
+    });
+    return () => {
+      offTick();
+      offToken();
+      if (timer != null) clearTimeout(timer);
+      ws.unsubscribeToken(mint, ["token"], { sse: true });
+    };
+  }, [mint]);
 
   return { info, loading, error };
 }

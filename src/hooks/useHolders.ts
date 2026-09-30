@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react";
-import { fetchHolders, fetchTokenSupply } from "../api/client";
+import { fetchHolders } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { toArray } from "../api/normalize";
 import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
@@ -77,19 +77,17 @@ export function useHolders(mint: string | null) {
   const load = useCallback(async () => {
     if (!mint) return;
     try {
-      const [holdersRes, supplyRes] = await Promise.all([
-        fetchHolders(mint, 200),
-        fetchTokenSupply(mint).catch(() => null),
-      ]);
-      // Standard Solana memecoin supply is 1B. If the RPC returns something
-      // implausibly small (sometimes 1000 or stale), fall back to 1B so we
-      // don't divide by it and blow percentages up to millions of %.
-      const rawSupply = supplyRes?.supply ?? 0;
+      const holdersRes = await fetchHolders(mint, 200);
+      // Standard Solana memecoin supply is 1B. If the API has none (or
+      // something implausibly small), fall back to 1B so we don't divide by
+      // it and blow percentages up to millions of %.
+      const rawSupply = holdersRes.supply ?? 0;
       const resolvedSupply = rawSupply >= 1_000_000 ? rawSupply : 1_000_000_000;
       const list = toArray<Holder>(holdersRes).map((h, i) => ({
         ...h,
         rank: h.rank ?? i + 1,
-        percentage: holderPct(h.amount, resolvedSupply),
+        // The API's share of supply; our own division only when it has none.
+        percentage: h.percentage > 0 ? h.percentage : holderPct(h.amount, resolvedSupply),
       }));
       setSupply(resolvedSupply);
       // holders endpoint returns currentPriceSol (latest trade avg_price) at
