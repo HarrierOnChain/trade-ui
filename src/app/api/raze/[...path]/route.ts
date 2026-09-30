@@ -4,7 +4,12 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** RAZE_API_BASE is the API's host root (`https://api.raze.bot`,
+ *  `http://localhost:8810`); this proxy adds the `/v1` prefix. */
 const DEFAULT_BASE = (process.env.RAZE_API_BASE || "https://api.raze.bot").replace(/\/+$/, "");
+
+/** Routes the API serves outside `/v1`. */
+const ROOT_ROUTES = new Set(["health"]);
 
 function sanitizeBase(raw: string): string | null {
   const s = raw.trim().replace(/\/+$/, "");
@@ -18,13 +23,17 @@ function sanitizeBase(raw: string): string | null {
   }
 }
 
+function errorBody(code: string, message: string) {
+  return { error: { code, message } };
+}
+
 async function credentials(req: NextRequest): Promise<{ base: string; key: string }> {
   const jar = await cookies();
   const envKey = (process.env.RAZE_API_KEY || "").trim();
   const envBase = (process.env.RAZE_API_BASE || "").replace(/\/+$/, "");
   const headerKey = req.headers.get("x-trade-ui-key") || req.headers.get("x-api-key") || "";
   // .env.local wins. Browser localStorage still defaults to api.raze.bot and
-  // would otherwise override a local evmapi via x-trade-ui-base.
+  // would otherwise override a local API via x-trade-ui-base.
   const key = (
     envKey ||
     headerKey ||
@@ -42,29 +51,34 @@ async function credentials(req: NextRequest): Promise<{ base: string; key: strin
 
 async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] }> }) {
   const params = await ctx.params;
-  const segs = params.path || [];
+  // `/api/raze/v1/…` and `/api/raze/…` are the same route.
+  const segs = (params.path || []).filter((s, i) => !(i === 0 && s === "v1"));
   const path = segs.map(encodeURIComponent).join("/");
   const { base, key } = await credentials(req);
-  if (!key) {
-    return NextResponse.json(
-      { ok: false, data: null, error: { code: "unauthorized", message: "Set RAZE_API_KEY or paste a key in Settings." }, nextCursor: null },
-      { status: 401 },
-    );
+  // No key is fine: an API without keys configured is open. When it is not,
+  // it answers 401 itself and the UI asks for a key.
+  const prefix = ROOT_ROUTES.has(segs[0] || "") ? "" : "/v1";
+  let url: URL;
+  try {
+    url = new URL(`${base}${prefix}/${path}`);
+  } catch {
+    return NextResponse.json(errorBody("bad_request", "Invalid API base"), { status: 400 });
   }
-  const url = new URL(`${base}/${path}`);
   req.nextUrl.searchParams.forEach((value, k) => {
-    if (k === "api_key") return;
+    // The key travels as a header, never in a URL the upstream might log.
+    if (k === "api_key" || k === "apiKey") return;
     url.searchParams.set(k, value);
   });
 
   const headers = new Headers();
-  headers.set("x-api-key", key);
+  if (key) headers.set("x-api-key", key);
   headers.set("accept", req.headers.get("accept") || "*/*");
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
 
+  // `/v1/stream/{channel}` is the API's Server-Sent Events route.
   const isStream =
-    segs[segs.length - 1] === "stream" ||
+    segs[0] === "stream" ||
     (req.headers.get("accept") || "").includes("text/event-stream");
 
   if (isStream) return proxySse(req, url, headers);
@@ -87,20 +101,16 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] 
     const timedOut =
       e instanceof Error && (e.name === "TimeoutError" || /timed out/i.test(e.message));
     return NextResponse.json(
-      {
-        ok: false,
-        data: null,
-        error: {
-          code: timedOut ? "upstream_timeout" : "upstream_error",
-          message: timedOut ? "Upstream timed out" : "Upstream request failed",
-        },
-        nextCursor: null,
-      },
+      errorBody(
+        timedOut ? "upstream_timeout" : "upstream_unavailable",
+        timedOut ? "Upstream timed out" : "Upstream request failed",
+      ),
       { status: timedOut ? 504 : 502 },
     );
   }
   const outHeaders = new Headers();
-  const pass = ["content-type", "cache-control", "x-request-id"];
+  // `location`: the token image route answers 302 to the image itself.
+  const pass = ["content-type", "cache-control", "x-request-id", "location", "retry-after"];
   for (const name of pass) {
     const v = upstream.headers.get(name);
     if (v) outHeaders.set(name, v);
@@ -135,6 +145,7 @@ async function proxySse(req: NextRequest, url: URL, headers: Headers): Promise<N
     sseLive = Math.max(0, sseLive - 1);
   };
 
+  headers.set("accept", "text/event-stream");
   let upstream: Response;
   try {
     upstream = await fetch(url, {

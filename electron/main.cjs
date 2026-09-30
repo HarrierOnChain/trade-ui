@@ -9,11 +9,12 @@ let server = null;
 function startNextIfNeeded() {
   if (process.env.TRADE_UI_URL) return;
   if (process.env.NODE_ENV === "development") return;
-  const nextBin = path.join(__dirname, "..", "node_modules", "next", "dist", "bin", "next");
-  server = spawn(process.execPath, [nextBin, "start", "-p", "3000"], {
+  // server.cjs = `next start` + the same-origin `/api/ws` proxy that keeps the
+  // API key server-side.
+  server = spawn(process.execPath, [path.join(__dirname, "..", "server.cjs")], {
     cwd: path.join(__dirname, ".."),
     stdio: "inherit",
-    env: { ...process.env, PORT: "3000" },
+    env: { ...process.env, PORT: "3000", NODE_ENV: "production", ELECTRON_RUN_AS_NODE: "1" },
   });
 }
 
