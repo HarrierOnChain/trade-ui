@@ -1,6 +1,7 @@
 "use strict";
 /**
- * Production server: Next.js + a WebSocket proxy to the market-data API.
+ * Server: Next.js + a WebSocket proxy to the market-data API. `npm start` runs
+ * it on the production build, `npm run dev` (`--dev`) with hot reload.
  *
  * The browser connects to same-origin `/api/ws`; this process upgrades that
  * socket and forwards it to `${RAZE_API_BASE}/v1/ws` (ws:// or wss:// by the
@@ -44,7 +45,8 @@ process.env.TRADE_UI_WS_PROXY = "1";
 const port = Number(process.env.PORT || 3000);
 const DEFAULT_BASE = "https://api.raze.bot";
 
-const app = next({ dev: false, hostname: "0.0.0.0", port });
+const dev = process.argv.includes("--dev");
+const app = next({ dev, hostname: "0.0.0.0", port });
 const handle = app.getRequestHandler();
 
 function readCookie(req, name) {
@@ -183,7 +185,8 @@ app.prepare().then(() => {
       proxyUpgrade(req, socket, head);
       return;
     }
-    socket.destroy();
+    // In dev Next adds its own upgrade listener for hot reload (/_next/webpack-hmr).
+    if (!dev) socket.destroy();
   });
   server.listen(port, () => {
     console.log(`> trade-ui ready on http://127.0.0.1:${port}`);

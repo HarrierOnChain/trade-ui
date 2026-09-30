@@ -37,14 +37,11 @@ Or leave `.env.local` empty and paste the key on first launch (it is kept in an 
 Browser:
 
 ```bash
-npm run dev          # http://127.0.0.1:3000
+npm run dev          # http://127.0.0.1:3000, hot reload: server.cjs --dev
 npm run build && npm start   # production: server.cjs
 ```
 
-The WebSocket depends on how the UI runs:
-
-- `npm start` (`server.cjs`, also what the desktop app starts): the browser opens same-origin `/api/ws`, which `server.cjs` forwards to `${RAZE_API_BASE}/v1/ws` (ws or wss by the base's scheme) with the key from `.env.local`.
-- `npm run dev`: Next has no upgrade handler, so the browser opens the API's `/v1/ws` directly — keyless (fine for a local API without keys), or with the key typed in Settings (`?apiKey=`). A server-side key alone is not enough there: the UI then streams over SSE through the proxy instead.
+Both run `server.cjs`, also what the desktop app starts: the browser opens same-origin `/api/ws`, which `server.cjs` forwards to `${RAZE_API_BASE}/v1/ws` (ws or wss by the base's scheme) with the key from `.env.local`. With plain `next dev` (no upgrade handler) the browser opens the API's `/v1/ws` directly instead — keyless, or with the key typed in Settings (`?apiKey=`) — and otherwise streams over SSE through the proxy.
 
 Desktop (Electron, starts the same Next server in production):
 
