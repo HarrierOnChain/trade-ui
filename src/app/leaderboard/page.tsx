@@ -31,12 +31,10 @@ const PERIODS: Array<{ value: LeaderboardPeriod; label: string }> = [
   { value: "monthly", label: "30d" },
 ];
 
-const PLATFORMS: Array<{ value: LeaderboardPlatform; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "pumpfun", label: "Pump.fun" },
-  { value: "bonk", label: "Bonk" },
-  { value: "raydium", label: "Raydium" },
-];
+// The API's wallet leaderboard (/v1/wallets/top) is chain-wide: there is no
+// per-platform ranking, so the Pump.fun / Bonk / Raydium chips are gone rather
+// than left clickable and doing nothing.
+const PLATFORMS: Array<{ value: LeaderboardPlatform; label: string }> = [];
 
 export default function LeaderboardPage() {
   const isPhone = useIsPhone();
@@ -207,7 +205,7 @@ export default function LeaderboardPage() {
         justifyContent: "space-between", gap: 10,
       }}>
         <TabBar tabs={PERIODS} value={period} onChange={setPeriod} />
-        {view === "all" && (
+        {view === "all" && PLATFORMS.length > 0 && (
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", padding: isPhone ? 0 : "0 4px" }}>
             {PLATFORMS.map((p) => {
               const on = platform === p.value;

@@ -318,7 +318,10 @@ export default function PortfolioPage() {
 
   const holdingUsd = useCallback(
     (h: TokenHolding): number => {
-      if ((h.usdValue ?? 0) > 0) return h.usdValue!;
+      // The API's valuation wins, 0 included: it answers null when it does not
+      // know, and a 0 is its verdict on an illiquid bag (a $3 pool whose last
+      // dust print says $1.18/token priced one wallet's dust at $13.6M).
+      if (h.usdValue != null) return h.usdValue;
       const lp = liveMap.get(h.mint)?.price ?? 0;
       return lp > 0 && solPrice > 0 ? lp * solPrice * h.amount : 0;
     },

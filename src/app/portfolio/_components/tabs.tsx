@@ -112,7 +112,8 @@ export function HoldingsTab({
     return holdings.map((h) => {
       const lp = liveMap.get(h.mint)?.price ?? 0;
       const liveUsd = lp > 0 && solPrice > 0 ? lp * solPrice * h.amount : 0;
-      const usd = (h.usdValue ?? 0) > 0 ? h.usdValue! : liveUsd;
+      // The API's valuation (0 included) wins; live price only when it is null.
+      const usd = h.usdValue != null ? h.usdValue : liveUsd;
       return { holding: h, usd };
     }).sort((a, b) => b.usd - a.usd);
   }, [holdings, liveMap, solPrice]);

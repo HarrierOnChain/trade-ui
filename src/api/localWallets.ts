@@ -235,19 +235,6 @@ export function resetLocalDemo(walletId: string): BackendWallet {
   return publicWallet(w);
 }
 
-function lamportsToSol(n: number): number {
-  return n / 1_000_000_000;
-}
-
-function weiToEth(wei: string): number {
-  try {
-    const v = BigInt(wei);
-    return Number(v) / 1e18;
-  } catch {
-    return 0;
-  }
-}
-
 export async function fetchLocalBalances(walletIds?: string[]): Promise<{
   balances: Record<string, { ok: true; balances: { sol: number; tokens: Array<{ mint: string; amount: number; decimals: number }> } } | { ok: false; error: string }>;
 }> {
@@ -264,23 +251,24 @@ export async function fetchLocalBalances(walletIds?: string[]): Promise<{
     }
     const chain = (w.chainId || "sol") as ChainId;
     try {
-      const native = await evmapiGet<{
-        nativeTokenBalance?: number | string;
-        networkBreakdown?: Array<{ nativeBalance?: number | string }>;
-      }>(`/wallets/${chain}/${encodeURIComponent(w.pubkey)}/native`).catch(() => null);
-      const holdings = await evmapiGet<Array<{
-        address?: string;
-        amount?: number;
-        decimals?: number;
-      }>>(`/wallets/${chain}/${encodeURIComponent(w.pubkey)}/holdings`).catch(() => null);
-      let sol = 0;
-      const raw = native?.data?.nativeTokenBalance;
-      if (typeof raw === "number") sol = chain === "sol" ? lamportsToSol(raw) : raw;
-      else if (typeof raw === "string") sol = chain === "sol" ? lamportsToSol(Number(raw)) : weiToEth(raw);
+      // The wallet profile carries the native balance in whole coins
+      // (SOL / ETH / BNB); holdings carry amounts in whole tokens, no decimals.
+      const [profile, holdings] = await Promise.all([
+        evmapiGet<{ nativeBalance?: number | null }>(
+          `/wallets/${chain}/${encodeURIComponent(w.pubkey)}`,
+          { period: "30d" },
+        ).catch(() => null),
+        evmapiGet<Array<{ token?: string; amount?: number | null }>>(
+          `/wallets/${chain}/${encodeURIComponent(w.pubkey)}/holdings`,
+          { limit: 100 },
+        ).catch(() => null),
+      ]);
+      const raw = profile?.data?.nativeBalance;
+      const sol = typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
       const tokens = (Array.isArray(holdings?.data) ? holdings!.data : []).map((h) => ({
-        mint: String(h.address || ""),
+        mint: String(h.token || ""),
         amount: Number(h.amount || 0),
-        decimals: Number(h.decimals || 0),
+        decimals: 0,
       })).filter((t) => t.mint && t.amount > 0);
       balances[w.id] = { ok: true, balances: { sol, tokens } };
     } catch (e) {

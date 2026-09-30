@@ -130,7 +130,10 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
   const data: Record<string, unknown> = {};
-  const unique = [...new Set(mints.filter(Boolean))];
+  // Only addresses of the active chain's family: one foreign id (a search
+  // result from another chain) makes the API reject the whole batch (400).
+  const evm = c !== "sol";
+  const unique = [...new Set(mints.filter((m) => m && /^0x[0-9a-fA-F]{40}$/.test(m) === evm))];
   // One batch call per BATCH_IDS tokens instead of two calls per token. The
   // contract allows 50, but today the API answers 404 "tokens not found" to
   // any batch of more than 10 (its upstream caps there), so stay at 10.

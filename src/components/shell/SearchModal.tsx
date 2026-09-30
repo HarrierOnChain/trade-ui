@@ -23,6 +23,10 @@ function searchResultToTokenEvent(r: SearchResult): TokenEvent {
     symbol: r.symbol,
     dex: r.platform,
     uri: r.uri ?? null,
+    // The API's search rows carry the image, market cap and price already.
+    image: r.image ?? null,
+    marketCap: r.marketCap,
+    lastPrice: r.lastPrice,
     created_at: r.created_at ?? r.time ?? "",
   };
 }
