@@ -1,12 +1,12 @@
 /**
- * SolanaDatafeed – IBasicDataFeed implementation
- * Mirrors solana-frame's SolanaDatafeed, using the public Raze API with ?apiKey=
+ * SolanaDatafeed – IBasicDataFeed implementation over the market-data API.
  *
- * Key differences from the naive version:
- *  - Uses /api/sol/tokens/ohlc/{mint}?timeframe=…  (NOT the trades endpoint)
- *  - Converts SOL prices → market cap:  price × solPrice × tokenSupply
- *  - Cursor-based pagination with oldestTimestamp
- *  - Proper _lastBar continuity for real-time bars
+ *  - History: `/v1/tokens/{chain}/{address}/candles`, `unit=marketCap` for the
+ *    market-cap display and `unit=usd` for price; SOL display divides by the
+ *    native coin's USD price. Scroll-back pages with `to` = oldest bar − 1.
+ *  - Live: the `candles` channel for the chart's (interval, unit) — the API's
+ *    forming bar, folded from the same trades the tape shows.
+ *  - Proper _lastBar continuity for real-time bars.
  */
 import type {
   IExternalDatafeed,
@@ -30,20 +30,14 @@ export type MarksProvider = (from: number, to: number) => Mark[];
 /** Snapshot of an all-time high in the chart's current display scale. */
 export interface ATHInfo { price: number; time: number }
 type ATHCallback = (ath: ATHInfo | null) => void;
-import { razeGet } from "../../api/client";
+import { fetchCandles, type ApiCandle, type OhlcTimeframe } from "../../api/client";
+import { nativeUsd } from "../../api/native";
 import { RazeWebSocket } from "../../api/websocket";
 import { fetchPublicMetadata, getCachedPublicMetadata } from "../../api/metadata";
 import { REGION_CHANGED_EVENT } from "../../lib/regions";
-import { getActiveChain, apiBase, CHAIN_CHANGED_EVENT } from "../../lib/chains";
+import { CHAIN_CHANGED_EVENT } from "../../lib/chains";
 import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../../lib/previewData";
-import { despikeBars, LiveBarGuard } from "../../lib/candleDespike";
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-/** Raze GET via wire — uses shared `razeGet` (single-flight cache + retry). */
-function razeFetch<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
-  return razeGet<T>(path, params);
-}
+import { despikeBars } from "../../lib/candleDespike";
 
 // ── resolution helpers ────────────────────────────────────────────────────────
 
@@ -92,32 +86,11 @@ function alignTime(timeMs: number, resolution: string): number {
   return Math.floor(timeMs / ms) * ms;
 }
 
-// ── API response types ────────────────────────────────────────────────────────
-
-interface OHLCVItem {
-  timestamp: string;
-  token_mint?: string;
-  open:   string | number;
-  high:   string | number;
-  low:    string | number;
-  close:  string | number;
-  volume: string | number;
-  sol_price?: string | number;
-}
-
-interface OHLCResponse {
-  data:             OHLCVItem[];
-  oldestTimestamp:  number | null;
-  count?:           number;
-}
-
 // ── SolanaDatafeed ────────────────────────────────────────────────────────────
 
-const CHUNK         = 50;   // candles per scroll-back page (_fetchMoreBars)
-const INITIAL_LIMIT = 150;  // initial window fetched in ONE request (was INITIAL_PAGES×CHUNK sequential)
+const CHUNK         = 300;  // candles per scroll-back page (_fetchMoreBars)
+const INITIAL_LIMIT = 300;  // initial window fetched in ONE request
 const CACHE_TTL     = 5_000; // ms
-/** Nominal Solana slot duration. Only used to size the live-bar staleness gate. */
-const SLOT_MS       = 400;
 
 export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   private _cfg: DatafeedConfiguration = {
@@ -146,13 +119,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   private _inflightRequests = new Map<string, Promise<void>>();
   // `{mint}-{resolution}` → last rendered Bar (for continuity)
   private _lastBar = new Map<string, Bar>();
-  // `{mint}-{resolution}` → print-corroboration guard for the live bar.
-  private _liveGuard = new Map<string, LiveBarGuard>();
-  // Highest trade slot seen ≈ chain tip. Mirrors the server's `OHLC_HEAD_SLOT`.
-  // ⚠️ Monotonic and never reset per mint: if the FIRST print after a subscribe
-  // is itself a stale relay it becomes the head and passes its own gate. Same
-  // limitation the server carries; a single fresh print corrects it.
-  private _headSlot = 0;
   // All-time-high tracking. Keyed by `{mint}-{apiTimeframe}` to match _cache.
   // Updates are monotonic — once an ATH is recorded it can only be raised by a
   // higher bar. This prevents stale cache TTL refetches (which return only the
@@ -168,8 +134,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   private _solPrice          = 0;
   private _solPriceTs        = 0;
   private _solPriceInflight: Promise<number> | null = null;
-  // token supply: mint → supply
-  private _supply = new Map<string, number>();
   // display label cache: mint → "SYMBOL NAME"
   private _tokenLabel = new Map<string, string>();
 
@@ -177,9 +141,9 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   private _currency: "usd" | "sol" = "usd";
   private _display:  "mcap" | "price" = "mcap";
 
-  // WebSocket
+  // WebSocket: the `candles` channel for (mint, interval, unit).
   private _wireSub: { cancel(): void } | null = null;
-  private _wireSubMint = "";
+  private _wireSubKey = "";
 
   // Preview-mint reactivity: TV reset-cache callbacks (one per subscribeBars
   // listener) fired whenever the deploy form re-publishes its snapshot, so the
@@ -212,11 +176,14 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     this._hasMore.clear();
     this._oldestCursor.clear();
     this._lastBar.clear();
-    this._liveGuard.clear();
     // ATH is tracked in the chart's display scale; the previous values are
     // meaningless after the multiplier flips. The TVChart instance is also
     // rebuilt on currency/display change so listeners will re-subscribe.
     this._athByKey.clear();
+    // The live feed's unit follows the display (marketCap vs usd).
+    if (this._currentSymbol && this._currentResolution) {
+      this._connectWs(this._currentSymbol, this._currentResolution);
+    }
   }
 
   setMarksProvider(provider: MarksProvider | null): void {
@@ -418,13 +385,9 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       // Pre-fetch solPrice in parallel with bars so the placeholder branch never
       // sees _solPrice=0 (which would make the initial mcap bar show as $0).
       void this._getTokenLabel(mint);
-      // Pre-fetch solPrice + supply in parallel with the OHLCV request so that
-      // by the time _loadBars processes the response, both are already cached.
-      // Without this, supply is only kicked off *after* the OHLCV response
-      // arrives, adding a second serial async hop before the chart can render.
+      // The native price in parallel with the candles (SOL display needs it).
       void this._getSolPrice();
       if (!isPreviewMint(mint) && !isStreamOnly(mint)) {
-        void this._getSupply(mint);
         await this._loadBars(mint, "1m", `${mint}-1m`);
       }
 
@@ -688,6 +651,32 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     return filtered.length ? filtered : null;
   }
 
+  /** The API unit behind the current display. */
+  private _unit(): "usd" | "marketCap" {
+    return this._display === "mcap" ? "marketCap" : "usd";
+  }
+
+  /** API candles (USD price or USD market cap) → display bars. SOL display
+   *  divides by the native coin's current USD price: the API has no
+   *  per-candle native price. */
+  private _toBars(items: ApiCandle[], timeframe: string, div: number): Bar[] {
+    const frameMs = timeframeToMs(timeframe);
+    return items.map((c) => ({
+      time:   Math.floor(c.time / frameMs) * frameMs,
+      open:   c.open  / div,
+      high:   c.high  / div,
+      low:    c.low   / div,
+      close:  c.close / div,
+      volume: c.volume,
+    }));
+  }
+
+  /** 1 in USD display; the native price in SOL display (0 = not known yet). */
+  private async _divisor(): Promise<number> {
+    if (this._currency === "usd") return 1;
+    return this._getSolPrice();
+  }
+
   /** Fetches the initial batch of OHLCV data from the API into _cache */
   private async _loadBars(mint: string, timeframe: string, baseKey: string): Promise<void> {
     const cached = this._cache.get(baseKey);
@@ -700,97 +689,41 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     }
 
     const loadPromise = (async () => {
-      const needsSolPrice = this._currency === "usd";
-      const needsSupply   = this._display  === "mcap";
-      const collected: Bar[] = [];
-
-      // solPrice + supply are fetched lazily, only when the window has data.
-      // This makes empty-data tokens (new launches) resolve instantly.
-      let globalSolPrice = needsSolPrice ? 0 : 1; // 0 = not yet fetched (USD mode)
-      let supply         = needsSupply   ? 0 : 1; // 0 = not yet fetched (mcap mode)
-
-      // Initial window in a SINGLE request. The OHLC endpoint serves this whole
-      // window in one round-trip (~15-30ms server-side regardless of limit), so
-      // cursor-paginating it into sequential pages only added serial network
-      // round-trips to time-to-first-candle. Deeper history loads lazily on
-      // scroll-back via _fetchMoreBars, continuing from _oldestCursor.
-      let resp: OHLCResponse;
+      let items: ApiCandle[] = [];
+      let collected: Bar[] = [];
       try {
-        resp = await razeFetch<OHLCResponse>(
-          `${apiBase(getActiveChain())}/tokens/ohlc/${mint}`,
-          { timeframe, limit: INITIAL_LIMIT },
-        );
+        const [bars, div] = await Promise.all([
+          fetchCandles(mint, { interval: timeframe as OhlcTimeframe, limit: INITIAL_LIMIT, unit: this._unit() }),
+          this._divisor(),
+        ]);
+        // SOL display with no native price yet: nothing we could draw right.
+        items = div > 0 ? bars : [];
+        collected = this._toBars(items, timeframe, div || 1);
       } catch {
-        resp = { data: [], oldestTimestamp: null };
+        items = [];
+        collected = [];
       }
 
-      const items = resp.data ?? [];
       if (!items.length) {
         this._hasMore.set(baseKey, false);
         this._oldestCursor.set(baseKey, null);
+      } else if (items.length < INITIAL_LIMIT) {
+        // A short page: there is no older history.
+        this._hasMore.set(baseKey, false);
+        this._oldestCursor.set(baseKey, null);
       } else {
-        // solPrice/supply both needed: display-mode math AND the USD mcap factor
-        // that scales MEV detection.
-        if (globalSolPrice === 0 || supply === 0) {
-          const [fetchedSp, fetchedSu] = await Promise.all([
-            globalSolPrice === 0 ? this._getSolPrice()   : Promise.resolve(globalSolPrice),
-            supply         === 0 ? this._getSupply(mint) : Promise.resolve(supply),
-          ]);
-          globalSolPrice = fetchedSp;
-          supply         = fetchedSu;
-        }
-
-        const frameMs = timeframeToMs(timeframe);
-        for (const item of items) {
-          const tsRaw = new Date(item.timestamp).getTime();
-          const ts    = Math.floor(tsRaw / frameMs) * frameMs; // align to bar boundary
-          // Use per-bar sol_price when available (USD mode only), else fall back to global
-          const _perCandleSp = item.sol_price != null ? parseFloat(String(item.sol_price)) : 0;
-          // Per-candle price only when it is a real positive value (a "0.00"
-          // string is truthy but useless) — else fall back to the global SOL
-          // USD price.
-          const sp = (needsSolPrice && _perCandleSp > 0) ? _perCandleSp : globalSolPrice;
-          const m  = this._multiplier(sp, supply);
-          collected.push({
-            time:   ts,
-            open:   parseFloat(String(item.open))  * m,
-            high:   parseFloat(String(item.high))  * m,
-            low:    parseFloat(String(item.low))   * m,
-            close:  parseFloat(String(item.close)) * m,
-            volume: parseFloat(String(item.volume)),
-          });
-        }
-
-        // Cursor for lazy scroll-back. A short page means no older history exists.
-        const cursor = resp.oldestTimestamp;
-        if (cursor === null || items.length < INITIAL_LIMIT) {
-          this._hasMore.set(baseKey, false);
-          this._oldestCursor.set(baseKey, null);
-        } else {
-          this._oldestCursor.set(baseKey, cursor);
-        }
+        this._hasMore.set(baseKey, true);
+        this._oldestCursor.set(baseKey, items[0]!.time);
       }
 
       const ready = this._finalizeHistory(collected);
       this._cache.set(baseKey, { data: ready, ts: Date.now() });
       this._maybeUpdateATHFromBars(baseKey, ready);
 
-      // `_cache` and `_lastBar` are two stores describing the same series, and
-      // the 5s TTL refetch used to update only the first — so after any
-      // background reload they disagreed, and whichever one the chart read next
-      // decided what was on screen. That drift is a mechanical source of "the
-      // chart changed after a refresh", independent of any filtering.
-      //
-      // Only bars STRICTLY OLDER than the cache's newest are reconciled: there
-      // `_lastBar` is simply behind (the tape went quiet) and the server's closed
-      // bar is authoritative and complete, so adopting it also fixes the `open`
-      // the next print will chain from.
-      //
-      // ⚠️ The equal case is left ALONE on purpose. For the bar still forming,
-      // the server row is at best 2s stale (the ingest accumulator flushes a
-      // second after the window closes) and may be missing prints the tape has
-      // already delivered; overwriting would throw live data away. Deciding a
-      // winner there needs a merge policy and a measurement, not a guess.
+      // `_cache` and `_lastBar` describe the same series; a background reload
+      // must not leave them disagreeing. Only bars STRICTLY OLDER than the
+      // cache's newest are reconciled (the tape went quiet and the closed bar
+      // is complete); the bar still forming is left to the live feed.
       const res = this._currentResolution;
       if (res && getApiTimeframe(res) === timeframe && ready.length) {
         const newest = ready[ready.length - 1]!;
@@ -798,9 +731,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
         const live   = this._lastBar.get(lbKey);
         if (live && live.time < newest.time) {
           this._lastBar.set(lbKey, { ...newest });
-          this._liveGuard
-            .get(lbKey)
-            ?.adopt(newest.time, newest.high, newest.low, newest.close);
         }
       }
     })();
@@ -841,65 +771,43 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     }
 
     const fetchPromise = (async () => {
-      const needsSolPrice = this._currency === "usd";
-      // Always fetch both: solPrice/supply needed for display math AND for
-      // the USD mcap factor that scales MEV-spike threshold.
-      const [globalSolPrice, supply] = await Promise.all([
-        this._getSolPrice(),
-        this._getSupply(mint),
-      ]);
-
+      const div = await this._divisor();
+      if (!(div > 0)) return;
       const newBars: Bar[] = [];
       let cur: number = cursor;
 
-      for (let page = 0; page < 20; page++) {
-        const params: Record<string, string | number> = { timeframe, limit: CHUNK, to: cur - 1 };
-
-        let resp: OHLCResponse;
+      for (let page = 0; page < 10; page++) {
+        let items: ApiCandle[];
         try {
-          resp = await razeFetch<OHLCResponse>(`${apiBase(getActiveChain())}/tokens/ohlc/${mint}`, params);
+          // `to` is inclusive of a bar's start: one ms before the oldest bar
+          // we hold is exactly the page before it.
+          items = await fetchCandles(mint, {
+            interval: timeframe as OhlcTimeframe,
+            limit: CHUNK,
+            to: cur - 1,
+            unit: this._unit(),
+          });
         } catch {
           break;
         }
 
-        const items = resp.data ?? [];
         if (!items.length) {
           this._hasMore.set(baseKey, false);
           this._oldestCursor.set(baseKey, null);
           break;
         }
+        newBars.push(...this._toBars(items, timeframe, div));
 
-        const frameMs = timeframeToMs(timeframe);
-        for (const item of items) {
-          const tsRaw = new Date(item.timestamp).getTime();
-          const ts    = Math.floor(tsRaw / frameMs) * frameMs;
-          const _perCandleSp = item.sol_price != null ? parseFloat(String(item.sol_price)) : 0;
-          // Per-candle price only when it is a real positive value (a "0.00"
-          // string is truthy but useless) — else fall back to the global SOL
-          // USD price.
-          const sp = (needsSolPrice && _perCandleSp > 0) ? _perCandleSp : globalSolPrice;
-          const m  = this._multiplier(sp, supply);
-          newBars.push({
-            time:   ts,
-            open:   parseFloat(String(item.open))  * m,
-            high:   parseFloat(String(item.high))  * m,
-            low:    parseFloat(String(item.low))   * m,
-            close:  parseFloat(String(item.close)) * m,
-            volume: parseFloat(String(item.volume)),
-          });
-        }
-
-        const nextCursor = resp.oldestTimestamp;
-        if (nextCursor === null || items.length < CHUNK) {
+        const oldest = items[0]!.time;
+        if (items.length < CHUNK || oldest >= cur) {
           this._hasMore.set(baseKey, false);
           this._oldestCursor.set(baseKey, null);
           break;
         }
-        this._oldestCursor.set(baseKey, nextCursor);
-        cur = nextCursor;
+        this._oldestCursor.set(baseKey, oldest);
+        cur = oldest;
 
         // Stop once we've fetched past the requested window
-        const oldest = newBars.reduce((m, b) => Math.min(m, b.time), Infinity);
         if (oldest <= untilMs) break;
       }
 
@@ -907,7 +815,7 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
 
       // Merge with existing, drop zeros / duplicate timestamps, despike.
       // Re-running over the WHOLE merged array is safe because `despikeBars` is
-      // idempotent — that is exactly what the old non-idempotent clamp was not.
+      // idempotent.
       const deduped = this._finalizeHistory([...existing, ...newBars]);
 
       // Keep original ts so TTL-based refresh of recent data still works
@@ -973,13 +881,16 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       return;
     }
     this._unwatchPreview();
-    this._connectWs(mint);
+    this._connectWs(mint, resolution);
   }
 
   unsubscribeBars(listenerGuid: string): void {
     this._subscribers.delete(listenerGuid);
     this._resetCacheCbs.delete(listenerGuid);
-    if (!this._subscribers.size) this._currentSymbol = null;
+    if (!this._subscribers.size) {
+      this._currentSymbol = null;
+      this._closeWs();
+    }
   }
 
   private _watchPreview(mint: string): void {
@@ -999,18 +910,21 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
 
-  private _connectWs(mint: string): void {
-    if (this._wireSub && this._wireSubMint === mint) return;
+  private _connectWs(mint: string, resolution: string): void {
+    const interval = getApiTimeframe(resolution);
+    const unit = this._unit();
+    const key = `${mint}|${interval}|${unit}`;
+    if (this._wireSub && this._wireSubKey === key) return;
     if (this._wireSub) this._closeWs();
-    this._wireSubMint = mint;
+    this._wireSubKey = key;
     const ws = RazeWebSocket.getInstance();
     ws.connect();
-    ws.subscribeToken(mint);
-    const offTrade = ws.on("trade", (msg) => { void this._handleWs(msg); });
+    ws.subscribeCandles(mint, interval, unit);
+    const off = ws.on("candle", (msg) => { void this._handleCandle(msg, mint, interval, unit); });
     this._wireSub = {
       cancel: () => {
-        offTrade();
-        ws.unsubscribeToken(mint);
+        off();
+        ws.unsubscribeCandles(mint, interval, unit);
       },
     };
   }
@@ -1021,13 +935,13 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     this._oldestCursor.clear();
     this._inflightRequests.clear();
     this._lastBar.clear();
-    this._liveGuard.clear();
-    this._supply.clear();
     this._solPrice = 0;
     this._solPriceTs = 0;
     this._solPriceInflight = null;
     this._closeWs();
-    if (this._currentSymbol) this._connectWs(this._currentSymbol);
+    if (this._currentSymbol && this._currentResolution) {
+      this._connectWs(this._currentSymbol, this._currentResolution);
+    }
   };
 
   private _closeWs(): void {
@@ -1035,174 +949,56 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       try { this._wireSub.cancel(); } catch { /* ignore */ }
       this._wireSub = null;
     }
-    this._wireSubMint = "";
+    this._wireSubKey = "";
   }
 
-  private async _handleWs(msg: Record<string, unknown>): Promise<void> {
-    const type = msg.type as string;
+  /**
+   * A `candle` frame: the API's forming bar (`kind: "candle"`), or its recent
+   * bars on (re)subscribe (`kind: "snapshot"`, which is what fills a gap after
+   * a reconnect). Bars older than the live head are ignored — TradingView only
+   * takes the head or a newer bar.
+   */
+  private async _handleCandle(
+    msg: Record<string, unknown>,
+    mint: string,
+    interval: string,
+    unit: string,
+  ): Promise<void> {
+    if (msg.tokenMint !== mint || msg.interval !== interval || msg.unit !== unit) return;
+    const currentSymbol     = this._currentSymbol;
+    const currentResolution = this._currentResolution;
+    if (!currentSymbol || !currentResolution || currentSymbol !== mint) return;
+    if (getApiTimeframe(currentResolution) !== interval || this._unit() !== unit) return;
 
-    // ── live trade → build candle ──────────────────────────────────────────
-    if (type === "trade" || type === "transaction") {
-      // Capture symbol+resolution before any await to avoid race conditions
-      const currentSymbol     = this._currentSymbol;
-      const currentResolution = this._currentResolution;
-      if (!currentSymbol || !currentResolution) return;
+    const div = await this._divisor();
+    if (!(div > 0)) return;
+    // Re-verify nothing changed while we were awaiting
+    if (this._currentSymbol !== currentSymbol || this._currentResolution !== currentResolution) return;
 
-      const tx = (msg.transaction ?? msg.data ?? msg) as Record<string, unknown>;
-      const tokenMint = String(
-        tx.tokenMint ?? tx.token_mint ?? tx.mint ?? tx.address ?? msg.tokenMint ?? ""
-      );
-      if (!tokenMint || tokenMint !== currentSymbol) return;
-
-      // Try all common price field names the server may send
-      const avgPrice = parseFloat(String(
-        tx.avgPrice ?? tx.avg_price ?? tx.price ?? tx.tokenPrice ?? tx.token_price ?? 0
-      ));
-      const solAmt   = parseFloat(String(tx.solAmount ?? tx.sol_amount ?? tx.sol ?? 0));
-      if (!avgPrice) return;
-
-      const [solPrice, supply] = await Promise.all([
-        this._currency === "usd" ? this._getSolPrice() : Promise.resolve(1),
-        this._display  === "mcap" ? this._getSupply(tokenMint) : Promise.resolve(1),
-      ]);
-      if (this._currency === "usd" && !solPrice) return;
-
-      // Re-verify symbol hasn't changed while we were awaiting
-      if (this._currentSymbol !== currentSymbol || this._currentResolution !== currentResolution) return;
-
-      const price = avgPrice * this._multiplier(solPrice, supply);
-      const rawTs    = tx.timestamp ?? msg.timestamp;
-      let tsMs: number;
-      if (typeof rawTs === "number") {
-        tsMs = rawTs > 1e15 ? rawTs / 1000 : rawTs > 1e12 ? rawTs : rawTs * 1000;
-      } else if (typeof rawTs === "string") {
-        const n = Number(rawTs);
-        if (!isNaN(n) && n > 0) {
-          tsMs = n > 1e15 ? n / 1000 : n > 1e12 ? n : n * 1000;
-        } else {
-          const d = new Date(rawTs);
-          tsMs = isNaN(d.getTime()) ? Date.now() : d.getTime();
-        }
-      } else {
-        tsMs = Date.now();
-      }
-
-      const resolution = currentResolution;
-      const barKey     = `${currentSymbol}-${resolution}`;
-
-      // ── Staleness gate, keyed on `slot` and NOT on the timestamp ───────────
-      // 🔴 `timestamp` (and `blockTime`) are the router's OWN wall clock at
-      // flatten time, not chain time: `router/src/feed/flatten.rs:230` sets both
-      // from `chrono::Utc::now()`. The producer learned this the hard way and
-      // wrote it down at `router/src/feed/mesh/client.rs:558` — "`slot` is
-      // canonical across observers; `timestamp` and `block_time` are
-      // observation-time … so a slow peer's 'fresh' stamp on an old trade
-      // defeats a wall-clock filter" — and the mesh relay deliberately admits
-      // peer trades up to MESH_MAX_PEER_SLOT_LAG (150 slots ≈ 60 s) behind.
-      //
-      // So a minute-old print reaches this tape carrying a fresh stamp, and
-      // `alignTime` files it under the CURRENT bucket — up to 60 buckets wrong
-      // on a 1s chart, at a price from a different regime. It then looks exactly
-      // like a spike AND, worse, the corroboration guard would accept it as a
-      // legitimate successor. No price rule can survive that; it has to be
-      // rejected on the one field that is canonical across observers.
-      //
-      // Threshold scales with the bar: a print may only touch the live candle if
-      // its slot is close enough to the head that it could plausibly belong to
-      // that bar. Same shape as the server's `HISTORY_OHLC_MAX_LAG_SLOTS`
-      // (`history/src/ingestion/processor.rs:57`), which likewise keeps the
-      // trade and skips only its OHLCV update.
-      const slot = Math.trunc(parseFloat(String(tx.slot ?? tx.Slot ?? 0))) || 0;
-      if (slot > 0) {
-        if (slot > this._headSlot) this._headSlot = slot;
-        const frameSlots = Math.ceil(timeframeToMs(getApiTimeframe(resolution)) / SLOT_MS);
-        const maxLagSlots = Math.max(4, frameSlots * 2);
-        if (this._headSlot - slot > maxLagSlots) return;
-      }
-
-      const aligned    = alignTime(tsMs, resolution);
-      const lastBar    = this._lastBar.get(barKey);
-      // Never rewind the live head. An out-of-order print used to replace
-      // `_lastBar` with a past bucket; the next real print then opened a new
-      // candle across a hole.
-      if (lastBar && aligned < lastBar.time) return;
-      const sameBar    = !!lastBar && aligned === lastBar.time;
-      const open       = sameBar ? lastBar!.open : (lastBar ? lastBar.close : price);
-
-      // ── Corroboration guard ────────────────────────────────────────────────
-      // The old gate here was `isBundle || ratio > 10 || ratio < 0.1`. Both
-      // halves were dead weight, measured on production ClickHouse 2026-08-08:
-      //   - `is_bundle` is true on 54.2% of spike prints and 57.6% of ALL prints
-      //     (Pumpfun: 39.9% vs 62.3%, i.e. LESS) — the flag says a trade was
-      //     bundled, not that its price is untradeable. Zero signal.
-      //   - the 10x band is 8.7 doublings looser than the 1.15 the server uses;
-      //     the fascia that actually draws the wicks is 1.15x-10x, all of which
-      //     sailed straight through.
-      // The replacement corroborates between PRINTS: a print extends the wick
-      // only once a later print stands behind it. It still moves `close`
-      // immediately (it IS the last traded price, the chart must stay live), and
-      // the rendered wick RETRACTS if the next print reverts — which is what
-      // makes the live bar converge on what a refetch of that same bar returns.
-      let guard = this._liveGuard.get(barKey);
-      if (!guard) {
-        guard = new LiveBarGuard();
-        this._liveGuard.set(barKey, guard);
-      }
-      let env: { high: number; low: number };
-      let athHigh: number;
-      if (aligned < guard.currentBarTime) {
-        // ⚠️ A straggler for a bucket we have already moved past. The guard must
-        // only ever roll FORWARD: rewinding it would discard the live bar's
-        // corroborated envelope for one late print. Build this bar without
-        // corroboration — it is a single bar and the server's two-sided verdict
-        // governs it as soon as it is refetched.
-        env = { high: Math.max(open, price), low: Math.min(open, price) };
-        athHigh = Math.max(open, price);
-      } else {
-        if (guard.currentBarTime !== aligned) {
-          // Bar rolled over. Settle the outgoing bar's last pending print (with
-          // the wide one-sided band) and re-emit it if that changed its
-          // envelope, otherwise the final print of EVERY bar would be silently
-          // dropped from the wick — a systematic bias, not a filter.
-          if (lastBar && guard.currentBarTime === lastBar.time) {
-            const settled = guard.settle();
-            const hi = Math.max(settled.high, lastBar.open, lastBar.close);
-            const lo = Math.min(settled.low,  lastBar.open, lastBar.close);
-            if (hi !== lastBar.high || lo !== lastBar.low) {
-              const closed: Bar = { ...lastBar, high: hi, low: lo };
-              this._lastBar.set(barKey, closed);
-              this._emit(closed);
-            }
-          }
-          guard.reset(aligned, open);
-        }
-        env = guard.push(price);
-        // ATH from the CORROBORATED high only — the rendered wick can retract,
-        // a monotonic ATH cannot.
-        athHigh = Math.max(guard.confirmedHigh, open, price);
-      }
-
+    const raw = msg.kind === "snapshot"
+      ? (Array.isArray(msg.candles) ? msg.candles as ApiCandle[] : [])
+      : (msg.candle ? [msg.candle as ApiCandle] : []);
+    const barKey = `${currentSymbol}-${currentResolution}`;
+    for (const next of this._toBars(raw, interval, div)) {
+      if (!(next.close > 0)) continue;
+      const lastBar = this._lastBar.get(barKey);
+      // Never rewind the live head.
+      if (lastBar && next.time < lastBar.time) continue;
+      const sameBar = !!lastBar && next.time === lastBar.time;
+      // Continuity: a new bar opens at the previous close, as history does
+      // after `_finalizeHistory`; the forming bar keeps the open it started with.
+      const open = sameBar ? lastBar!.open : (lastBar ? lastBar.close : next.open);
       const bar: Bar = {
-        time:   aligned,
+        time:   next.time,
         open,
-        // `env` already covers the live price; `open` keeps the invariant.
-        high:   Math.max(env.high, open),
-        low:    Math.min(env.low,  open),
-        close:  price,
-        // Volume is never suppressed — an uncorroborated print is a real trade.
-        volume: sameBar ? (lastBar!.volume || 0) + solAmt : solAmt,
+        high:   Math.max(next.high, open, next.close),
+        low:    Math.min(next.low,  open, next.close),
+        close:  next.close,
+        volume: next.volume,
       };
-
       this._lastBar.set(barKey, bar);
-      this._emit(bar, athHigh);
-      return;
+      this._emit(bar);
     }
-
-    // Live candles are folded from the trade tape above. The server also
-    // pushes 1s `bar` frames built from the same prints; applying them here
-    // fought that path — uncorroborated wicks (MEV prints becoming the
-    // envelope), rewind gaps, and o=h=l=c ticks when a 1s close replaced
-    // the forming bar. History still comes from REST `/ohlc`.
   }
 
   /** Warm OHLC + price/supply caches — call from the token page on mint change
@@ -1215,50 +1011,30 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       void this._getSolPrice();
       return;
     }
-    // Stream-only mint: no OHLC warm. Seed the pump.fun default supply (1B) so
-    // live mcap candles build from the stream without a per-token supply fetch.
+    // Stream-only mint: no OHLC warm; live bars come from the candles channel.
     if (isStreamOnly(mint)) {
-      if (!this._supply.has(mint)) this._supply.set(mint, 1_000_000_000);
       void this._getSolPrice();
       return;
     }
     void this._getSolPrice();
-    void this._getSupply(mint);
     void this._loadBars(mint, "1m", `${mint}-1m`);
   }
 
   // ── SOL price & supply ────────────────────────────────────────────────────
 
-  // Native-coin USD price: SOL via /api/sol/price.
+  /** The active chain's native coin in USD (SOL / ETH / BNB). */
   private _getSolPrice(): Promise<number> {
-    if (this._solPrice && Date.now() - this._solPriceTs < 60_000) return Promise.resolve(this._solPrice);
+    if (this._solPrice && Date.now() - this._solPriceTs < 15_000) return Promise.resolve(this._solPrice);
     if (this._solPriceInflight) return this._solPriceInflight;
     this._solPriceInflight = (async () => {
       try {
-        const d = await razeFetch<Record<string, unknown>>("/api/sol/price");
-        // Prioritise solPrice; fall back to price/usd. Use || not ?? so 0 is skipped.
-        const price = parseFloat(String(d.solPrice || d.price || d.usd || 0));
+        const price = await nativeUsd();
         if (price > 0) { this._solPrice = price; this._solPriceTs = Date.now(); }
       } catch { /* keep stale */ }
       this._solPriceInflight = null;
       return this._solPrice;
     })();
     return this._solPriceInflight;
-  }
-
-  private async _getSupply(mint: string): Promise<number> {
-    if (this._supply.has(mint)) return this._supply.get(mint)!;
-    try {
-      const d = await razeFetch<Record<string, unknown>>(`/api/sol/tokens/supply/${mint}`);
-      const s = parseFloat(String(d.supply ?? d.totalSupply ?? 0));
-      // New/unindexed tokens may return tiny placeholder values (e.g. 1000).
-      // Any real SPL token has at least 1M circulating; fall back to 1B if not.
-      const supply = s >= 1_000_000 ? s : 1_000_000_000;
-      this._supply.set(mint, supply);
-      return supply;
-    } catch {
-      return 1_000_000_000;
-    }
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -1277,8 +1053,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     this._oldestCursor.clear();
     this._inflightRequests.clear();
     this._lastBar.clear();
-    this._liveGuard.clear();
-    this._supply.clear();
     this._tokenLabel.clear();
     this._athByKey.clear();
     this._athListeners.clear();
