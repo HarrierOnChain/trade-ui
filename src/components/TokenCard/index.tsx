@@ -86,7 +86,7 @@ const TokenCardInner = memo(
             image={token.image}
             chain={token.chain}
             dex={token.dex}
-            migrated={Boolean(token.migrated_at) || Boolean(isMigration)}
+            migrated={Boolean(token.migrated_at) || token.graduated === true || Boolean(isMigration)}
             size={36}
             borderWidth={1.5}
             badgeSize={14}
@@ -95,6 +95,7 @@ const TokenCardInner = memo(
             initialMarketCap={token.initialMarketCap}
             priceSol={priceSol}
             solPrice={solPrice}
+            progressPercent={token.graduationPercent}
           />
           <div className={styles.meta}>
             <div className={styles.nameRow}>

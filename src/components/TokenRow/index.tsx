@@ -244,7 +244,7 @@ export const TokenRow = memo(function TokenRow({
           image={rowImage}
           chain={t.chain}
           dex={t.dex}
-          migrated={t.migrated_at != null}
+          migrated={t.migrated_at != null || t.graduated === true}
           size={54}
           borderWidth={1.5}
           badgeSize={18}
@@ -253,6 +253,7 @@ export const TokenRow = memo(function TokenRow({
           initialMarketCap={t.initialMarketCap}
           priceSol={livePriceSol}
           solPrice={solPrice}
+          progressPercent={t.graduationPercent}
         />
         <AvatarHideOverlay token={t} rowImage={rowImage} />
       </div>

@@ -170,11 +170,14 @@ const HolderRow = React.memo(function HolderRow({
       ? holder.amount * lastPrice * solPrice
       : mcap > 0
       ? (mcap * pct) / 100
-      : 0;
+      : holder.valueUsd ?? 0;
   const avgBuyPriceSol  = bought > 0 ? buySol / bought : 0;
   const costBasisRemUsd = avgBuyPriceSol * holder.amount * solPrice;
-  const pnlUsd          = currentValueUsd - costBasisRemUsd;
-  const pnlKnown        = solPrice > 0 && currentValueUsd > 0 && bought > 0;
+  // Tokens bought are not in the API's holder rows; its own unrealized PnL
+  // stands in for the cost-basis math then.
+  const apiPnlUsd       = bought > 0 ? undefined : holder.unrealizedPnlUsd;
+  const pnlUsd          = apiPnlUsd ?? currentValueUsd - costBasisRemUsd;
+  const pnlKnown        = apiPnlUsd != null || (solPrice > 0 && currentValueUsd > 0 && bought > 0);
 
   const avgBuyMcap  = bought > 0 && solPrice > 0 ? (buySol  * solPrice / bought) * supply : 0;
   const avgSellMcap = sold   > 0 && solPrice > 0 ? (sellSol * solPrice / sold  ) * supply : 0;

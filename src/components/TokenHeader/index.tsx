@@ -70,7 +70,7 @@ export function TokenHeader({
   const token = (info ?? {}) as TokenEvent;
   const quotePlatform = quote?.platform?.trim() || "";
   const isPumpswap = quotePlatform.toLowerCase() === "pumpswap";
-  const isMigrated = isPumpswap || token.migrated_at != null;
+  const isMigrated = isPumpswap || token.migrated_at != null || token.graduated === true;
   // Live migration trigger. `isMigrated` (from REST + quote) is the baseline,
   // so opening a page on an already-migrated token never fires the overlay;
   // a WS migration event for the active mint will fire it exactly once.
@@ -204,6 +204,7 @@ export function TokenHeader({
             initialMarketCap={token.initialMarketCap}
             priceSol={priceSol}
             solPrice={solPrice}
+            progressPercent={token.graduationPercent}
           />
         </div>
         <div style={{
@@ -463,11 +464,16 @@ function StatsStrip({
       : undefined);
   const top10Value = top10Pct ?? 0;
   const devBuySol = token.creatorBuySol ?? 0;
-  const initialMcValue = initialMc && initialMc > 0 ? initialMc : 1;
+  // Fees, the dev's buy and the launch market cap are not served by the API:
+  // their cells only show when a value is actually known (never a made-up 0
+  // or the old "$1" placeholder).
+  const feesKnown = token.feesTotal != null || (live?.feesSol ?? 0) > 0;
+  const devBuyKnown = token.creatorBuySol != null;
+  const initialMcKnown = initialMc != null && initialMc > 0;
 
-  const items: Array<{ label: string; val: React.ReactNode; tone?: "warn" | "green"; accent?: string }> = [
+  const items: Array<{ label: string; val: React.ReactNode; tone?: "warn" | "green"; accent?: string } | null> = [
     { label: "VOL 24H",    val: `$${fmtNum(vol24USD ?? 0)}`, accent: "var(--info)" },
-    { label: "FEES",       val: <SolAmount>{fmtSol(feesSol)}</SolAmount>, accent: "var(--paper-4)" },
+    feesKnown ? { label: "FEES", val: <SolAmount>{fmtSol(feesSol)}</SolAmount>, accent: "var(--paper-4)" } : null,
     { label: "TRADES",     val: fmtNum(tradeCount), accent: "var(--paper-3)" },
     { label: "HOLDERS",    val: fmtNum(holders), accent: "var(--accent)" },
     {
@@ -488,7 +494,7 @@ function StatsStrip({
       tone: top10Value > 50 ? "warn" : undefined,
       accent: top10Value > 30 ? "var(--warn)" : "var(--paper-4)",
     },
-    {
+    !devBuyKnown ? null : {
       label: "D BUY",
       val: token.signer
           ? (
@@ -514,7 +520,7 @@ function StatsStrip({
           : <SolAmount>{fmtDevBuy(devBuySol)}</SolAmount>,
       tone: "green",
     },
-    { label: "INIT MC",  val: fmtMcap(initialMcValue) },
+    initialMcKnown ? { label: "INIT MC",  val: fmtMcap(initialMc!) } : null,
     {
       label: "MIGRATED",
       val: migrated ? "YES" : "NO",
@@ -523,7 +529,7 @@ function StatsStrip({
     },
   ];
 
-  return <StatsCarousel items={items} />;
+  return <StatsCarousel items={items.filter((i): i is NonNullable<typeof i> => i != null)} />;
 }
 
 type StatItem = {

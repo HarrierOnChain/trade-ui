@@ -141,10 +141,12 @@ const TraderRow = React.memo(function TraderRow({
   const boughtTokens  = trader.boughtTokens  ?? 0;
   const soldTokens    = trader.soldTokens    ?? 0;
   const pnlSol        = trader.pnlSol        ?? (sellSol - buySol);
-  const hasTokenData  = boughtTokens > 0 || soldTokens > 0;
+  // The API reports the balance held, not tokens bought and sold.
+  const hasTokenData  = boughtTokens > 0 || soldTokens > 0 || trader.heldTokens != null;
   const hasSolData    = buySol > 0 || sellSol > 0;
 
-  const remainingTokens = Math.max(0, boughtTokens - soldTokens);
+  // API rows start from the balance held; live swaps add to it.
+  const remainingTokens = Math.max(0, (trader.heldTokens ?? 0) + boughtTokens - soldTokens);
   const remainingPct    = supply > 0 && hasTokenData ? (remainingTokens / supply) * 100 : 0;
   const barColor        = remainingPct > 10 ? "var(--sell)" : remainingPct > 5 ? "var(--warn)" : "var(--accent)";
 

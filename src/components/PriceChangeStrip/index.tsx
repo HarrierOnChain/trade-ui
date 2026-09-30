@@ -7,11 +7,11 @@ import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
 import { fluidColsFit } from "../../lib/responsive";
 import { Tooltip } from "../atoms";
 
-const PERIODS: Array<{ key: "5m" | "1h" | "4h" | "12h" | "24h"; label: string }> = [
+// The API's change windows (it has no 4h / 12h).
+const PERIODS: Array<{ key: "5m" | "1h" | "6h" | "24h"; label: string }> = [
   { key: "5m",  label: "5m"  },
   { key: "1h",  label: "1h"  },
-  { key: "4h",  label: "4h"  },
-  { key: "12h", label: "12h" },
+  { key: "6h",  label: "6h"  },
   { key: "24h", label: "24h" },
 ];
 
@@ -57,7 +57,7 @@ export function PriceChangeStrip({ mint }: Props) {
         ? "repeat(2, 1fr)"
         : isMobile
           ? fluidColsFit(90)
-          : "repeat(5, 1fr)",
+          : `repeat(${PERIODS.length}, 1fr)`,
       background: "var(--ink-1)",
       borderBottom: "1px solid var(--line-soft)",
       overflow: "hidden",
@@ -66,14 +66,13 @@ export function PriceChangeStrip({ mint }: Props) {
       {PERIODS.map(({ key, label }, idx) => {
         const period = changes?.changes?.[key];
         const anchor = period?.price ?? 0;
-        const trades = period?.trades ?? 0;
-        // Real per-period change when the backend found a valid anchor with
-        // activity; otherwise fall back to dev-buy → current so every cell
-        // shows a meaningful, live-updating number instead of a row of "–".
+        // The window's opening price (recovered from the API's change) against
+        // the live price, so the cell ticks with every trade; the API's own
+        // percentage when no live price is known yet; dev-buy → current last.
         const livePct =
-          anchor > 0 && trades > 0 && currentSol > 0
+          anchor > 0 && currentSol > 0
             ? ((currentSol - anchor) / anchor) * 100
-            : null;
+            : period?.change ?? null;
         const pct = livePct ?? fallbackPct;
         const isFallback = livePct == null && fallbackPct != null;
         const up = pct != null && pct >= 0;

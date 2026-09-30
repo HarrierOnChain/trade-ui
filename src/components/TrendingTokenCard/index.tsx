@@ -216,7 +216,7 @@ export const TrendingTokenCard = memo(function TrendingTokenCard({
           image={t.image}
           chain={t.chain}
           dex={t.dex}
-          migrated={t.migrated_at != null}
+          migrated={t.migrated_at != null || t.graduated === true}
           size={isPhone ? 44 : 56}
           borderWidth={1.5}
           badgeSize={18}
@@ -225,6 +225,7 @@ export const TrendingTokenCard = memo(function TrendingTokenCard({
           initialMarketCap={t.initialMarketCap}
           priceSol={livePriceSol}
           solPrice={solPrice}
+          progressPercent={t.graduationPercent}
         />
       </div>
 

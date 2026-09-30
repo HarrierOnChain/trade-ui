@@ -106,8 +106,10 @@ function buildImageCandidates(
   ];
   const proxyable = (u: string) => PROXY_ALLOWED_PREFIXES.some((p) => u.startsWith(p));
 
-  // Own merge route can resolve IPFS server-side (Pinata + raze + ipfs.io).
-  addUnique(candidates, ownImageSrc(mint, chain));
+  // The API's image route (`/v1/tokens/{chain}/{address}/image`, a 302 to
+  // the token's image). First when the row carries no image of its own;
+  // after the row's own URL otherwise, which saves the redirect hop.
+  if (!raw) addUnique(candidates, ownImageSrc(mint, chain));
 
   if (ipfsPath) {
     for (const prefix of IPFS_GATEWAY_PREFIXES) {
@@ -129,6 +131,8 @@ function buildImageCandidates(
       addUnique(candidates, backendImg(httpsUrl));
     }
   }
+
+  addUnique(candidates, ownImageSrc(mint, chain));
 
   return candidates;
 }

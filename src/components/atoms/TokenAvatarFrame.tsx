@@ -23,6 +23,9 @@ interface Props {
   priceSol?: number;
   solPrice?: number | null;
   supply?: number;
+  /** Bonding-curve fill from the API (0–100). Wins over the pump.fun
+   *  411-SOL estimate below, which is wrong for every other launchpad. */
+  progressPercent?: number;
 }
 
 function clamp(value: number): number {
@@ -45,6 +48,7 @@ export function TokenAvatarFrame({
   priceSol,
   solPrice,
   supply = DEFAULT_SUPPLY,
+  progressPercent,
 }: Props) {
   const color = migrated
     ? "var(--gold)"
@@ -77,9 +81,11 @@ export function TokenAvatarFrame({
   const progress =
     migrated
       ? 1
-      : effectiveMarketCap > 0 && targetMarketCap > 0
-        ? clamp(effectiveMarketCap / targetMarketCap)
-        : 0;
+      : progressPercent != null && Number.isFinite(progressPercent)
+        ? clamp(progressPercent / 100)
+        : effectiveMarketCap > 0 && targetMarketCap > 0
+          ? clamp(effectiveMarketCap / targetMarketCap)
+          : 0;
 
   const outerRadius = Math.round(size * 0.22);
   const innerRadius = Math.max(outerRadius - borderWidth, outerRadius - 2);
