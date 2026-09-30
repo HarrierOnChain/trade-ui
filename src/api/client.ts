@@ -1,10 +1,23 @@
-import { CHAIN_CHANGED_EVENT, getActiveChain, nativePriceKey, type ChainId } from "../lib/chains";
+import { CHAIN_CHANGED_EVENT, getActiveChain, type ChainId } from "../lib/chains";
 import {
   normalizeWalletHoldingsResponse,
   normalizeWalletPerformanceResponse,
   normalizeWalletPnlHistoryResponse,
 } from "./normalize";
 import { evmapiGet, imageSrc } from "./evmapi";
+import {
+  apiCandle,
+  apiHolderToHolder,
+  apiHolderToTrader,
+  apiTokenToEvent,
+  apiTradeToTrade,
+  asRecord,
+  msToIso,
+  num,
+  usdToNative,
+  type Rec,
+} from "./mappers";
+import { fetchNativePrices, nativeUsd } from "./native";
 import type {
   TokenEvent,
   Trade,
@@ -14,6 +27,7 @@ import type {
   TrendingPeriod,
   SearchResult,
   TokenPriceChanges,
+  PriceChangePeriod,
   WalletHoldingsResponse,
   WalletSummaryResponse,
   WalletSummaryItem,
@@ -21,23 +35,26 @@ import type {
   WalletFifoPnlResponse,
   WalletPnlHistoryResponse,
   WalletTokensResponse,
-  PnlLeaderboardResponse,
   PnlSummaryResponse,
 } from "../types";
 
-const WIRE_RPC_TIMEOUT_MS = 25_000;
+export { fetchNativePrices, nativeUsd };
 
 function chain(): ChainId {
   return getActiveChain();
 }
 
-function tokenPath(address: string, suffix = ""): string {
-  return `/tokens/${chain()}/${encodeURIComponent(address)}${suffix}`;
+function tokenPath(address: string, suffix = "", c: string = chain()): string {
+  return `/tokens/${c}/${encodeURIComponent(address)}${suffix}`;
 }
 
-function walletPath(address: string, suffix = ""): string {
-  return `/wallets/${chain()}/${encodeURIComponent(address)}${suffix}`;
+function walletPath(address: string, suffix = "", c: string = chain()): string {
+  return `/wallets/${c}/${encodeURIComponent(address)}${suffix}`;
 }
+
+// ── shared GET: one request per (chain, path, params) in flight, and a short
+// memory so the several hooks that read the same token on one page (header,
+// strip, tables, chart) share a single upstream call.
 
 type CacheEntry = { ts: number; value: unknown };
 const responseCache = new Map<string, CacheEntry>();
@@ -52,317 +69,259 @@ if (typeof window !== "undefined") {
   window.addEventListener(CHAIN_CHANGED_EVENT, clearRazeResponseCache);
 }
 
-function cacheKey(path: string, params: Record<string, string | number>): string {
-  const base = `${chain()}`;
-  if (Object.keys(params).length === 0) return `${base}|${path}`;
-  const ordered = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join("&");
-  return `${base}|${path}?${ordered}`;
+type Params = Record<string, string | number | boolean | undefined | null>;
+
+function cacheKey(path: string, params: Params): string {
+  const ordered = Object.keys(params)
+    .filter((k) => params[k] != null && params[k] !== "")
+    .sort()
+    .map((k) => `${k}=${params[k]}`)
+    .join("&");
+  return `${path}?${ordered}`;
 }
 
-export function chainPath(solPath: string): string {
-  return solPath;
-}
-
-type NativePrices = { sol?: { usd: number }; eth?: { usd: number }; bnb?: { usd: number } };
-let nativeCache: { t: number; data: NativePrices } | null = null;
-let nativeInflight: Promise<NativePrices> | null = null;
-
-export async function fetchNativePrices(): Promise<NativePrices> {
-  const now = Date.now();
-  if (nativeCache && now - nativeCache.t < 15_000) return nativeCache.data;
-  if (nativeInflight) return nativeInflight;
-  nativeInflight = evmapiGet<NativePrices>("/prices/native")
-    .then(({ data }) => {
-      nativeCache = { t: Date.now(), data };
-      return data;
-    })
-    .finally(() => { nativeInflight = null; });
-  return nativeInflight;
-}
-
-export async function nativeUsd(id: ChainId = chain()): Promise<number> {
-  const prices = await fetchNativePrices().catch(() => ({} as NativePrices));
-  const key = nativePriceKey(id);
-  return prices[key]?.usd || 0;
-}
-
-function socials(raw: unknown): { website?: string | null; twitter?: string | null; telegram?: string | null } {
-  const s = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
-  return {
-    website: (s.website as string | null) ?? null,
-    twitter: (s.twitter as string | null) ?? (s.x as string | null) ?? null,
-    telegram: (s.telegram as string | null) ?? null,
-  };
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
-}
-
-function num(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim() && Number.isFinite(Number(v))) return Number(v);
-  return undefined;
-}
-
-export function discoveryToToken(row: Record<string, unknown>, native: number): TokenEvent {
-  const address = String(row.address ?? row.mint ?? row.mint_address ?? "");
-  const priceUsd = num(row.priceUsd) ?? num(row.lastAvgPrice) ?? num(row.last_avg_price);
-  const lastPrice = priceUsd != null && native > 0 ? priceUsd / native : undefined;
-  const created = row.createdAt ?? row.created_at ?? row.timestamp;
-  const launchpad = asRecord(row.launchpad);
-  const migrated = row.migratedAt ?? row.migrated_at ?? launchpad?.migratedAt ?? launchpad?.migrated_at;
-  const links = socials(row.socialLinks);
-  const safety = asRecord(row.safety) ?? asRecord(launchpad);
-  const buyUsd = num(row.creatorBuyUsd);
-  const buys = num(row.buys);
-  const sells = num(row.sells);
-  return {
-    mint_address: address,
-    chain: String(row.chain ?? chain()),
-    name: String(row.name ?? ""),
-    symbol: String(row.symbol ?? ""),
-    dex: String(row.platform ?? launchpad?.launchpadName ?? row.dex ?? ""),
-    uri: (row.uri as string | null) ?? null,
-    image: imageSrc((row.image as string | null) ?? null),
-    website: links.website,
-    twitter: links.twitter,
-    telegram: links.telegram,
-    created_at: typeof created === "number" ? new Date(created).toISOString() : String(created || new Date().toISOString()),
-    migrated_at: migrated == null ? undefined : (typeof migrated === "number" ? new Date(migrated).toISOString() : String(migrated)),
-    marketCap: num(row.marketCap),
-    lastPrice,
-    volume24h: num(row.volume24h),
-    liquidity: num(row.liquidityUsd ?? row.liquidity),
-    holders: num(row.holders),
-    priceChange: num(row.change24h ?? row.change1h ?? row.priceChange),
-    graduationPercent: num(launchpad?.graduationPercent),
-    signer: (row.creatorAddress ?? row.signer ?? undefined) as string | undefined,
-    bundlePercentage: num(safety?.bundlePercentage ?? row.bundlePercentage),
-    sniperPercentage: num(safety?.sniperPercentage ?? row.sniperPercentage),
-    creatorDeploys: num(row.creatorDeploys),
-    creatorMigrations: num(row.creatorMigrations),
-    creatorBuySol: buyUsd != null && native > 0 ? buyUsd / native : num(row.creatorBuySol),
-    buyCount: buys,
-    sellCount: sells,
-    tradeCount: num(row.tradeCount) ?? (buys != null || sells != null ? (buys ?? 0) + (sells ?? 0) : undefined),
-    quoteMint: (row.quoteAddress ?? row.quoteMint ?? undefined) as string | undefined,
-  } as TokenEvent;
-}
-
-export function mapTradeRow(row: Record<string, unknown>, tokenMint: string, native: number): Trade {
-  const priceUsd = num(row.priceUsd) ?? 0;
-  const avgPrice = native > 0 ? priceUsd / native : priceUsd;
-  const side = String(row.side || "buy").toLowerCase() === "sell" ? "sell" : "buy";
-  return {
-    signature: String(row.sig ?? row.signature ?? ""),
-    tokenMint: String(row.token ?? tokenMint),
-    signer: String(row.wallet ?? row.signer ?? ""),
-    transactionType: side,
-    tokensAmount: num(row.amount) ?? 0,
-    avgPrice,
-    solAmount: num(row.sol) ?? 0,
-    timestamp: (num(row.ts) ?? Date.now()) as number,
-    usdValue: num(row.usd),
-    avgPriceUSD: priceUsd || undefined,
-    isBundle: row.bundle === true,
-    isSniper: row.sniper === true,
-  };
-}
-
-async function listDiscovery(path: string, limit: number, extra: Record<string, string | number> = {}): Promise<{ data: TokenEvent[] }> {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<unknown>(path, { chain: chain(), limit, ...extra });
-  const rows = Array.isArray(data) ? data : [];
-  return { data: rows.map((r) => discoveryToToken(asRecord(r) || {}, native)).filter((t) => t.mint_address) };
-}
-
-export async function razeGet<T = unknown>(
+async function get<T>(
   path: string,
-  params: Record<string, string | number> = {},
-): Promise<T> {
-  const ohlc = path.match(/\/tokens\/ohlc\/([^/?]+)/);
-  if (ohlc) {
-    return fetchOhlc(ohlc[1]!, String(params.timeframe || params.resolution || "1m") as OhlcTimeframe, Number(params.limit || 150)) as Promise<T>;
-  }
-  const supply = path.match(/\/tokens\/supply\/([^/?]+)/);
-  if (supply) return fetchTokenSupply(supply[1]!) as Promise<T>;
-  if (path.endsWith("/api/sol/price") || path === "/api/sol/price") {
-    return fetchSolPrice() as Promise<T>;
-  }
-  throw new Error(`unsupported_path:${path}`);
-}
-
-export async function razePost<T = unknown>(_path: string, _body: unknown): Promise<T> {
-  throw new Error("not_supported_selfhosted");
-}
-
-export async function cachedRazeGet<T>(
-  path: string,
-  params: Record<string, string | number> = {},
-  ttlMs = 10_000,
-): Promise<T> {
+  params: Params = {},
+  ttlMs = 2_000,
+): Promise<{ data: T; nextCursor: string | null }> {
   const key = cacheKey(path, params);
-  const now = Date.now();
-  const cached = responseCache.get(key);
-  if (cached && now - cached.ts < ttlMs) return cached.value as T;
+  const hit = responseCache.get(key);
+  if (hit && Date.now() - hit.ts < ttlMs) return hit.value as { data: T; nextCursor: string | null };
   const existing = inFlight.get(key);
-  if (existing) return existing as Promise<T>;
-  const p = razeGet<T>(path, params).then(
-    (v) => { responseCache.set(key, { ts: Date.now(), value: v }); inFlight.delete(key); return v; },
+  if (existing) return existing as Promise<{ data: T; nextCursor: string | null }>;
+  const p = evmapiGet<T>(path, params).then(
+    ({ data, nextCursor }) => {
+      const value = { data, nextCursor };
+      responseCache.set(key, { ts: Date.now(), value });
+      inFlight.delete(key);
+      if (responseCache.size > 500) {
+        const cutoff = Date.now() - 60_000;
+        for (const [k, v] of responseCache) if (v.ts < cutoff) responseCache.delete(k);
+      }
+      return value;
+    },
     (err) => { inFlight.delete(key); throw err; },
   );
   inFlight.set(key, p);
   return p;
 }
 
+function rows(data: unknown): Rec[] {
+  return Array.isArray(data) ? data.map((r) => asRecord(r) ?? {}) : [];
+}
+
+export function chainPath(solPath: string): string {
+  return solPath;
+}
+
+// ── tokens ─────────────────────────────────────────────────────────────────
+
+/** The API's full Token for one address (identity, price, stats, pool,
+ *  launchpad, safety). Shared by header, strip, supply, quote and metadata. */
+export async function fetchTokenRaw(mint: string, c: string = chain()): Promise<Rec> {
+  const { data } = await get<Rec>(tokenPath(mint, "", c), {}, 5_000);
+  return data;
+}
+
+const BATCH_IDS = 10;
+
 export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0) => {
-  const native = await nativeUsd().catch(() => 0);
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
   const data: Record<string, unknown> = {};
-  await Promise.all(mints.slice(0, 20).map(async (mint) => {
+  const unique = [...new Set(mints.filter(Boolean))];
+  // One batch call per BATCH_IDS tokens instead of two calls per token. The
+  // contract allows 50, but today the API answers 404 "tokens not found" to
+  // any batch of more than 10 (its upstream caps there), so stay at 10.
+  const slices: string[][] = [];
+  for (let i = 0; i < unique.length; i += BATCH_IDS) slices.push(unique.slice(i, i + BATCH_IDS));
+  const pages = await Promise.all(slices.map(async (slice) => {
     try {
-      const token = await evmapiGet<Record<string, unknown>>(tokenPath(mint));
-      const stats = await evmapiGet<Record<string, unknown>>(tokenPath(mint, "/stats")).catch(() => null);
-      const row = token.data;
-      const w24 = asRecord(asRecord(stats?.data?.windows)?.["24h"]);
-      const safety = asRecord(row.safety);
-      data[mint] = {
-        name: row.name,
-        symbol: row.symbol,
-        image: imageSrc(row.image as string | null),
-        uri: row.uri,
-        last_price: num(row.priceUsd) && native > 0 ? Number(row.priceUsd) / native : undefined,
-        lastPrice: num(row.priceUsd) && native > 0 ? Number(row.priceUsd) / native : undefined,
-        volume_24h: num(row.volume24h) ?? num(w24?.volume),
-        trade_count: num(w24?.transactions),
-        unique_traders: num(w24?.traders) ?? num(row.holders),
-        holders: num(row.holders),
-        buy_count: num(w24?.buys),
-        sell_count: num(w24?.sells),
-        bundle_percentage: num(safety?.bundlePercentage),
-        sniper_percentage: num(safety?.sniperPercentage),
-        signer: row.creatorAddress,
-        platform: row.platform,
-        dex: row.platform,
-        creatorDeploys: num(row.creatorDeploys),
-        creator_deploys: num(row.creatorDeploys),
-        creatorMigrations: num(row.creatorMigrations),
-        creator_migrations: num(row.creatorMigrations),
-        creator_buy_sol: num(row.creatorBuyUsd) && native > 0 ? Number(row.creatorBuyUsd) / native : undefined,
-        creatorBuySol: num(row.creatorBuyUsd) && native > 0 ? Number(row.creatorBuyUsd) / native : undefined,
-      };
-    } catch { /* skip */ }
+      const res = await get<unknown>("/tokens", { ids: slice.map((m) => `${c}:${m}`).join(",") }, 10_000);
+      return { slice, list: rows(res.data) };
+    } catch {
+      return { slice, list: [] as Rec[] };
+    }
   }));
+  for (const { slice, list } of pages) {
+    for (const row of list) {
+      const t = apiTokenToEvent(row, native);
+      if (!t.mint_address) continue;
+      // Batch rows answer lowercase EVM addresses; key by what was asked.
+      const asked = slice.find((m) => m.toLowerCase() === t.mint_address.toLowerCase()) ?? t.mint_address;
+      data[asked] = {
+        name: t.name || undefined,
+        symbol: t.symbol || undefined,
+        image: t.image ?? undefined,
+        last_price: t.lastPrice,
+        lastPrice: t.lastPrice,
+        marketCap: t.marketCap,
+        liquidity: t.liquidity,
+        priceChange: t.priceChange,
+        // USD and native kept apart: `volume_24h` is USD, `total_sol_volume`
+        // is SOL/ETH/BNB.
+        volume_24h: t.volume24h,
+        total_sol_volume: t.totalSolVolume,
+        trade_count: t.tradeCount,
+        holders: t.holders,
+        buy_count: t.buyCount,
+        sell_count: t.sellCount,
+        bundle_percentage: t.bundlePercentage,
+        sniper_percentage: t.sniperPercentage,
+        signer: t.signer,
+        platform: t.dex || undefined,
+        dex: t.dex || undefined,
+        creatorDeploys: t.creatorDeploys,
+        creator_deploys: t.creatorDeploys,
+        graduationPercent: t.graduationPercent,
+      };
+    }
+  }
   return { success: true, data };
 };
 
-export const fetchDeploys = (limit = 50, platform?: string) =>
-  listDiscovery("/discovery/new", limit, platform ? { platform } : {});
+async function listBoard(board: "new" | "graduating" | "graduated", limit: number, platform?: string): Promise<{ data: TokenEvent[] }> {
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const { data } = await get<unknown>(`/launchpad/${board}`, { chain: c, limit }, 1_000);
+  const wanted = platform?.toLowerCase().split(",").map((p) => p.trim()).filter(Boolean) ?? [];
+  const list = rows(data)
+    .map((r) => apiTokenToEvent(r, native))
+    .filter((t) => t.mint_address && (!wanted.length || !t.dex || wanted.includes(t.dex.toLowerCase())));
+  return { data: list };
+}
 
-export const fetchMigrations = (limit = 50, platform?: string) =>
-  listDiscovery("/discovery/migrations", limit, platform ? { platform } : {});
+export const fetchDeploys = (limit = 50, platform?: string) => listBoard("new", limit, platform);
+export const fetchMigrations = (limit = 50, platform?: string) => listBoard("graduated", limit, platform);
+export const fetchMigrating = (limit = 50, platform?: string) => listBoard("graduating", limit, platform);
 
-export const fetchMigrating = (limit = 50, platform?: string) =>
-  listDiscovery("/discovery/launchpad", limit, platform ? { platform } : {});
+// ── trades ─────────────────────────────────────────────────────────────────
 
+type TimeRange = { fromMs?: number | null; toMs?: number | null };
+
+function inRange(t: Trade, range?: TimeRange): boolean {
+  if (!range) return true;
+  const ts = Number(t.timestamp);
+  if (range.fromMs != null && Number.isFinite(range.fromMs) && ts < range.fromMs) return false;
+  if (range.toMs != null && Number.isFinite(range.toMs) && ts > range.toMs) return false;
+  return true;
+}
+
+/**
+ * Newest first, paged by the API's `next`. The API has no oldest-first order
+ * and no time filter: `sort` only re-orders a page and a time range filters
+ * the page it got.
+ */
 export const fetchTrades = async (
   mint: string,
   limit = 50,
   _sort: "asc" | "desc" = "desc",
   cursor?: string | null,
-  _timeRange?: { fromMs?: number | null; toMs?: number | null },
+  timeRange?: TimeRange,
+  wallet?: string,
 ) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data, nextCursor } = await evmapiGet<unknown>(tokenPath(mint, "/trades"), {
-    limit,
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const { data, nextCursor } = await get<unknown>(tokenPath(mint, "/trades", c), {
+    limit: Math.min(200, limit),
     cursor: cursor || undefined,
+    wallet: wallet || undefined,
   });
-  const rows = Array.isArray(data) ? data : [];
-  const trades = rows.map((r) => mapTradeRow(asRecord(r) || {}, mint, native));
+  const trades = rows(data).map((r) => apiTradeToTrade(r, native, mint)).filter((t) => inRange(t, timeRange));
   return { data: trades, nextCursor, hasMore: Boolean(nextCursor) };
 };
 
+/** One wallet's trades of one token, filtered by the API (`?wallet=`). */
+export const fetchTradesBySignerMint = async (
+  signer: string,
+  mint: string,
+  limit = 100,
+  cursor?: string | null,
+  sort: "asc" | "desc" = "desc",
+  timeRange?: TimeRange,
+) => fetchTrades(mint, limit, sort, cursor, timeRange, signer);
+
+// ── holders / traders ──────────────────────────────────────────────────────
+
 export const fetchHolders = async (mint: string, limit = 200) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<{
-    holders?: Array<Record<string, unknown>>;
-    supply?: number;
-  }>(tokenPath(mint, "/holders"), { limit: Math.min(100, limit) });
-  const token = await evmapiGet<Record<string, unknown>>(tokenPath(mint)).catch(() => null);
-  const priceUsd = num(token?.data?.priceUsd) ?? 0;
-  const holders: Holder[] = (data.holders || []).map((h, i) => ({
-    address: String(h.address || ""),
-    amount: num(h.amount) ?? 0,
-    percentage: num(h.percentage) ?? 0,
-    rank: num(h.rank) ?? i + 1,
-  }));
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const [token, firstPage] = await Promise.all([
+    fetchTokenRaw(mint, c).catch(() => null),
+    get<unknown>(tokenPath(mint, "/holders", c), { limit: Math.min(100, limit) }, 5_000),
+  ]);
+  const raw = rows(firstPage.data);
+  const seen = new Set(raw.map((h) => String(h.wallet ?? "")));
+  let cursor = firstPage.nextCursor;
+  // Pages of ≤100 until `limit`. Deduped by wallet, and a page that adds no
+  // new wallet ends the walk: today the API's holders `next` cursor hands
+  // back the first page again, which doubled every top holder.
+  while (cursor && raw.length < limit) {
+    try {
+      const page = await get<unknown>(tokenPath(mint, "/holders", c), { limit: Math.min(100, limit - raw.length), cursor }, 5_000);
+      const fresh = rows(page.data).filter((h) => {
+        const w = String(h.wallet ?? "");
+        if (!w || seen.has(w)) return false;
+        seen.add(w);
+        return true;
+      });
+      if (!fresh.length) break;
+      raw.push(...fresh);
+      cursor = page.nextCursor;
+    } catch {
+      break;
+    }
+  }
+  const holders: Holder[] = raw.slice(0, limit).map((h, i) => apiHolderToHolder(h, native, i + 1));
+  const supply = num(token?.circulatingSupply) ?? num(token?.totalSupply);
   return {
     holders,
     data: holders,
-    currentPriceSol: native > 0 ? priceUsd / native : 0,
-    supply: num(data.supply),
+    currentPriceSol: usdToNative(token?.priceUsd, native) ?? 0,
+    supply,
   };
 };
 
 export const fetchTopTraders = async (mint: string, limit = 100) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<unknown>(tokenPath(mint, "/traders"), { period: "DAY" });
-  const rows = Array.isArray(data) ? data : [];
-  const traders: TopTrader[] = rows.slice(0, limit).map((raw) => {
-    const r = asRecord(raw) || {};
-    const buyUsd = num(r.buyUsd ?? r.buys ?? r.buyVolumeUsd) ?? 0;
-    const sellUsd = num(r.sellUsd ?? r.sells ?? r.sellVolumeUsd) ?? 0;
-    const buySol = native > 0 ? buyUsd / native : 0;
-    const sellSol = native > 0 ? sellUsd / native : 0;
-    const pnlUsd = num(r.pnlUsd ?? r.realizedProfitUsd) ?? (sellUsd - buyUsd);
-    return {
-      trader: String(r.trader ?? r.walletAddress ?? r.address ?? ""),
-      totalBuys: num(r.buys) ?? 0,
-      totalSells: num(r.sells) ?? 0,
-      totalTrades: (num(r.buys) ?? 0) + (num(r.sells) ?? 0),
-      totalVolume: buyUsd + sellUsd,
-      totalPnL: pnlUsd,
-      pnlSol: native > 0 ? pnlUsd / native : 0,
-      avgTradeSize: 0,
-      winRate: 0,
-      buySol,
-      sellSol,
-      boughtTokens: 0,
-      soldTokens: 0,
-      avgBuyPrice: 0,
-      avgSellPrice: 0,
-      isHolding: Boolean(r.isHolding),
-      bundleTrades: r.bundle === true ? 1 : 0,
-      sniperTrades: r.sniper === true ? 1 : 0,
-    };
-  });
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const { data } = await get<unknown>(tokenPath(mint, "/traders", c), { limit: Math.min(100, limit) }, 5_000);
+  const traders: TopTrader[] = rows(data).slice(0, limit).map((r) => apiHolderToTrader(r, native));
   return { data: traders };
 };
 
+// ── discovery ──────────────────────────────────────────────────────────────
+
+/** The API's trending windows: 1m, 5m, 1h, 6h, 24h. */
+function trendingInterval(period: TrendingPeriod): string {
+  switch (period) {
+    case "recent": return "1h";
+    default: return "24h";
+  }
+}
+
+function toTrending(t: TokenEvent): TrendingToken {
+  return {
+    ...t,
+    mint: t.mint_address,
+    image: t.image,
+    marketCap: t.marketCap,
+    volume: t.volume24h,
+    priceChange: t.priceChange,
+    tradeCount: t.tradeCount,
+  };
+}
+
 export const fetchTrending = async (period: TrendingPeriod = "daily", limit = 50) => {
-  const interval = period === "recent" || period === "daily" ? "1h" : period === "weekly" ? "1w" : "1d";
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<unknown>("/discovery/trending", { chain: chain(), limit, interval });
-  const rows = Array.isArray(data) ? data : [];
-  const tokens: TrendingToken[] = rows.map((raw) => {
-    const r = asRecord(raw) || {};
-    const t = discoveryToToken(r, native);
-    return {
-      mint: t.mint_address,
-      ...t,
-      image: t.image,
-      marketCap: t.marketCap,
-      volume: t.volume24h,
-      priceChange: t.priceChange,
-    };
-  });
-  return { data: tokens };
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const { data } = await get<unknown>("/trending", { chain: c, limit, interval: trendingInterval(period) }, 5_000);
+  return { data: rows(data).map((r) => toTrending(apiTokenToEvent(r, native))).filter((t) => t.mint) };
 };
 
 export const fetchSolPrice = async () => {
-  const prices = await fetchNativePrices();
-  const key = nativePriceKey(chain());
-  const usd = prices[key]?.usd || 0;
+  const usd = await nativeUsd(chain()).catch(() => 0);
   return { solPrice: usd, nativePrice: usd, hasValidPrice: usd > 0 };
 };
 
@@ -374,29 +333,50 @@ export interface SearchOptions {
   page?: number;
 }
 
+function toSearchResult(row: Rec, native: number): SearchResult {
+  const t = apiTokenToEvent(row, native);
+  return {
+    mint: t.mint_address,
+    chain: t.chain,
+    symbol: t.symbol,
+    name: t.name,
+    platform: t.dex,
+    created_at: t.created_at || undefined,
+    image: t.image ?? null,
+    marketCap: t.marketCap,
+    lastPrice: t.lastPrice,
+  };
+}
+
+/** Tokens a wallet created, most recent activity first (the screener). */
+async function fetchCreatedTokens(creator: string, limit: number, extra: Params = {}): Promise<Rec[]> {
+  const { data } = await get<unknown>("/screener", {
+    chain: chain(),
+    creator,
+    minLiquidity: 0,
+    limit: Math.min(100, limit),
+    ...extra,
+  }, 30_000);
+  return rows(data);
+}
+
 export function fetchSearch(opts: SearchOptions): Promise<{ data: SearchResult[] }>;
 export function fetchSearch(q: string, limit?: number): Promise<{ data: SearchResult[] }>;
 export async function fetchSearch(
   arg: string | SearchOptions,
   limit = 20,
 ): Promise<{ data: SearchResult[] }> {
-  const q = typeof arg === "string" ? arg : (arg.q || arg.creator || arg.authority || "");
+  const native = await nativeUsd(chain()).catch(() => 0);
   const lim = typeof arg === "string" ? limit : (arg.limit ?? 20);
-  const { data } = await evmapiGet<unknown>("/search", { q, limit: lim });
-  const rows = Array.isArray(data) ? data : [];
-  return {
-    data: rows.map((raw) => {
-      const r = asRecord(raw) || {};
-      return {
-        mint: String(r.address ?? r.mint ?? ""),
-        chain: String(r.chain ?? chain()),
-        symbol: String(r.symbol ?? ""),
-        name: String(r.name ?? ""),
-        platform: String(r.platform ?? ""),
-        created_at: r.createdAt != null ? String(r.createdAt) : undefined,
-      };
-    }),
-  };
+  const creator = typeof arg === "string" ? "" : (arg.creator || arg.authority || "");
+  if (creator) {
+    const list = await fetchCreatedTokens(creator, lim);
+    return { data: list.map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
+  }
+  const q = typeof arg === "string" ? arg : (arg.q || "");
+  if (!q.trim()) return { data: [] };
+  const { data } = await get<unknown>("/search", { q: q.trim(), limit: Math.min(50, lim) }, 5_000);
+  return { data: rows(data).map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
 }
 
 export const fetchTokensByDeployer = (creator: string, limit = 20, page = 1) =>
@@ -411,28 +391,26 @@ export interface CreatorMigration {
   symbol: string;
   uri?: string;
   migratedAt?: string;
+  /** Not served by the API (no all-time high); kept for the type's callers. */
   athMcap?: number;
+  /** Market cap now, USD. */
+  marketCap?: number;
 }
 
 export const fetchCreatorMigrations = async (signer: string, limit = 50) => {
-  const { data } = await evmapiGet<unknown>("/discovery/screener", {
-    chain: chain(),
-    creatorAddress: signer,
-    limit,
-  });
-  const rows = Array.isArray(data) ? data : [];
+  const list = await fetchCreatedTokens(signer, limit, { graduated: true });
   return {
     success: true,
-    data: rows.map((raw) => {
-      const r = asRecord(raw) || {};
+    data: list.map((r) => {
+      const lp = asRecord(r.launchpad);
       return {
         mint: String(r.address ?? ""),
         name: String(r.name ?? ""),
         symbol: String(r.symbol ?? ""),
-        migratedAt: r.migratedAt != null ? String(r.migratedAt) : undefined,
-        athMcap: num(r.athPrice ?? r.marketCap),
+        migratedAt: msToIso(lp?.graduatedAt),
+        marketCap: num(r.marketCapUsd),
       } satisfies CreatorMigration;
-    }),
+    }).filter((m) => m.mint),
   };
 };
 
@@ -449,151 +427,185 @@ export interface QuoteData {
 }
 
 export const fetchQuote = async (mint: string) => {
-  const { data } = await evmapiGet<Record<string, unknown>>(tokenPath(mint));
-  const native = await nativeUsd().catch(() => 0);
-  const priceUsd = num(data.priceUsd) ?? 0;
+  const c = chain();
+  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
+  const pool = asRecord(data.pool);
+  const launchpad = asRecord(data.launchpad);
   return {
     success: true,
     data: {
       mint,
-      avgPrice: native > 0 ? priceUsd / native : 0,
+      avgPrice: usdToNative(data.priceUsd, native) ?? 0,
       amountIn: 0,
       amountOut: 0,
-      platform: String(data.platform ?? ""),
-      pool: "",
+      platform: String(launchpad?.name ?? pool?.dex ?? ""),
+      pool: String(pool?.address ?? ""),
       timeTaken: 0,
     } satisfies QuoteData,
   };
 };
 
 export const fetchTokenInfo = async (mint: string) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<Record<string, unknown>>(tokenPath(mint));
-  const token = discoveryToToken(data, native);
+  const c = chain();
+  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
+  const token = apiTokenToEvent(data, native);
   if (!token.mint_address) token.mint_address = mint;
   return { success: true, data: token };
 };
 
+const CHANGE_WINDOWS = ["1m", "5m", "1h", "6h", "24h"] as const;
+
 export const fetchPriceChanges = async (mint: string) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<Record<string, unknown>>(tokenPath(mint, "/stats"));
-  const token = await evmapiGet<Record<string, unknown>>(tokenPath(mint)).catch(() => null);
-  const windows = asRecord(data.windows) || asRecord(token?.data?.windows) || {};
-  const priceUsd = num(token?.data?.priceUsd) ?? num(data.price) ?? 0;
-  const currentPrice = native > 0 ? priceUsd / native : 0;
-  const pick = (key: string) => {
-    const w = asRecord(windows[key]);
-    if (!w) return null;
-    const change = num(w.change ?? w.priceChange);
-    const price = num(w.price);
-    return {
-      change: change ?? 0,
-      price: price ?? 0,
-      trades: num(w.transactions ?? w.trades) ?? 0,
-      volume: num(w.volume) ?? 0,
-    };
-  };
+  const c = chain();
+  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
+  const priceUsd = num(data.priceUsd);
+  const currentPrice = usdToNative(priceUsd, native) ?? 0;
+  const stats = asRecord(data.stats) ?? {};
+  const changes: TokenPriceChanges["changes"] = {};
+  for (const key of CHANGE_WINDOWS) {
+    const w = asRecord(stats[key]);
+    const pct = num(w?.priceChangePercent);
+    if (!w || pct == null) {
+      changes[key] = null;
+      continue;
+    }
+    // The window's opening price, recovered from the change, so the strip can
+    // keep the percentage live as trades move the current price.
+    const anchor = currentPrice > 0 && pct > -100 ? currentPrice / (1 + pct / 100) : 0;
+    changes[key] = {
+      change: pct,
+      price: anchor,
+      trades: num(w.trades) ?? (num(w.buys) ?? 0) + (num(w.sells) ?? 0),
+      volume: num(w.volumeUsd) ?? 0,
+    } satisfies PriceChangePeriod;
+  }
   const result: TokenPriceChanges & { success: boolean } = {
     success: true,
     mint,
     currentPrice,
-    currentPriceUSD: priceUsd ? String(priceUsd) : null,
+    currentPriceUSD: priceUsd != null ? String(priceUsd) : null,
     solPriceUSD: native,
-    changes: {
-      "5m": pick("5m"),
-      "1h": pick("1h"),
-      "4h": pick("4h"),
-      "12h": pick("12h"),
-      "24h": pick("24h"),
-    },
+    changes,
   };
   return result;
 };
 
 export const fetchTokenSupply = async (mint: string) => {
-  const { data } = await evmapiGet<Record<string, unknown>>(tokenPath(mint));
-  const supply = num(data.circulatingSupply ?? data.totalSupply) ?? 1_000_000_000;
-  return { supply, decimals: 6 };
+  const data = await fetchTokenRaw(mint);
+  const supply = num(data.circulatingSupply) ?? num(data.totalSupply) ?? 1_000_000_000;
+  return { supply, decimals: num(data.decimals) ?? 6 };
 };
 
+// ── wallets ────────────────────────────────────────────────────────────────
+
+type WalletPeriod = "1d" | "7d" | "30d" | "1y";
+
+async function fetchWalletStats(address: string, period: WalletPeriod = "30d"): Promise<Rec> {
+  const { data } = await get<Rec>(walletPath(address), { period }, 30_000);
+  return data;
+}
+
 export const fetchWalletHoldings = async (address: string) => {
-  const { data } = await evmapiGet<unknown>(walletPath(address, "/holdings"));
-  const rows = Array.isArray(data) ? data : [];
-  const native = await evmapiGet<Record<string, unknown>>(walletPath(address, "/native")).catch(() => null);
-  const rawBal = native?.data?.nativeTokenBalance;
-  const sol = typeof rawBal === "number"
-    ? (chain() === "sol" ? rawBal / 1e9 : rawBal)
-    : typeof rawBal === "string"
-      ? Number(rawBal) / (chain() === "sol" ? 1e9 : 1e18)
-      : 0;
+  const [holdings, stats] = await Promise.all([
+    get<unknown>(walletPath(address, "/holdings"), { limit: 100 }, 10_000),
+    fetchWalletStats(address).catch(() => null),
+  ]);
+  const list = rows(holdings.data);
+  const nativeBalance = num(stats?.nativeBalance);
   return normalizeWalletHoldingsResponse({
     success: true,
     ownerAddress: address,
-    tokens: rows.map((raw) => {
-      const r = asRecord(raw) || {};
-      return {
-        mint: String(r.address ?? r.tokenId ?? ""),
-        amount: num(r.amount) ?? 0,
-        decimals: num(r.decimals) ?? 0,
-        usdValue: num(r.usd),
-        hasBalance: (num(r.amount) ?? 0) > 0,
-      };
-    }),
-    summary: { totalSolBalance: sol, tokensWithBalance: rows.length, totalTokens: rows.length },
+    tokens: list.map((r) => ({
+      mint: String(r.token ?? ""),
+      amount: num(r.amount) ?? 0,
+      // Holdings carry no decimals.
+      decimals: 0,
+      usdValue: num(r.valueUsd),
+      symbol: typeof r.symbol === "string" ? r.symbol : undefined,
+      name: typeof r.name === "string" ? r.name : undefined,
+      hasBalance: (num(r.amount) ?? 0) > 0,
+    })),
+    summary: {
+      totalSolBalance: nativeBalance,
+      tokensWithBalance: list.length,
+      totalTokens: list.length,
+    },
   }) as WalletHoldingsResponse;
 };
 
+export type WalletTradeRow = Trade & { tokenSymbol?: string | null; tokenImage?: string | null };
+
 export const fetchWalletTrades = async (address: string, limit = 50) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<unknown>(walletPath(address, "/trades"), { limit });
-  const rows = Array.isArray(data) ? data : [];
-  return { data: rows.map((r) => mapTradeRow(asRecord(r) || {}, String((asRecord(r) || {}).token || ""), native)) };
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const { data, nextCursor } = await get<unknown>(walletPath(address, "/trades", c), { limit: Math.min(100, limit) });
+  return {
+    data: rows(data).map((r): WalletTradeRow => ({
+      ...apiTradeToTrade(r, native),
+      signer: address,
+      tokenSymbol: typeof r.tokenSymbol === "string" ? r.tokenSymbol : null,
+      tokenImage: imageSrc(typeof r.tokenImage === "string" ? r.tokenImage : null),
+    })),
+    nextCursor,
+  };
 };
 
-function windowToSummary(address: string, wallet: Record<string, unknown>): WalletSummaryItem {
-  const w = asRecord(asRecord(wallet.windows)?.["30d"]) || asRecord(wallet.windows) || {};
-  const realized = num(w.realizedProfitUsd ?? wallet.realizedProfitUsd) ?? 0;
-  const volume = num(w.volumeUsd) ?? 0;
-  const swaps = num(w.swaps ?? wallet.trades) ?? 0;
-  const wins = num(w.wins) ?? 0;
-  const losses = num(w.losses) ?? 0;
+function statsToSummary(address: string, s: Rec, native: number): WalletSummaryItem {
+  const trades = num(s.trades) ?? 0;
+  const buys = num(s.buys) ?? 0;
+  const sells = num(s.sells) ?? 0;
+  const volume = num(s.volumeUsd) ?? 0;
+  const realized = num(s.realizedPnlUsd) ?? 0;
+  const winRate = num(s.winRatePercent);
   return {
     address,
-    totalTrades: swaps,
-    totalBuys: 0,
-    totalSells: 0,
-    buyRatio: 0,
-    sellRatio: 0,
-    totalVolumeSol: 0,
+    totalTrades: trades,
+    totalBuys: buys,
+    totalSells: sells,
+    buyRatio: buys + sells > 0 ? buys / (buys + sells) : 0,
+    sellRatio: buys + sells > 0 ? sells / (buys + sells) : 0,
+    totalVolumeSol: usdToNative(volume, native) ?? 0,
     totalVolumeUsd: volume,
-    avgTradeSizeSol: 0,
-    avgTradeSizeUsd: swaps ? volume / swaps : 0,
+    avgTradeSizeSol: trades > 0 ? (usdToNative(volume, native) ?? 0) / trades : 0,
+    avgTradeSizeUsd: trades > 0 ? volume / trades : 0,
     largestTradeSol: 0,
     largestTradeUsd: 0,
     totalFees: 0,
-    realizedPnlSol: 0,
+    realizedPnlSol: usdToNative(realized, native) ?? 0,
     realizedPnlUsd: realized,
-    uniqueTokensTraded: num(w.uniqueTokens ?? wallet.tokenCount) ?? 0,
-    winningTokens: wins,
-    winRate: (wins + losses) > 0 ? wins / (wins + losses) : 0,
+    realizedPnlPct: num(s.realizedPnlPercent) ?? null,
+    uniqueTokensTraded: num(s.tokensTraded) ?? 0,
+    winningTokens: 0,
+    // The UI reads a 0–1 ratio.
+    winRate: winRate != null ? winRate / 100 : 0,
+    lastTradeAt: msToIso(s.lastActiveAt) ?? null,
     proTradeCount: 0,
     sniperCount: 0,
     bundleCount: 0,
   };
 }
 
+function periodFor(fromSec?: number, toSec?: number): WalletPeriod {
+  if (!fromSec) return "30d";
+  const days = ((toSec ?? Date.now() / 1000) - fromSec) / 86_400;
+  if (days <= 1.01) return "1d";
+  if (days <= 7.01) return "7d";
+  if (days <= 30.01) return "30d";
+  return "1y";
+}
+
 export const fetchWalletSummary = async (
   addresses: string[],
-  _options: { from?: number; to?: number } = {},
+  options: { from?: number; to?: number } = {},
 ) => {
+  const native = await nativeUsd(chain()).catch(() => 0);
+  const period = periodFor(options.from, options.to);
   const items: WalletSummaryItem[] = [];
   await Promise.all(addresses.map(async (address) => {
     try {
-      const { data } = await evmapiGet<Record<string, unknown>>(walletPath(address));
-      items.push(windowToSummary(address, data));
+      items.push(statsToSummary(address, await fetchWalletStats(address, period), native));
     } catch { /* skip */ }
   }));
-  const native = await nativeUsd().catch(() => 0);
   return {
     success: true,
     data: items,
@@ -602,34 +614,44 @@ export const fetchWalletSummary = async (
   } satisfies WalletSummaryResponse;
 };
 
-export const fetchPnlLeaderboard = async (_opts?: unknown) => {
-  const { data } = await evmapiGet<unknown>("/wallets/leaderboard", { chain: chain() });
-  const rows = Array.isArray(data) ? data : [];
-  const native = await nativeUsd().catch(() => 0);
+const LEADERBOARD_PERIOD = { daily: "1d", weekly: "7d", monthly: "30d" } as const;
+
+export const fetchPnlLeaderboard = async (opts?: { period?: "daily" | "weekly" | "monthly"; platform?: string; limit?: number }) => {
+  const c = chain();
+  const period = opts?.period ?? "daily";
+  const native = await nativeUsd(c).catch(() => 0);
+  // No per-platform leaderboard on this API: `platform` is not applied.
+  const { data } = await get<unknown>("/wallets/top", {
+    chain: c,
+    period: LEADERBOARD_PERIOD[period],
+    sort: "pnl",
+    limit: Math.min(100, opts?.limit ?? 50),
+  }, 30_000);
+  const list = rows(data);
   return {
     success: true as const,
     error: undefined as string | undefined,
-    period: "daily" as const,
+    period,
     platform: "all",
-    wallets: rows.map((raw) => {
-      const r = asRecord(raw) || {};
-      return {
-        signer: String(r.address ?? ""),
-        pnlSol: 0,
-        pnlUsd: num(r.realizedProfitUsd30d ?? r.realizedProfitUsd) ?? 0,
-        trades: num(r.swaps30d) ?? 0,
-      };
-    }),
-    limit: rows.length,
+    wallets: list.map((r) => ({
+      signer: String(r.address ?? ""),
+      pnlSol: usdToNative(r.realizedPnlUsd, native) ?? 0,
+      pnlUsd: num(r.realizedPnlUsd) ?? 0,
+      trades: num(r.trades) ?? 0,
+    })).filter((w) => w.signer),
+    limit: list.length,
     offset: 0,
     solPriceUsd: native,
   };
 };
 
-export const fetchPnlSummary = async (_opts?: unknown) =>
+/** Chain-wide PnL distribution: the API has no aggregate for it. Reported as
+ *  unavailable so the KPI tiles stay empty instead of showing zeros. */
+export const fetchPnlSummary = async (opts?: { period?: "daily" | "weekly" | "monthly"; platform?: string }) =>
   ({
-    success: true,
-    period: "daily",
+    success: false,
+    error: "not_available",
+    period: opts?.period ?? "daily",
     platform: "all",
     totalProfitableWallets: 0,
     totalPnlSol: 0,
@@ -646,28 +668,48 @@ export const fetchPnlSummary = async (_opts?: unknown) =>
     maxPnlUsd: 0,
   }) satisfies PnlSummaryResponse;
 
+/** PnlPoint[] (oldest first) for the seconds window [from, to]. */
+async function fetchPnlPoints(address: string, from: number, to: number, resolution: "1h" | "1d"): Promise<Rec[]> {
+  const nowSec = Date.now() / 1000;
+  const days = Math.max(1, Math.min(365, Math.ceil((nowSec - from) / 86_400)));
+  const { data } = await get<unknown>(walletPath(address, "/pnl"), { days, resolution }, 30_000);
+  const fromMs = from * 1000;
+  const toMs = (to || nowSec) * 1000;
+  return rows(data).filter((p) => {
+    const t = num(p.time) ?? 0;
+    return t >= fromMs - (resolution === "1d" ? 86_400_000 : 3_600_000) && t <= toMs;
+  });
+}
+
 export const fetchWalletPerformance = async (
   address: string,
   options: { from: number; to: number; resolution?: "1h" | "1d" },
 ) => {
-  const hist = await fetchWalletPnlHistory(address, options);
+  const native = await nativeUsd(chain()).catch(() => 0);
+  const resolution = options.resolution ?? "1d";
+  const points = await fetchPnlPoints(address, options.from, options.to, resolution);
   return normalizeWalletPerformanceResponse({
     success: true,
     address,
     startTime: new Date(options.from * 1000).toISOString(),
     endTime: new Date(options.to * 1000).toISOString(),
-    resolution: options.resolution ?? "1d",
-    data: hist.data.map((p) => ({
-      timestamp: p.bucket,
-      trades: 0,
-      buys: 0,
-      sells: 0,
-      volumeSol: 0,
-      volumeUsd: 0,
-      realizedPnlSol: p.realizedPnlSol,
-      realizedPnlUsd: p.realizedPnlSol * (p.solPriceUsd || 0),
-      uniqueTokens: 0,
-    })),
+    resolution,
+    solPriceUsd: native,
+    data: points.map((p) => {
+      const pnl = num(p.realizedPnlUsd) ?? 0;
+      const vol = num(p.volumeUsd) ?? 0;
+      return {
+        timestamp: msToIso(p.time) ?? "",
+        trades: num(p.trades) ?? 0,
+        buys: 0,
+        sells: 0,
+        volumeSol: usdToNative(vol, native) ?? 0,
+        volumeUsd: vol,
+        realizedPnlSol: usdToNative(pnl, native) ?? 0,
+        realizedPnlUsd: pnl,
+        uniqueTokens: 0,
+      };
+    }),
   }) as WalletPerformanceResponse;
 };
 
@@ -675,18 +717,17 @@ export const fetchWalletPnl = async (
   address: string,
   options: { from?: number; to?: number; limit?: number } = {},
 ) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<Record<string, unknown>>(walletPath(address, "/pnl"), {
-    from: options.from,
-    to: options.to,
-  });
-  const realized = num(data.realizedProfitUsd) ?? 0;
-  const holdings = await fetchWalletHoldings(address).catch(() => null);
+  const native = await nativeUsd(chain()).catch(() => 0);
+  const [stats, holdings] = await Promise.all([
+    fetchWalletStats(address, periodFor(options.from, options.to)),
+    fetchWalletHoldings(address).catch(() => null),
+  ]);
+  const realized = num(stats.realizedPnlUsd) ?? 0;
   const tokens = (holdings?.data || []).map((h) => ({
     mint: h.mint,
     realizedPnlSol: 0,
     totalCostBasis: 0,
-    unrealizedCostSol: native > 0 ? (h.usdValue || 0) / native : 0,
+    unrealizedCostSol: usdToNative(h.usdValue ?? 0, native) ?? 0,
     unrealizedTokens: h.amount,
     unrealizedLots: 1,
     totalBuys: 0,
@@ -696,14 +737,14 @@ export const fetchWalletPnl = async (
     success: true,
     address,
     data: {
-      totalRealizedPnlSol: native > 0 ? realized / native : 0,
+      totalRealizedPnlSol: usdToNative(realized, native) ?? 0,
       totalRealizedPnlUsd: realized,
       totalUnrealizedCostSol: tokens.reduce((s, t) => s + t.unrealizedCostSol, 0),
       totalUnrealizedCostUsd: holdings?.data.reduce((s, h) => s + (h.usdValue || 0), 0) ?? 0,
       tokenCount: tokens.length,
       tokens,
     },
-    tradesProcessed: 0,
+    tradesProcessed: num(stats.trades) ?? 0,
     truncated: false,
     solPriceUsd: native,
     timestamp: new Date().toISOString(),
@@ -714,31 +755,24 @@ export const fetchWalletPnlHistory = async (
   address: string,
   options: { from: number; to: number; resolution?: "1h" | "1d"; limit?: number },
 ) => {
-  const native = await nativeUsd().catch(() => 0);
-  const { data } = await evmapiGet<Record<string, unknown>>(walletPath(address, "/pnl"), {
-    from: options.from,
-    to: options.to,
-    resolution: options.resolution === "1h" ? "1H" : "1D",
-  });
-  const series = Array.isArray(data.series) ? data.series : [];
-  const points = series.map((raw) => {
-    const r = asRecord(raw) || {};
-    const t = num(r.t ?? r.timestamp ?? r.time) ?? 0;
-    const usd = num(r.v ?? r.value ?? r.realizedProfitUsd) ?? 0;
-    return {
-      bucket: t > 1e12 ? new Date(t).toISOString() : new Date(t * 1000).toISOString(),
-      realizedPnlSol: native > 0 ? usd / native : 0,
-      unrealizedPnlSol: 0,
-      totalPnlSol: native > 0 ? usd / native : 0,
-      solPriceUsd: native,
-    };
-  });
+  const native = await nativeUsd(chain()).catch(() => 0);
+  const resolution = options.resolution ?? "1d";
+  const points = await fetchPnlPoints(address, options.from, options.to, resolution);
   return normalizeWalletPnlHistoryResponse({
     success: true,
     address,
-    resolution: options.resolution ?? "1d",
-    data: points,
+    resolution,
     solPriceUsd: native,
+    data: points.map((p) => {
+      const sol = usdToNative(p.realizedPnlUsd, native) ?? 0;
+      return {
+        bucket: msToIso(p.time) ?? "",
+        realizedPnlSol: sol,
+        unrealizedPnlSol: 0,
+        totalPnlSol: sol,
+        solPriceUsd: native,
+      };
+    }),
   }) as WalletPnlHistoryResponse;
 };
 
@@ -747,14 +781,14 @@ export const fetchWalletTokenBreakdown = async (
   options: { limit?: number; sort?: "volume" | "pnl" | "trades" | "recent"; offset?: number } = {},
 ) => {
   const holdings = await fetchWalletHoldings(address);
-  const native = await nativeUsd().catch(() => 0);
+  const native = await nativeUsd(chain()).catch(() => 0);
   const data = holdings.data.slice(options.offset ?? 0, (options.offset ?? 0) + (options.limit ?? 50)).map((h) => ({
     mint: h.mint,
     totalTrades: 0,
     buys: 0,
     sells: 0,
     totalVolumeSol: 0,
-    totalVolumeUsd: h.usdValue ?? 0,
+    totalVolumeUsd: 0,
     buyVolumeSol: 0,
     buyVolumeUsd: 0,
     sellVolumeSol: 0,
@@ -779,27 +813,13 @@ export const fetchWalletTokenBreakdown = async (
   } satisfies WalletTokensResponse;
 };
 
-export const fetchTradesBySignerMint = async (
-  signer: string,
-  mint: string,
-  limit = 100,
-  cursor?: string | null,
-  sort: "asc" | "desc" = "desc",
-  timeRange?: { fromMs?: number | null; toMs?: number | null },
-) => {
-  const res = await fetchTrades(mint, limit, sort, cursor, timeRange);
-  const data = res.data.filter((t) => t.signer === signer);
-  return { ...res, data };
-};
-
 export const fetchChainSentiment = async () => {
-  const { data } = await evmapiGet<unknown>("/discovery/trending", { chain: chain(), limit: 20 });
-  const rows = Array.isArray(data) ? data : [];
+  const { data } = await get<unknown>("/trending", { chain: chain(), limit: 20, interval: "1h" }, 30_000);
   let buys = 0, sells = 0;
-  for (const raw of rows) {
-    const r = asRecord(raw) || {};
-    buys += num(r.buys) ?? 0;
-    sells += num(r.sells) ?? 0;
+  for (const r of rows(data)) {
+    const w = asRecord(r.window);
+    buys += num(w?.buys) ?? 0;
+    sells += num(w?.sells) ?? 0;
   }
   const buyRatio = buys + sells ? buys / (buys + sells) : 0.5;
   return {
@@ -851,93 +871,104 @@ export interface SignerCountsResponse {
 }
 
 export const fetchSignerCounts = async (signer: string, _withTokens = false) => {
-  const res = await fetchCreatorMigrations(signer, 50);
+  const list = await fetchCreatedTokens(signer, 100);
+  const migrated = list.filter((r) => asRecord(r.launchpad)?.graduated === true);
   return {
     success: true,
     data: {
       signer,
-      deployCount: res.data.length,
-      migrationCount: res.data.length,
-      totalCount: res.data.length,
-      deployTokens: res.data.map((t) => t.mint),
-      migrationTokens: res.data.map((t) => t.mint),
+      deployCount: list.length,
+      migrationCount: migrated.length,
+      totalCount: list.length,
+      deployTokens: list.map((r) => String(r.address ?? "")),
+      migrationTokens: migrated.map((r) => String(r.address ?? "")),
     },
   } satisfies SignerCountsResponse;
 };
 
 export const fetchTradingVolume = async (mint: string, _hours = 24) => {
-  const { data } = await evmapiGet<Record<string, unknown>>(tokenPath(mint, "/stats"));
-  const w = asRecord(asRecord(data.windows)?.["24h"]) || {};
+  const c = chain();
+  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
+  const w = asRecord(asRecord(data.stats)?.["24h"]) || {};
   const buys = num(w.buys) ?? 0;
   const sells = num(w.sells) ?? 0;
-  const vol = num(w.volume) ?? 0;
-  const native = await nativeUsd().catch(() => 0);
-  const solVol = native > 0 ? vol / native : 0;
   return {
     success: true,
     mint,
     hours: 24,
     data: {
-      trade_count: num(w.transactions) ?? 0,
-      total_sol_volume: solVol,
+      trade_count: num(w.trades) ?? buys + sells,
+      total_sol_volume: usdToNative(w.volumeUsd, native) ?? 0,
       total_token_volume: 0,
       buy_count: buys,
       sell_count: sells,
       bundle_trades: 0,
       sniper_trades: 0,
       protrader_trades: 0,
-      buySolVolume: native > 0 ? (num(w.buyVolume) ?? 0) / native : 0,
-      sellSolVolume: native > 0 ? (num(w.sellVolume) ?? 0) / native : 0,
-      netFlow: 0,
+      buySolVolume: usdToNative(w.buyVolumeUsd, native) ?? 0,
+      sellSolVolume: usdToNative(w.sellVolumeUsd, native) ?? 0,
+      netFlow: (usdToNative(w.buyVolumeUsd, native) ?? 0) - (usdToNative(w.sellVolumeUsd, native) ?? 0),
       buySellRatio: sells ? buys / sells : 1,
       feesTotal: 0,
-      uniqueTraders: num(w.traders) ?? 0,
+      uniqueTraders: 0,
     } satisfies TradingVolume,
   };
 };
 
+// ── candles ────────────────────────────────────────────────────────────────
+
 export type OhlcTimeframe =
   | "1s" | "5s" | "15s" | "30s"
   | "1m" | "5m" | "15m" | "30m"
-  | "1h" | "4h" | "1d";
+  | "1h" | "4h" | "12h" | "1d" | "1w";
 
+export interface ApiCandle { time: number; open: number; high: number; low: number; close: number; volume: number }
+
+/**
+ * OHLCV from the API, oldest first. `to` pages back (pass the oldest `time`
+ * you have). `unit`: `usd` = USD price, `marketCap` = USD market cap.
+ * Volume is USD either way.
+ */
+export const fetchCandles = async (
+  mint: string,
+  opts: { interval: OhlcTimeframe; limit?: number; from?: number; to?: number; unit?: "usd" | "marketCap" },
+): Promise<ApiCandle[]> => {
+  const { data } = await get<unknown>(tokenPath(mint, "/candles"), {
+    interval: opts.interval,
+    limit: Math.min(1000, opts.limit ?? 300),
+    from: opts.from,
+    to: opts.to,
+    unit: opts.unit ?? "usd",
+  });
+  return rows(data)
+    .map((r) => apiCandle(r))
+    .filter((c): c is ApiCandle => c != null)
+    .sort((a, b) => a.time - b.time);
+};
+
+/** Candles in the chain's native coin (price per token). */
 export const fetchOhlc = async (
   mint: string,
   timeframe: OhlcTimeframe = "1s",
   limit = 60,
+  to?: number,
 ) => {
-  const native = await nativeUsd().catch(() => 0);
-  const to = Date.now();
-  const span: Record<string, number> = {
-    "1s": 1_000, "5s": 5_000, "15s": 15_000, "30s": 30_000,
-    "1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
-    "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000,
-  };
-  const step = span[timeframe] ?? 60_000;
-  const from = to - step * Math.max(limit, 50);
-  const { data } = await evmapiGet<{ bars?: Array<Record<string, unknown>>; unit?: string }>(
-    tokenPath(mint, "/ohlc"),
-    { resolution: timeframe, from, to, unit: "usd", limit },
-  );
-  const bars = data.bars || [];
-  const candles: OhlcCandle[] = bars.map((b) => {
-    const t = num(b.t) ?? 0;
-    const div = native > 0 ? native : 1;
-    return {
-      timestamp: new Date(t).toISOString(),
-      open: (num(b.o) ?? 0) / div,
-      high: (num(b.h) ?? 0) / div,
-      low: (num(b.l) ?? 0) / div,
-      close: (num(b.c) ?? 0) / div,
-      volume: num(b.v) ?? 0,
-      sol_price: native,
-    };
-  });
+  const native = await nativeUsd(chain()).catch(() => 0);
+  const bars = await fetchCandles(mint, { interval: timeframe, limit, to });
+  const div = native > 0 ? native : 1;
+  const candles: OhlcCandle[] = bars.map((b) => ({
+    timestamp: new Date(b.time).toISOString(),
+    open: b.open / div,
+    high: b.high / div,
+    low: b.low / div,
+    close: b.close / div,
+    volume: b.volume,
+  }));
   return {
     data: candles,
     candles,
     interval: timeframe,
-    oldestTimestamp: candles[0] ? Date.parse(String(candles[0].timestamp)) : null,
+    oldestTimestamp: bars[0]?.time ?? null,
     count: candles.length,
   };
 };
@@ -1056,4 +1087,3 @@ export const fetchPerpOrderbook = async (marketId: string, ..._rest: unknown[]) 
 export const fetchPerpWalletOrders = async (address: string, ..._rest: unknown[]) => ({ address, data: [] as PerpOrder[], count: 0 });
 
 void emptyList;
-void WIRE_RPC_TIMEOUT_MS;

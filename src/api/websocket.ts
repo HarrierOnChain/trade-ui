@@ -1,20 +1,45 @@
 "use client";
 
-import { CHAIN_CHANGED_EVENT, getActiveChain, type ChainId } from "../lib/chains";
+import { CHAIN_CHANGED_EVENT, getActiveChain } from "../lib/chains";
 import { notifyWireOpen } from "../lib/wire/singleton";
-import { nativeUsd } from "./client";
-import { imageSrc } from "./evmapi";
+import { apiCandle, apiTokenToEvent, apiTradeToTrade, asRecord, num, type Rec } from "./mappers";
+import { fetchNativePrices, nativeUsdSync, setNativePrices } from "./native";
 import { readApiSettings } from "./settings";
 
+/**
+ * Events the UI listens to. Every live source is one channel of the API's
+ * single WebSocket (`/v1/ws`), mapped to the UI's internal shapes:
+ *
+ * | event            | channel                    | payload                                              |
+ * |------------------|----------------------------|------------------------------------------------------|
+ * | `deploy`         | launchpad board=new        | `kind` snapshot (`rows`) / add / update / remove (a TokenEvent) |
+ * | `migrating`      | launchpad board=graduating | same                                                 |
+ * | `migration`      | launchpad board=graduated  | same                                                 |
+ * | `trade`          | trades                     | a Trade, flat                                        |
+ * | `trade_snapshot` | trades                     | `{tokenMint, trades}` newest first, on (re)subscribe  |
+ * | `candle`         | candles                    | `{tokenMint, interval, unit, kind, candles | candle}` |
+ * | `token`          | token                      | `{tokenMint, token: TokenEvent, raw}` (snapshot)      |
+ * | `tick`           | token                      | `{tokenMint, time, priceUsd, marketCapUsd, liquidityUsd, lastPrice}` |
+ * | `prices`         | prices                     | `{sol, eth, bnb}` USD                                |
+ * | `wallet_trade`   | wallet (Solana)            | `{wallet, trade}` or `{wallet, snapshot, trades}`    |
+ *
+ * The remaining names are kept so older listeners compile; nothing sends them.
+ */
 export type WsEventType =
   | "deploy"
   | "migration"
   | "migrating"
   | "trade"
+  | "trade_snapshot"
+  | "candle"
+  | "token"
+  | "tick"
+  | "prices"
+  | "priceInfo"
+  | "wallet_trade"
   | "transaction"
   | "analysis"
   | "alert"
-  | "priceInfo"
   | "dex_paid"
   | "raze_listeners"
   | "perp_fill"
@@ -25,28 +50,57 @@ export type WsEventType =
 
 export type WsHandler = (data: Record<string, unknown>) => void;
 
-type Sub = { cancel(): void };
+/** Per-token channels a caller can hold. `candles` has its own method. */
+export type TokenChannel = "trades" | "token";
 
-function wsUrlFrom(base: string, apiKey: string): string {
-  const raw = base && base !== "https://api.raze.bot" ? base : "http://127.0.0.1:8810";
-  const u = new URL(raw);
-  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-  u.pathname = "/ws";
-  u.search = "";
-  if (apiKey) u.searchParams.set("api_key", apiKey);
-  return u.toString();
+type Channel = "trades" | "candles" | "token" | "launchpad" | "prices" | "wallet";
+
+interface Spec {
+  channel: Channel;
+  chain?: string;
+  token?: string;
+  interval?: string;
+  unit?: string;
+  board?: string;
+  wallet?: string;
+}
+
+interface Sub {
+  spec: Spec;
+  rc: number;
+  /** Holders that also want the SSE fallback while no socket is up. Per-row
+   *  token feeds stay WebSocket-only: one SSE connection each would exhaust
+   *  the proxy's stream budget. */
+  sse: number;
+}
+
+interface Session { wsProxy: boolean; wsUrl: string | null }
+
+const BOARD_OF: Partial<Record<WsEventType, "new" | "graduating" | "graduated">> = {
+  deploy: "new",
+  migrating: "graduating",
+  migration: "graduated",
+};
+const EVENT_OF_BOARD: Record<string, WsEventType> = {
+  new: "deploy",
+  graduating: "migrating",
+  graduated: "migration",
+};
+
+/** The API allows 200 per socket; keep headroom for the global channels. */
+const MAX_SUBS = 195;
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+function sidOf(spec: Spec): string {
+  return [spec.channel, spec.chain ?? "", spec.board ?? spec.token ?? spec.wallet ?? "", spec.interval ?? "", spec.unit ?? ""]
+    .join("|")
+    .replace(/\|+$/, "");
 }
 
 function sameOriginWsUrl(): string | null {
   if (typeof window === "undefined") return null;
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}/api/ws`;
-}
-
-function sseUrl(path: string, extra: Record<string, string> = {}): string {
-  const url = new URL(`/api/raze${path}`, window.location.origin);
-  for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
-  return url.pathname + url.search;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -66,160 +120,122 @@ export class RazeWebSocket {
 
   private handlers = new Map<WsEventType, Set<WsHandler>>();
   private socket: WebSocket | null = null;
-  private eventSubs = new Map<WsEventType, { rc: number; sub: Sub }>();
-  private tokenSubs = new Map<string, { rc: number; sub: Sub }>();
-  private native = 0;
+  private subs = new Map<string, Sub>();
+  /** Board events → the subscription currently serving them (chain-bound). */
+  private boardSubs = new Map<WsEventType, { rc: number; sid: string }>();
+  private sse = new Map<string, AbortController>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private opening = false;
-  private sessionWsUrl: string | null = null;
-  private sse = new Map<string, AbortController>();
+  private attempts = 0;
+  private session: Session | null = null;
+  private pricesHeld = false;
+  private overCapWarned = false;
 
   private constructor() {
     if (typeof window !== "undefined") {
-      window.addEventListener(CHAIN_CHANGED_EVENT, () => this.resetAll());
-      window.addEventListener("trade-ui:api-settings", () => this.resetAll());
+      window.addEventListener(CHAIN_CHANGED_EVENT, () => this.repointBoards());
+      window.addEventListener("trade-ui:api-settings", () => this.resetConnection());
       window.addEventListener("pagehide", () => this.disconnect());
     }
   }
 
+  // ── connection ──────────────────────────────────────────────────────────
+
   connect(): void {
+    if (typeof window === "undefined") return;
+    if (!this.pricesHeld) {
+      // Native prices convert every USD field; keep them pushed, not polled.
+      this.pricesHeld = true;
+      this.retain({ channel: "prices" }, true);
+    }
     this.ensureSocket();
-    void nativeUsd().then((n) => { this.native = n; }).catch(() => {});
-  }
-  disconnect(): void { this.closeSocket(); }
-
-  private chain(): ChainId { return getActiveChain(); }
-
-  private dispatch(msg: Record<string, unknown>): void {
-    const type = msg.type as WsEventType;
-    if (!type) return;
-    this.handlers.get(type)?.forEach((h) => {
-      try { h(msg); } catch { /* swallow */ }
-    });
   }
 
-  private mapDeploy(d: Record<string, unknown>, type: "deploy" | "migration" | "migrating" | "alert"): Record<string, unknown> {
-    const safety = d.safety && typeof d.safety === "object" && !Array.isArray(d.safety)
-      ? d.safety as Record<string, unknown>
-      : null;
-    const launchpad = d.launchpad && typeof d.launchpad === "object" && !Array.isArray(d.launchpad)
-      ? d.launchpad as Record<string, unknown>
-      : null;
-    return {
-      type,
-      mint: d.address,
-      mint_address: d.address,
-      address: d.address,
-      chain: d.chain,
-      name: d.name,
-      symbol: d.symbol,
-      image: imageSrc(typeof d.image === "string" ? d.image : null),
-      platform: d.platform,
-      dex: d.platform,
-      uri: d.uri,
-      signer: d.creatorAddress,
-      creator: d.creatorAddress,
-      created_at: d.createdAt,
-      // A completion frame has no migratedAt yet; its curve's completedAt
-      // (seconds) is the same moment.
-      migrated_at: d.migratedAt ?? (typeof launchpad?.completedAt === "number"
-        ? launchpad.completedAt * 1000
-        : undefined),
-      timestamp: d.createdAt ?? d.migratedAt ?? Date.now(),
-      marketCap: d.marketCap,
-      liquidity: d.liquidityUsd,
-      holders: d.holders,
-      priceUsd: d.priceUsd,
-      // Percent, like every change on the API. Live frames re-send it as the
-      // quote moves, so the row's change is not the one it was born with.
-      priceChange: d.change24h ?? d.change1h,
-      // Not volume24h: the API's is USD, the columns' filters read it as SOL.
-      graduationPercent: launchpad?.graduationPercent,
-      // The migrating board drops a row on these.
-      completed: launchpad?.completed === true || launchpad?.migrated === true,
-      bundlePercentage: safety?.bundlePercentage ?? d.bundlePercentage,
-      sniperPercentage: safety?.sniperPercentage ?? d.sniperPercentage,
-    };
+  disconnect(): void {
+    this.closeSocket();
   }
 
-  private mapTrade(d: Record<string, unknown>): Record<string, unknown> {
-    const priceUsd = Number(d.priceUsd || 0);
-    const native = this.native || 0;
-    return {
-      type: "trade",
-      tokenMint: d.token,
-      mint: d.token,
-      signer: d.wallet,
-      wallet: d.wallet,
-      transactionType: d.side,
-      tokensAmount: d.amount,
-      avgPrice: native > 0 ? priceUsd / native : priceUsd,
-      solAmount: d.sol,
-      signature: d.sig,
-      timestamp: d.ts,
-      usdValue: d.usd,
-      isBundle: d.bundle === true,
-      isSniper: d.sniper === true,
-      slot: d.blockNumber,
-    };
+  /** True while the WebSocket is open (SSE fallback does not count). */
+  isLive(): boolean {
+    return this.socket?.readyState === WebSocket.OPEN;
   }
 
-  private mapBar(d: Record<string, unknown>): Record<string, unknown> {
-    const native = this.native || 1;
-    const t = Number(d.t || Date.now());
-    return {
-      type: "ohlcv",
-      candle: {
-        timestamp: new Date(t).toISOString(),
-        open: Number(d.o || 0) / native,
-        high: Number(d.h || 0) / native,
-        low: Number(d.l || 0) / native,
-        close: Number(d.c || 0) / native,
-        volume: Number(d.v || 0),
-        sol_price: native,
-      },
-    };
+  private resetConnection(): void {
+    this.session = null;
+    this.closeSocket();
+    this.attempts = 0;
+    this.ensureSocket();
   }
 
-  private onEnvelope(body: { ok?: boolean; data?: Record<string, unknown> }): void {
-    const d = body.data;
-    if (!d || typeof d !== "object") return;
-    const type = String(d.type || "");
-    if (type === "subscribed" || type === "unsubscribed" || type === "pong" || type === "gap") return;
-    if (type === "deploy") this.dispatch(this.mapDeploy(d, "deploy"));
-    else if (type === "migration") this.dispatch(this.mapDeploy(d, "migration"));
-    else if (type === "new") this.dispatch(this.mapDeploy(d, "alert"));
-    else if (type === "migrating") this.dispatch(this.mapDeploy(d, "migrating"));
-    else if (type === "trade") this.dispatch(this.mapTrade(d));
-    else if (type === "bar") this.dispatch(this.mapBar(d));
-    else if (type === "stats" && d.price != null) {
-      this.dispatch({
-        type: "priceInfo",
-        priceInfo: { solPrice: this.native },
-        solPrice: this.native,
-        priceUsd: d.price,
-      });
+  private ensureSocket(): void {
+    if (typeof window === "undefined") return;
+    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+    if (this.opening || this.reconnectTimer) return;
+    this.opening = true;
+    void this.openLive().finally(() => { this.opening = false; });
+  }
+
+  private async loadSession(): Promise<Session> {
+    if (this.session) return this.session;
+    try {
+      const r = await fetch("/api/session", { signal: AbortSignal.timeout(5_000), cache: "no-store" });
+      const j = await r.json() as { wsProxy?: boolean; wsUrl?: string | null };
+      this.session = { wsProxy: j.wsProxy === true, wsUrl: j.wsUrl ?? null };
+    } catch {
+      // No session route (static host): assume a same-origin proxy.
+      return { wsProxy: true, wsUrl: null };
+    }
+    return this.session;
+  }
+
+  /**
+   * server.cjs serves same-origin `/api/ws` and adds the key itself. Under
+   * `next dev` there is no upgrade handler, so the browser opens the API's
+   * socket directly — keyless, or with the key the user typed in Settings.
+   */
+  private socketUrl(session: Session): string | null {
+    if (session.wsProxy) return sameOriginWsUrl();
+    if (!session.wsUrl) return null;
+    const { apiKey } = readApiSettings();
+    if (!apiKey) return session.wsUrl;
+    try {
+      const u = new URL(session.wsUrl);
+      u.searchParams.set("apiKey", apiKey);
+      return u.toString();
+    } catch {
+      return session.wsUrl;
     }
   }
 
-  private candidateWsUrls(): string[] {
-    const urls: string[] = [];
-    const same = sameOriginWsUrl();
-    if (same) urls.push(same);
-    const { apiBase, apiKey } = readApiSettings();
-    if (apiKey) urls.push(wsUrlFrom(apiBase, apiKey));
-    else if (this.sessionWsUrl) urls.push(this.sessionWsUrl);
-    return [...new Set(urls)];
+  private async openLive(): Promise<void> {
+    const session = await this.loadSession();
+    // Prime native prices so the first snapshots convert; the `prices`
+    // channel keeps them current from then on.
+    const primed = fetchNativePrices().catch(() => null);
+    const url = this.socketUrl(session);
+    const socket = url ? await this.tryWs(url, 6_000) : null;
+    await Promise.race([primed, new Promise((r) => setTimeout(r, 1_500))]);
+    if (socket) {
+      this.bindSocket(socket, url!);
+      return;
+    }
+    // No socket: stream the channels that asked for it over SSE (through
+    // the proxy, which adds the key), and keep retrying the socket slowly.
+    this.startAllSse();
+    this.scheduleReconnect();
   }
 
-  private async loadSessionWs(): Promise<void> {
-    if (this.sessionWsUrl) return;
-    try {
-      const r = await fetch("/api/session", { signal: AbortSignal.timeout(5_000) });
-      const j = await r.json() as { wsUrl?: string | null };
-      if (j.wsUrl) this.sessionWsUrl = j.wsUrl;
-    } catch { /* ignore */ }
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    this.attempts += 1;
+    const delay = Math.min(30_000, 1_500 * 2 ** Math.min(this.attempts - 1, 5));
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.ensureSocket();
+    }, delay);
   }
 
   private tryWs(url: string, ms: number): Promise<WebSocket | null> {
@@ -246,6 +262,7 @@ export class RazeWebSocket {
       const timer = setTimeout(() => done(false), ms);
       socket.onopen = () => done(true);
       socket.onerror = () => done(false);
+      socket.onclose = () => done(false);
     });
   }
 
@@ -254,62 +271,123 @@ export class RazeWebSocket {
     socket.onerror = null;
     this.abortAllSse();
     this.socket = socket;
+    this.attempts = 0;
     notifyWireOpen(url);
-    this.replay();
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = setInterval(() => {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ op: "ping", id: "p" }));
-      }
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ op: "ping" }));
     }, 20_000);
     socket.onmessage = (ev) => {
-      try {
-        this.onEnvelope(JSON.parse(String(ev.data)));
-      } catch { /* ignore */ }
+      let frame: Rec | null = null;
+      try { frame = asRecord(JSON.parse(String(ev.data))); } catch { /* ignore */ }
+      if (frame) this.onFrame(frame);
     };
     socket.onclose = () => {
-      if (this.socket === socket) this.socket = null;
+      if (this.socket !== socket) return;
+      this.socket = null;
       if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
-      if (this.reconnectTimer) return;
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        this.ensureSocket();
-      }, 1500);
+      // Reconnect at once; every channel re-sends its snapshot on subscribe,
+      // which is what fills the gap.
+      this.scheduleReconnect();
     };
+    this.replay();
   }
 
-  private ensureSocket(): void {
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-    if (this.opening) return;
-    this.opening = true;
-    void this.openLive().finally(() => { this.opening = false; });
+  private closeSocket(): void {
+    this.abortAllSse();
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    const s = this.socket;
+    this.socket = null;
+    try { s?.close(); } catch { /* ignore */ }
   }
 
-  private async openLive(): Promise<void> {
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+  private send(op: Record<string, unknown>): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify(op));
+    }
+  }
+
+  private sendSubscribe(sid: string, spec: Spec): void {
+    this.send({ op: "subscribe", id: sid, ...spec });
+  }
+
+  private replay(): void {
+    // Prices first: the snapshots after it convert with a known price.
+    const order = [...this.subs.entries()].sort(([, a], [, b]) =>
+      Number(b.spec.channel === "prices") - Number(a.spec.channel === "prices"));
+    let n = 0;
+    for (const [sid, sub] of order) {
+      if (n >= MAX_SUBS) break;
+      this.sendSubscribe(sid, sub.spec);
+      n += 1;
+    }
+  }
+
+  // ── subscription registry ───────────────────────────────────────────────
+
+  private retain(spec: Spec, sse = false): string {
+    const sid = sidOf(spec);
+    const cur = this.subs.get(sid);
+    if (cur) {
+      cur.rc += 1;
+      if (sse) {
+        cur.sse += 1;
+        if (cur.sse === 1 && !this.isLive()) this.startSse(sid, cur);
+      }
+      return sid;
+    }
+    if (this.subs.size >= MAX_SUBS) {
+      if (!this.overCapWarned) {
+        this.overCapWarned = true;
+        console.warn(`[raze-ws] ${MAX_SUBS} live subscriptions reached; further ones are skipped`);
+      }
+      return sid;
+    }
+    const sub: Sub = { spec, rc: 1, sse: sse ? 1 : 0 };
+    this.subs.set(sid, sub);
+    if (this.isLive()) this.sendSubscribe(sid, spec);
+    else if (!this.opening && !this.reconnectTimer) this.ensureSocket();
+    if (!this.isLive() && sub.sse > 0 && this.reconnectTimer) this.startSse(sid, sub);
+    return sid;
+  }
+
+  private release(sid: string, sse = false): void {
+    const cur = this.subs.get(sid);
+    if (!cur) return;
+    if (sse && cur.sse > 0) cur.sse -= 1;
+    if (cur.rc > 1) {
+      cur.rc -= 1;
+      if (cur.sse === 0) this.closeSse(sid);
       return;
     }
-    await this.loadSessionWs();
-    const same = sameOriginWsUrl();
-    if (same) {
-      const socket = await this.tryWs(same, 5_000);
-      if (socket) {
-        this.bindSocket(socket, same);
-        return;
-      }
-    }
-    for (const url of this.candidateWsUrls()) {
-      if (same && url === same) continue;
-      const socket = await this.tryWs(url, 800);
-      if (socket) {
-        this.bindSocket(socket, url);
-        return;
-      }
-    }
-    this.replaySse();
+    this.subs.delete(sid);
+    this.closeSse(sid);
+    this.send({ op: "unsubscribe", id: sid });
   }
+
+  private boardSpec(t: WsEventType): Spec | null {
+    const board = BOARD_OF[t];
+    if (!board) return null;
+    return { channel: "launchpad", board, chain: getActiveChain() };
+  }
+
+  /** A chain switch moves every board subscription to the new chain. */
+  private repointBoards(): void {
+    for (const [t, entry] of this.boardSubs) {
+      const spec = this.boardSpec(t);
+      if (!spec) continue;
+      const sid = sidOf(spec);
+      if (sid === entry.sid) continue;
+      for (let i = 0; i < entry.rc; i++) {
+        this.retain(spec, true);
+        this.release(entry.sid, true);
+      }
+      entry.sid = sid;
+    }
+  }
+
+  // ── SSE fallback ────────────────────────────────────────────────────────
 
   private abortAllSse(): void {
     for (const ac of this.sse.values()) {
@@ -318,40 +396,36 @@ export class RazeWebSocket {
     this.sse.clear();
   }
 
-  private closeSse(id: string): void {
-    const ac = this.sse.get(id);
+  private closeSse(sid: string): void {
+    const ac = this.sse.get(sid);
     if (!ac) return;
     try { ac.abort(); } catch { /* ignore */ }
-    this.sse.delete(id);
+    this.sse.delete(sid);
   }
 
-  private replaySse(): void {
-    if (this.socket?.readyState === WebSocket.OPEN) return;
-    for (const t of this.eventSubs.keys()) this.startEventSse(t);
-    for (const mint of this.tokenSubs.keys()) this.startTokenSse(mint);
+  private startAllSse(): void {
+    if (this.isLive()) return;
+    for (const [sid, sub] of this.subs) this.startSse(sid, sub);
   }
 
-  private openSse(id: string, path: string, extra: Record<string, string> = {}): void {
-    this.closeSse(id);
+  private startSse(sid: string, sub: Sub): void {
+    if (sub.sse <= 0 || this.sse.has(sid) || typeof window === "undefined") return;
     const ac = new AbortController();
-    this.sse.set(id, ac);
-    void this.readSse(id, path, extra, ac);
+    this.sse.set(sid, ac);
+    const { channel, ...params } = sub.spec;
+    const url = new URL(`/api/raze/stream/${channel}`, window.location.origin);
+    for (const [k, v] of Object.entries(params)) if (v) url.searchParams.set(k, String(v));
+    void this.readSse(sid, url.pathname + url.search, ac);
   }
 
-  private async readSse(
-    id: string,
-    path: string,
-    extra: Record<string, string>,
-    ac: AbortController,
-  ): Promise<void> {
+  private async readSse(sid: string, path: string, ac: AbortController): Promise<void> {
     let attempt = 0;
+    const headers: Record<string, string> = { accept: "text/event-stream" };
+    const { apiKey } = readApiSettings();
+    if (apiKey) headers["x-trade-ui-key"] = apiKey;
     while (!ac.signal.aborted) {
       try {
-        const res = await fetch(sseUrl(path, extra), {
-          headers: { accept: "text/event-stream" },
-          signal: ac.signal,
-          cache: "no-store",
-        });
+        const res = await fetch(path, { headers, signal: ac.signal, cache: "no-store" });
         if (!res.ok || !res.body) throw new Error("sse");
         const reader = res.body.getReader();
         const dec = new TextDecoder();
@@ -365,12 +439,21 @@ export class RazeWebSocket {
           while ((sep = buf.indexOf("\n\n")) >= 0) {
             const chunk = buf.slice(0, sep);
             buf = buf.slice(sep + 2);
+            let event = "";
+            const data: string[] = [];
             for (const line of chunk.split("\n")) {
-              if (!line.startsWith("data:")) continue;
-              const payload = line.slice(5).trim();
-              if (!payload) continue;
-              try { this.onEnvelope(JSON.parse(payload)); } catch { /* ignore */ }
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
             }
+            if (!data.length) continue;
+            try {
+              const frame = asRecord(JSON.parse(data.join("\n")));
+              if (!frame) continue;
+              // SSE frames carry no subscription id; one stream = one sid.
+              frame.id = sid;
+              if (!frame.type && event) frame.type = event;
+              this.onFrame(frame);
+            } catch { /* ignore */ }
           }
         }
       } catch {
@@ -382,140 +465,226 @@ export class RazeWebSocket {
     }
   }
 
-  private closeSocket(): void {
-    this.abortAllSse();
-    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-    try { this.socket?.close(); } catch { /* ignore */ }
-    this.socket = null;
-  }
+  // ── frames ──────────────────────────────────────────────────────────────
 
-  private send(op: Record<string, unknown>): void {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify(op));
-    }
-  }
-
-  private replay(): void {
-    for (const t of this.eventSubs.keys()) this.startEvent(t);
-    for (const mint of this.tokenSubs.keys()) this.startToken(mint);
-  }
-
-  private resetAll(): void {
-    this.sessionWsUrl = null;
-    this.closeSocket();
-    this.connect();
-    this.replay();
-  }
-
-  private startEvent(t: WsEventType): void {
-    const channel = t === "deploy" ? "deploys"
-      : t === "migration" ? "migrations"
-      : t === "migrating" ? "migrating"
-      : t === "alert" ? "discovery"
-      : null;
-    if (!channel) return;
-    const prev = this.eventSubs.get(t);
-    try { prev?.sub.cancel(); } catch { /* ignore */ }
-    const id = `e-${t}`;
-    this.eventSubs.set(t, {
-      rc: prev?.rc ?? 1,
-      sub: { cancel: () => this.closeSse(id) },
+  private dispatch(type: WsEventType, msg: Record<string, unknown>): void {
+    this.handlers.get(type)?.forEach((h) => {
+      try { h(msg); } catch { /* swallow */ }
     });
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.closeSse(id);
-      this.send({ op: "subscribe", id, channel, chain: this.chain() });
+  }
+
+  private onFrame(f: Rec): void {
+    const type = String(f.type ?? "");
+    if (!type || type === "pong" || type === "subscribed" || type === "unsubscribed" || type === "lagged") return;
+    const sid = typeof f.id === "string" ? f.id : "";
+    const sub = this.subs.get(sid);
+    if (type === "error") {
+      const err = asRecord(f.error);
+      console.warn(`[raze-ws] ${sid || "socket"}: ${String(err?.code ?? "error")} ${String(err?.message ?? "")}`);
       return;
     }
-    if (this.opening || this.socket?.readyState === WebSocket.CONNECTING) return;
-    this.startEventSse(t);
-  }
-
-  private startEventSse(t: WsEventType): void {
-    const path = t === "deploy" ? "/discovery/deploys/stream"
-      : t === "migration" ? "/discovery/migrations/stream"
-      : t === "migrating" ? "/discovery/launchpad/stream"
-      : t === "alert" ? "/discovery/new/stream"
-      : null;
-    if (!path) return;
-    this.openSse(`e-${t}`, path, { chain: this.chain() });
-  }
-
-  private startToken(mint: string): void {
-    const prev = this.tokenSubs.get(mint);
-    try { prev?.sub.cancel(); } catch { /* ignore */ }
-    this.tokenSubs.set(mint, {
-      rc: prev?.rc ?? 1,
-      sub: { cancel: () => this.closeTokenSse(mint) },
-    });
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.closeTokenSse(mint);
-      this.send({ op: "subscribe", id: `t-${mint}-trades`, channel: "trades", chain: this.chain(), address: mint });
-      this.send({ op: "subscribe", id: `t-${mint}-ohlc`, channel: "ohlc", chain: this.chain(), address: mint });
-      this.send({ op: "subscribe", id: `t-${mint}-stats`, channel: "stats", chain: this.chain(), address: mint });
-      return;
+    if (!sub) return; // released while the frame was in flight
+    const spec = sub.spec;
+    const chain = spec.chain ?? getActiveChain();
+    switch (spec.channel) {
+      case "prices": {
+        setNativePrices(f.data);
+        const p = asRecord(f.data) ?? {};
+        this.dispatch("prices", { type: "prices", ...p });
+        const solPrice = nativeUsdSync();
+        if (solPrice > 0) {
+          this.dispatch("priceInfo", { type: "priceInfo", priceInfo: { solPrice }, solPrice });
+        }
+        return;
+      }
+      case "launchpad": {
+        const event = EVENT_OF_BOARD[spec.board ?? ""];
+        if (!event) return;
+        const native = nativeUsdSync(chain);
+        if (type === "snapshot") {
+          const rows = Array.isArray(f.data) ? f.data : [];
+          this.dispatch(event, {
+            type: event,
+            kind: "snapshot",
+            board: spec.board,
+            chain,
+            rows: rows.map((r) => apiTokenToEvent(asRecord(r) ?? {}, native)).filter((t) => t.mint_address),
+          });
+          return;
+        }
+        const row = asRecord(f.data);
+        if (!row) return;
+        const token = apiTokenToEvent(row, native);
+        if (!token.mint_address) return;
+        this.dispatch(event, { ...token, type: event, kind: type, board: spec.board });
+        return;
+      }
+      case "trades": {
+        const native = nativeUsdSync(chain);
+        const mint = spec.token ?? "";
+        if (type === "snapshot") {
+          const rows = Array.isArray(f.data) ? f.data : [];
+          this.dispatch("trade_snapshot", {
+            type: "trade_snapshot",
+            tokenMint: mint,
+            trades: rows.map((r) => apiTradeToTrade(asRecord(r) ?? {}, native, mint)),
+          });
+          return;
+        }
+        const row = asRecord(f.data);
+        if (!row) return;
+        const trade = apiTradeToTrade(row, native, mint);
+        this.dispatch("trade", { ...trade, type: "trade", mint: trade.tokenMint, wallet: trade.signer });
+        return;
+      }
+      case "candles": {
+        const base = { type: "candle", tokenMint: spec.token, interval: spec.interval, unit: spec.unit ?? "usd", kind: type };
+        if (type === "snapshot") {
+          const rows = Array.isArray(f.data) ? f.data : [];
+          this.dispatch("candle", {
+            ...base,
+            candles: rows.map((r) => apiCandle(asRecord(r) ?? {})).filter(Boolean),
+          });
+          return;
+        }
+        const candle = apiCandle(asRecord(f.data) ?? {});
+        if (candle) this.dispatch("candle", { ...base, candle });
+        return;
+      }
+      case "token": {
+        const native = nativeUsdSync(chain);
+        const row = asRecord(f.data);
+        if (!row) return;
+        if (type === "snapshot") {
+          this.dispatch("token", {
+            type: "token",
+            tokenMint: spec.token,
+            token: apiTokenToEvent(row, native),
+            raw: row,
+          });
+          return;
+        }
+        if (type === "tick") {
+          const priceUsd = num(row.priceUsd);
+          this.dispatch("tick", {
+            type: "tick",
+            tokenMint: spec.token,
+            time: num(row.time) ?? Date.now(),
+            priceUsd,
+            marketCapUsd: num(row.marketCapUsd),
+            liquidityUsd: num(row.liquidityUsd),
+            lastPrice: priceUsd != null && native > 0 ? priceUsd / native : undefined,
+          });
+        }
+        return;
+      }
+      case "wallet": {
+        const native = nativeUsdSync(chain);
+        const wallet = spec.wallet ?? "";
+        const map = (r: unknown) => {
+          const row = asRecord(r) ?? {};
+          return {
+            ...apiTradeToTrade(row, native),
+            signer: wallet,
+            tokenSymbol: row.tokenSymbol ?? null,
+            tokenImage: row.tokenImage ?? null,
+          };
+        };
+        if (type === "snapshot") {
+          const rows = Array.isArray(f.data) ? f.data : [];
+          this.dispatch("wallet_trade", { type: "wallet_trade", wallet, snapshot: true, trades: rows.map(map) });
+          return;
+        }
+        if (f.data) this.dispatch("wallet_trade", { type: "wallet_trade", wallet, trade: map(f.data) });
+        return;
+      }
     }
-    if (this.opening || this.socket?.readyState === WebSocket.CONNECTING) return;
-    this.startTokenSse(mint);
   }
 
-  private closeTokenSse(mint: string): void {
-    this.closeSse(`t-${mint}-trades`);
-    this.closeSse(`t-${mint}-ohlc`);
-    this.closeSse(`t-${mint}-stats`);
-  }
+  // ── public API ──────────────────────────────────────────────────────────
 
-  private startTokenSse(_mint: string): void {
-    // Per-token SSE (3 streams × every row) is what filled evmapi's accept
-    // queue. Token live data rides the multiplexed WebSocket only.
-  }
-
+  /** Launchpad boards (`deploy` / `migrating` / `migration`) on the active chain. */
   subscribe(types: WsEventType[]): void {
     this.connect();
     for (const t of types) {
-      const cur = this.eventSubs.get(t);
-      if (cur) { cur.rc += 1; continue; }
-      this.eventSubs.set(t, { rc: 1, sub: { cancel() {} } });
-      this.startEvent(t);
+      const spec = this.boardSpec(t);
+      if (!spec) continue; // no live channel behind it (e.g. `alert`)
+      const cur = this.boardSubs.get(t);
+      if (cur) {
+        cur.rc += 1;
+        this.retain(this.subs.get(cur.sid)?.spec ?? spec, true);
+        continue;
+      }
+      const sid = this.retain(spec, true);
+      this.boardSubs.set(t, { rc: 1, sid });
     }
   }
 
   unsubscribe(types: WsEventType[]): void {
     for (const t of types) {
-      const cur = this.eventSubs.get(t);
+      const cur = this.boardSubs.get(t);
       if (!cur) continue;
-      if (cur.rc <= 1) {
-        try { cur.sub.cancel(); } catch { /* ignore */ }
-        this.eventSubs.delete(t);
-        this.send({ op: "unsubscribe", id: `e-${t}` });
-      } else cur.rc -= 1;
+      this.release(cur.sid, true);
+      if (cur.rc <= 1) this.boardSubs.delete(t);
+      else cur.rc -= 1;
     }
   }
 
-  subscribeToken(mint: string): void {
+  subscribeMany(eventTypes: WsEventType[]): void {
+    this.subscribe(eventTypes);
+  }
+
+  /**
+   * Per-token live feeds on the active chain. `trades` fires `trade` (and a
+   * `trade_snapshot` on every (re)subscribe); `token` fires `token` + `tick`.
+   * `sse`: also stream over SSE while no socket is up — for the token being
+   * viewed, not for list rows.
+   */
+  subscribeToken(mint: string, channels: TokenChannel[] = ["trades"], opts: { sse?: boolean } = {}): void {
     if (!mint) return;
     this.connect();
-    const cur = this.tokenSubs.get(mint);
-    if (cur) { cur.rc += 1; return; }
-    this.tokenSubs.set(mint, { rc: 1, sub: { cancel() {} } });
-    this.startToken(mint);
+    for (const channel of channels) {
+      this.retain({ channel, chain: getActiveChain(), token: mint }, Boolean(opts.sse));
+    }
   }
 
-  unsubscribeToken(mint: string): void {
+  unsubscribeToken(mint: string, channels: TokenChannel[] = ["trades"], opts: { sse?: boolean } = {}): void {
     if (!mint) return;
-    const cur = this.tokenSubs.get(mint);
-    if (!cur) return;
-    if (cur.rc <= 1) {
-      try { cur.sub.cancel(); } catch { /* ignore */ }
-      this.tokenSubs.delete(mint);
-      this.send({ op: "unsubscribe", id: `t-${mint}-trades` });
-      this.send({ op: "unsubscribe", id: `t-${mint}-ohlc` });
-      this.send({ op: "unsubscribe", id: `t-${mint}-stats` });
-    } else cur.rc -= 1;
+    for (const channel of channels) {
+      const sid = this.findSid((s) => s.channel === channel && s.token === mint);
+      if (sid) this.release(sid, Boolean(opts.sse));
+    }
   }
 
-  subscribeSigners(_signers: string[]): void {}
-  unsubscribeSigners(_signers: string[]): void {}
+  /** The API's forming bar for (mint, interval, unit): `candle` events. */
+  subscribeCandles(mint: string, interval: string, unit: "usd" | "marketCap" = "usd"): void {
+    if (!mint) return;
+    this.connect();
+    this.retain({ channel: "candles", chain: getActiveChain(), token: mint, interval, unit }, true);
+  }
+
+  unsubscribeCandles(mint: string, interval: string, unit: "usd" | "marketCap" = "usd"): void {
+    const sid = this.findSid((s) => s.channel === "candles" && s.token === mint && s.interval === interval && (s.unit ?? "usd") === unit);
+    if (sid) this.release(sid, true);
+  }
+
+  /** Every swap of these Solana wallets: `wallet_trade` events. The API's
+   *  wallet channel is Solana-only; EVM addresses are skipped. */
+  subscribeSigners(signers: string[]): void {
+    const list = signers.filter((s) => SOLANA_ADDRESS.test(s));
+    if (!list.length) return;
+    this.connect();
+    for (const wallet of list) this.retain({ channel: "wallet", chain: "sol", wallet }, true);
+  }
+
+  unsubscribeSigners(signers: string[]): void {
+    for (const wallet of signers) {
+      if (!SOLANA_ADDRESS.test(wallet)) continue;
+      this.release(sidOf({ channel: "wallet", chain: "sol", wallet }), true);
+    }
+  }
+
+  // Perpetuals have no channel on this API.
   subscribeMarket(_marketId: string): void {}
   unsubscribeMarket(_marketId: string): void {}
   subscribeMarkets(_markets: string[]): void {}
@@ -528,7 +697,8 @@ export class RazeWebSocket {
     return () => { set!.delete(handler); };
   }
 
-  subscribeMany(eventTypes: WsEventType[]): void {
-    this.subscribe(eventTypes);
+  private findSid(pred: (s: Spec) => boolean): string | null {
+    for (const [sid, sub] of this.subs) if (pred(sub.spec)) return sid;
+    return null;
   }
 }

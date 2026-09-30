@@ -397,6 +397,7 @@ export function normalizeTokenEvent(
     // React crash (P0-bis 2026-07-22).
     marketCap:         toOptionalNumber(inner.marketCap         ?? inner.market_cap),
     initialMarketCap:  toOptionalNumber(inner.initialMarketCap   ?? inner.initial_market_cap),
+    lastPrice:         toOptionalNumber(inner.lastPrice ?? inner.last_price),
     bundlePercentage:  toOptionalNumber(inner.bundlePercentage   ?? inner.bundle_percentage),
     sniperPercentage:  toOptionalNumber(inner.sniperPercentage   ?? inner.sniper_percentage),
     creatorDeploys:    toOptionalNumber(inner.creatorDeploys     ?? inner.creator_deploys),
@@ -410,6 +411,7 @@ export function normalizeTokenEvent(
     firstHourVolume:   toOptionalNumber(inner.firstHourVolume ?? inner.first_hour_volume),
     priceChange:       toOptionalNumber(inner.priceChange ?? inner.price_change ?? inner.change24h ?? inner.change_24h),
     graduationPercent: toOptionalNumber(inner.graduationPercent),
+    graduated:         toOptionalBool(inner.graduated),
     volume24h:         toOptionalNumber(inner.volume24h ?? inner.volume_24h ?? inner.volume ?? inner.totalVolume),
     liquidity:         toOptionalNumber(inner.liquidity ?? inner.liquiditySol ?? inner.liquidity_sol),
     holders:           toOptionalNumber(inner.holders ?? inner.holderCount ?? inner.holder_count ?? inner.uniqueTraders ?? inner.unique_traders),
@@ -469,6 +471,7 @@ export function normalizeRestToken(raw: Record<string, unknown>): TokenEvent {
     firstHourVolume:   toOptionalNumber(raw.firstHourVolume ?? raw.first_hour_volume),
     priceChange:       toOptionalNumber(raw.priceChange ?? raw.price_change ?? raw.change24h ?? raw.change_24h),
     graduationPercent: toOptionalNumber(raw.graduationPercent),
+    graduated:         toOptionalBool(raw.graduated),
     volume24h:         toOptionalNumber(raw.volume24h ?? raw.volume_24h ?? raw.volume ?? raw.totalVolume),
     liquidity:         toOptionalNumber(raw.liquidity ?? raw.liquiditySol ?? raw.liquidity_sol),
     holders:           toOptionalNumber(raw.holders ?? raw.holderCount ?? raw.holder_count ?? raw.uniqueTraders ?? raw.unique_traders),

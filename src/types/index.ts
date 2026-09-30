@@ -26,8 +26,11 @@ export interface TokenEvent {
   firstHourTrades?: number;
   firstHourVolume?: number;
   priceChange?: number;
-  /** Bonding-curve completion, 0-100 (launchpad.graduationPercent). */
+  /** Bonding-curve completion, 0-100 (the API's launchpad.progressPercent). */
   graduationPercent?: number;
+  /** Left its launchpad for a pool (the API's launchpad.graduated). Known
+   *  even when the graduation time is not. */
+  graduated?: boolean;
   volume24h?: number;
   liquidity?: number;
   holders?: number;
@@ -88,6 +91,14 @@ export interface Holder {
   isLiquidityPool?: boolean;
   /** Pump.fun system PDA — excluded from concentration metrics. */
   isSystemAccount?: boolean;
+  /** Exchange or pool name when the holder is not a person. */
+  label?: string;
+  /** Current value of the position, USD. */
+  valueUsd?: number;
+  /** Unrealized PnL from the API, USD. */
+  unrealizedPnlUsd?: number;
+  fundedBy?: string;
+  tags?: string[];
 }
 
 export interface TopTrader {
@@ -114,6 +125,10 @@ export interface TopTrader {
   proTrades?: number;
   entryDelaySeconds?: number | null;
   largestTrade?: number;
+  /** Tokens held now (the API reports the balance, not bought − sold). */
+  heldTokens?: number;
+  /** totalPnL came from the API (realized + unrealized): live trades keep it. */
+  pnlFromApi?: boolean;
 }
 
 export interface TrendingToken {
@@ -140,6 +155,11 @@ export interface SearchResult {
   uri?: string;
   time?: string;
   created_at?: string;
+  image?: string | null;
+  /** USD. */
+  marketCap?: number;
+  /** Native coin per token. */
+  lastPrice?: number;
 }
 
 export type TrendingPeriod = "recent" | "daily" | "weekly" | "monthly";
@@ -384,11 +404,12 @@ export interface TokenPriceChanges {
   oldestPrice?: number;
   oldestTime?: string;
   tokenAgeSeconds?: number;
+  /** The API's windows: 1m, 5m, 1h, 6h, 24h (no 4h / 12h). */
   changes: {
+    "1m"?: PriceChangePeriod | null;
     "5m"?: PriceChangePeriod | null;
     "1h"?: PriceChangePeriod | null;
-    "4h"?: PriceChangePeriod | null;
-    "12h"?: PriceChangePeriod | null;
+    "6h"?: PriceChangePeriod | null;
     "24h"?: PriceChangePeriod | null;
   };
   solPriceUSD?: number;
