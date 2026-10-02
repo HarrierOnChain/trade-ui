@@ -161,7 +161,7 @@ export function apiTradeToTrade(row: Rec, native: number, fallbackMint = ""): Tr
   const priceUsd = num(row.priceUsd);
   const volumeUsd = num(row.volumeUsd);
   const quoteAmount = num(row.quoteAmount);
-  const tags = Array.isArray(row.tags) ? row.tags.map(String) : [];
+  const tags = Array.isArray(row.tags) ? row.tags.map((t) => String(t).toLowerCase()) : [];
   const solAmount = isNativeQuote(row.quoteSymbol, chain) && quoteAmount != null
     ? quoteAmount
     : usdToNative(volumeUsd, native);
@@ -181,6 +181,7 @@ export function apiTradeToTrade(row: Rec, native: number, fallbackMint = ""): Tr
     isBundle: tags.includes("bundle"),
     isSniper: tags.includes("sniper"),
     isProTrader: tags.includes("pro"),
+    tags,
   };
 }
 

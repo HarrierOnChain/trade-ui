@@ -376,6 +376,21 @@
   color: var(--info);
   border-color: color-mix(in oklch, var(--info) 26%, transparent);
 }
+.flagWarn {
+  background: color-mix(in oklch, var(--warn) 14%, transparent);
+  color: var(--warn);
+  border-color: color-mix(in oklch, var(--warn) 26%, transparent);
+}
+.flagBuy {
+  background: color-mix(in oklch, var(--buy) 14%, transparent);
+  color: var(--buy);
+  border-color: color-mix(in oklch, var(--buy) 26%, transparent);
+}
+.flagMuted {
+  background: var(--ink-3);
+  color: var(--paper-3);
+  border-color: var(--line-soft);
+}
 
 .tradesBadge {
   display: inline-flex; align-items: center; justify-content: center;

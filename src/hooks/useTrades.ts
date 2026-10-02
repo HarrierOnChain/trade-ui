@@ -91,6 +91,7 @@ function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
     isBundle:        Boolean(inner.isBundle        ?? inner.is_bundle),
     isSniper:        Boolean(inner.isSniper        ?? inner.is_sniper),
     isProTrader:     Boolean(inner.isProTrader     ?? inner.proTrade       ?? inner.pro_trade),
+    tags:            Array.isArray(inner.tags) ? inner.tags.map((t) => String(t).toLowerCase()) : undefined,
   };
 }
 

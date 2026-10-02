@@ -75,6 +75,8 @@ export interface Trade {
   isBundle?: boolean;
   isSniper?: boolean;
   isProTrader?: boolean;
+  /** The API's maker tags for the row, lowercase (openapi `Trade.tags`). */
+  tags?: string[];
 }
 
 export interface Holder {

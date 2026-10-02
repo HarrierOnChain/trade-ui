@@ -411,7 +411,11 @@ const TradeRow = React.memo(function TradeRow({
 }) {
   const { openWalletModal } = useApp();
   const isBuy = trade.transactionType === "buy";
-  const isDev = !!devSigner && trade.signer === devSigner;
+  const isDev = (!!devSigner && trade.signer === devSigner) || !!trade.tags?.includes("dev");
+  const flags = tradeFlags(trade, isDev);
+  // The flag column is narrow: past MAX_FLAGS the rest fold into one "+n" chip.
+  const shown = flags.length > MAX_FLAGS ? flags.slice(0, MAX_FLAGS - 1) : flags;
+  const folded = flags.slice(shown.length);
 
   const avgP = trade.avgPrice || 0;
   let mcapOrPrice = "–";
@@ -480,24 +484,14 @@ const TradeRow = React.memo(function TradeRow({
             </button>
           </Tooltip>
           <span className={styles.walletFlags}>
-            {isDev && (
-              <Tooltip content="Dev Creator">
-                <span className={`${styles.flag} ${styles.flagDev}`}>{Icon.dev(11)}</span>
+            {shown.map((f) => (
+              <Tooltip key={f.key} content={f.title}>
+                <span className={`${styles.flag} ${f.cls}`}>{f.body}</span>
               </Tooltip>
-            )}
-            {!isDev && trade.isBundle && (
-              <Tooltip content="Bundle">
-                <span className={styles.flag}>{Icon.bundle(11)}</span>
-              </Tooltip>
-            )}
-            {!isDev && trade.isSniper && (
-              <Tooltip content="Sniper">
-                <span className={`${styles.flag} ${styles.flagSniper}`}>{Icon.sniper(11)}</span>
-              </Tooltip>
-            )}
-            {trade.isProTrader && (
-              <Tooltip content="Pro Trader">
-                <span className={`${styles.flag} ${styles.flagPro}`}>{Icon.pro(11)}</span>
+            ))}
+            {folded.length > 0 && (
+              <Tooltip content={folded.map((f) => f.title).join(" · ")}>
+                <span className={`${styles.flag} ${styles.flagMuted}`}>+{folded.length}</span>
               </Tooltip>
             )}
             {walletCount > 1 && (
@@ -532,6 +526,38 @@ const TradeRow = React.memo(function TradeRow({
     </tr>
   );
 });
+
+const MAX_FLAGS = 2;
+
+type Flag = { key: string; title: string; cls: string; body: React.ReactNode };
+
+// The API's maker tags past bundle/sniper/pro (openapi `Trade.tags`), in the
+// contract's vocabulary order. "dev" is folded into the dev chip.
+const TAG_FLAGS: { tag: string; title: string; label: string; cls: string }[] = [
+  { tag: "mev",       title: "MEV bot",      label: "MEV",  cls: styles.flagWarn },
+  { tag: "insider",   title: "Insider",      label: "INS",  cls: styles.flagWarn },
+  { tag: "smart",     title: "Smart money",  label: "SM",   cls: styles.flagBuy },
+  { tag: "kol",       title: "KOL",          label: "KOL",  cls: styles.flagPro },
+  { tag: "whale",     title: "Whale",        label: "WHL",  cls: "" },
+  { tag: "fresh",     title: "Fresh wallet", label: "NEW",  cls: styles.flagMuted },
+  { tag: "washtrade", title: "Wash trader",  label: "WASH", cls: styles.flagMuted },
+  { tag: "sandwich",  title: "Sandwich bot", label: "SAND", cls: styles.flagSniper },
+];
+
+function tradeFlags(trade: Trade, isDev: boolean): Flag[] {
+  const out: Flag[] = [];
+  if (isDev) out.push({ key: "dev", title: "Dev Creator", cls: styles.flagDev, body: Icon.dev(11) });
+  if (!isDev && trade.isBundle) out.push({ key: "bundle", title: "Bundle", cls: "", body: Icon.bundle(11) });
+  if (!isDev && trade.isSniper) out.push({ key: "sniper", title: "Sniper", cls: styles.flagSniper, body: Icon.sniper(11) });
+  if (trade.isProTrader) out.push({ key: "pro", title: "Pro Trader", cls: styles.flagPro, body: Icon.pro(11) });
+  const tags = trade.tags;
+  if (tags?.length) {
+    for (const f of TAG_FLAGS) {
+      if (tags.includes(f.tag)) out.push({ key: f.tag, title: f.title, cls: f.cls, body: f.label });
+    }
+  }
+  return out;
+}
 
 // Inline icons used only for header toggles
 function TimestampFilterPopover({
