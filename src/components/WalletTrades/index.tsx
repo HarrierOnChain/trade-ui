@@ -1,8 +1,9 @@
 "use client";
-import React from "react";
+import React, { useCallback, useRef } from "react";
 import { useWalletTrades } from "../../hooks/useWalletTrades";
+import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { TokenIdentity } from "../atoms";
-import { tradeIdentityKey, tradeNative } from "../../lib/trades";
+import { tradeKeyAcrossTokens, tradeNative } from "../../lib/trades";
 import type { Trade } from "../../types";
 import styles from "../TradesTable/styles.module.css";
 
@@ -48,11 +49,27 @@ function fmtUsd(t: Trade, solPrice: number): string {
 }
 
 export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }: Props) {
-  const { trades, loading, error } = useWalletTrades(address, limit);
+  const { trades, loading, loadingMore, hasMore, error, moreError, loadMore } = useWalletTrades(address, limit);
+
+  // Pages load on scroll only: a list that does not overflow its box would keep
+  // the sentinel in view and walk every page unasked, so it gets the button.
+  const scrollBox = useRef<HTMLDivElement | null>(null);
+  const onSentinel = useCallback(() => {
+    const el = scrollBox.current;
+    if (el && el.scrollTop > 0 && el.scrollHeight > el.clientHeight) void loadMore();
+  }, [loadMore]);
+  const { sentinelRef, rootRef } = useInfiniteScroll<HTMLTableRowElement, HTMLDivElement>(
+    onSentinel,
+    hasMore && !loading && !loadingMore && !moreError,
+  );
+  const setScrollBox = useCallback((el: HTMLDivElement | null) => {
+    scrollBox.current = el;
+    rootRef.current = el;
+  }, [rootRef]);
 
   return (
     <div className={styles.container}>
-      <div className={`${styles.tableWrap} scroll-x`}>
+      <div ref={setScrollBox} className={`${styles.tableWrap} scroll-x`}>
         {/* `table-cards` flips this to stacked label/value cards and neutralises
             the module's min-width at ≤480px (inert above). */}
         <table className={`${styles.table} table-cards`}>
@@ -78,12 +95,12 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
             {!loading && !error && trades.length === 0 && (
               <tr><td data-label="" colSpan={6} className={styles.empty}>{address ? "No trades" : "Enter a wallet address"}</td></tr>
             )}
-            {trades.map((t, i) => {
+            {trades.map((t) => {
               const isBuy = t.transactionType === "buy";
               const mint = t.tokenMint;
               return (
                 <tr
-                  key={`${tradeIdentityKey(t)}:${i}`}
+                  key={tradeKeyAcrossTokens(t)}
                   className={`${styles.tradeRow} ${isBuy ? styles.buy : styles.sell}`}
                 >
                   <td data-label="Time" className={styles.time}>{fmtAge(toMs(t.timestamp))}</td>
@@ -110,6 +127,21 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
                 </tr>
               );
             })}
+            {hasMore && !loading && (
+              <tr ref={sentinelRef}>
+                <td data-label="" colSpan={6} className={styles.loadMoreCell}>
+                  <button
+                    type="button"
+                    className={styles.loadMoreBtn}
+                    disabled={loadingMore}
+                    title={moreError ?? undefined}
+                    onClick={() => void loadMore()}
+                  >
+                    {loadingMore ? "Loading…" : moreError ? "Retry" : "Load more"}
+                  </button>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

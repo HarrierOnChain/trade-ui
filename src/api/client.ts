@@ -538,10 +538,15 @@ export const fetchWalletHoldings = async (address: string) => {
 
 export type WalletTradeRow = Trade & { tokenSymbol?: string | null; tokenImage?: string | null };
 
-export const fetchWalletTrades = async (address: string, limit = 50) => {
+/** A wallet's swaps, newest first; pass the previous page's `nextCursor` as
+ *  `cursor` for the next one. */
+export const fetchWalletTrades = async (address: string, limit = 50, cursor?: string | null) => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
-  const { data, nextCursor } = await get<unknown>(walletPath(address, "/trades", c), { limit: Math.min(100, limit) });
+  const { data, nextCursor } = await get<unknown>(walletPath(address, "/trades", c), {
+    limit: Math.min(100, limit),
+    cursor: cursor || undefined,
+  });
   return {
     data: rows(data).map((r): WalletTradeRow => ({
       ...apiTradeToTrade(r, native),

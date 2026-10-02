@@ -433,6 +433,21 @@
 
 /* ── Infinite-scroll footer ──────────────────────────────────── */
 .sentinel { height: 1px; }
+.loadMoreCell { text-align: center; padding: 8px 12px; }
+.loadMoreBtn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-3);
+  background: var(--ink-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.loadMoreBtn:hover:not(:disabled) { color: var(--paper); border-color: var(--line); }
+.loadMoreBtn:disabled { cursor: default; opacity: 0.6; }
 .loadMoreBar {
   display: flex; align-items: center; justify-content: center;
   gap: 8px;
