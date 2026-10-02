@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
+import { tradeKey } from "../lib/trades";
 import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
 import type { Trade } from "../types";
 
@@ -48,7 +49,7 @@ function mergeTrades(existing: Trade[], incoming: Trade[]): Trade[] {
   const seen = new Set<string>();
   const out: Trade[] = [];
   const push = (t: Trade) => {
-    const key = t.signature || `${t.signer}:${t.timestamp}`;
+    const key = tradeKey(t);
     if (seen.has(key)) return;
     seen.add(key);
     out.push(t);
@@ -193,9 +194,9 @@ export function useTrades(
           )) as TradesResponse;
       const more = extractTrades(res);
       setTrades((prev) => {
-        // De-dup by signature in case of overlap
-        const seen = new Set(prev.map((t) => t.signature));
-        const merged = [...prev, ...more.filter((t) => !seen.has(t.signature))];
+        // De-dup by (signature, wallet) in case of overlap
+        const seen = new Set(prev.map(tradeKey));
+        const merged = [...prev, ...more.filter((t) => !seen.has(tradeKey(t)))];
         return merged.slice(0, CAP);
       });
       cursorRef.current = res?.nextCursor ?? null;
@@ -227,7 +228,8 @@ export function useTrades(
       const trade = normalizeWsTrade(msg);
       if (!trade || trade.tokenMint !== mint) return;
       setTrades((prev) => {
-        if (prev.some((t) => t.signature === trade.signature)) return prev;
+        const key = tradeKey(trade);
+        if (prev.some((t) => tradeKey(t) === key)) return prev;
         return [trade, ...prev].slice(0, CAP);
       });
     }
@@ -245,12 +247,14 @@ export function useTrades(
         ? (msg.data as Record<string, unknown>)
         : msg;
       const sig = String(data.signature ?? msg.signature ?? "");
+      // Flags belong to one wallet's row when the frame names it.
+      const wallet = String(data.wallet ?? data.signer ?? "");
       const mintStr = String(data.mint ?? "");
       if (!sig || (mintStr && mintStr !== mint)) return;
       const isBundle = data.isBundle != null ? Boolean(data.isBundle) : undefined;
       const isSniper = data.isSniper != null ? Boolean(data.isSniper) : undefined;
       setTrades((prev) => prev.map((t) => {
-        if (t.signature !== sig) return t;
+        if (t.signature !== sig || (wallet && t.signer !== wallet)) return t;
         return {
           ...t,
           isBundle: isBundle || t.isBundle,

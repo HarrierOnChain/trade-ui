@@ -22,6 +22,7 @@ import { Pill } from "../atoms";
 import { fmtNum } from "../../lib/format";
 import { solPriceToChartAxis } from "../../lib/chartAxis";
 import { computeTop10HolderAvgPrices } from "../../lib/topHolderLines";
+import { tradeKey } from "../../lib/trades";
 import { top10HoldPct } from "../../lib/tokenMetrics";
 import { useUserPreference } from "../../hooks/useUserPreference";
 import { PREF_KEYS } from "../TradingPanel/presets";
@@ -421,12 +422,12 @@ export function TokenLayout({
 
   const chartMarks = useMemo<TradeMark[]>(() => {
     // Merge the live trade feed with the dev-specific and filtered-wallet
-    // histories, de-duped by signature, then classify each trade. Filter
+    // histories, de-duped by (signature, wallet), then classify each trade. Filter
     // wins over dev/user/tracked so the active filter stands out visually.
     const seen = new Set<string>();
     const merged: Trade[] = [];
     const push = (t: Trade) => {
-      const key = t.signature || `${t.signer}:${t.timestamp}`;
+      const key = tradeKey(t);
       if (seen.has(key)) return;
       seen.add(key);
       merged.push(t);
@@ -466,7 +467,7 @@ export function TokenLayout({
           })
         : undefined;
       out.push({
-        id: t.signature || `${t.signer}:${ts}`,
+        id: tradeKey(t),
         time: ts,
         kind,
         side: t.transactionType === "buy" ? "buy" : "sell",

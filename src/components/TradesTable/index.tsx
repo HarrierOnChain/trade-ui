@@ -8,7 +8,7 @@ import { useApp } from "../../contexts/AppContext";
 import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { Icon, Tooltip, ChainIcon } from "../atoms";
 import { WalletLabel } from "../../hooks/useWalletLabels";
-import { tradeIdentityKey } from "../../lib/trades";
+import { tradeKey } from "../../lib/trades";
 import {
   formatTimestampRangeShort,
   msToDatetimeLocal,
@@ -42,7 +42,7 @@ interface Props {
   timestampMaxMs?: number | null;
   onTimestampRangeChange?: (range: { minMs: number | null; maxMs: number | null }) => void;
   /**
-   * Extra trades to merge into the fetched list (de-duped by signature).
+   * Extra trades to merge into the fetched list (de-duped by (signature, wallet)).
    * Used for DEMO wallet fills which aren't on the upstream history
    * feed but should still appear in the user's transaction view.
    */
@@ -133,13 +133,14 @@ export function TradesTable({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [timestampFilterOpen]);
 
-  // Merge in any extra trades (e.g. DEMO fills) and de-dupe by signature.
-  // Then apply the category / amount filters as before.
+  // Merge in any extra trades (e.g. DEMO fills) and de-dupe by (signature,
+  // wallet): co-signers of one transaction stay two rows. Then apply the
+  // category / amount filters as before.
   const merged = useMemo(() => {
     const seen = new Set<string>();
     const out: Trade[] = [];
     const push = (t: Trade) => {
-      const key = t.signature || `${t.signer}:${t.timestamp}`;
+      const key = tradeKey(t);
       if (seen.has(key)) return;
       seen.add(key);
       out.push(t);
@@ -346,7 +347,7 @@ export function TradesTable({
               const isFresh = tsMs > mountTime.current && Date.now() - tsMs < 3000;
               return (
                 <TradeRow
-                  key={tradeIdentityKey(t)}
+                  key={tradeKey(t)}
                   trade={t}
                   tsMs={tsMs}
                   timeMode={timeMode}

@@ -18,6 +18,33 @@ function normalizeAmount(value: number | null | undefined): string {
   return Number.isFinite(numeric) ? String(numeric) : "";
 }
 
+// EVM hashes and addresses come back checksummed from one source and
+// lowercase from another; base58 is case-sensitive and stays as is.
+function canon(v: string | null | undefined): string {
+  if (!v) return "";
+  return v.startsWith("0x") ? v.toLowerCase() : v;
+}
+
+/**
+ * Identity of a row on one token's tape: one row per (signature, wallet).
+ * Co-signers of one transaction are two rows and must both survive a merge,
+ * so the signature alone is not an identity. Rows without a signature fall
+ * back to (wallet, time).
+ */
+export function tradeKey(t: Pick<Trade, "signature" | "signer" | "timestamp">): string {
+  const sig = canon(t.signature);
+  const wallet = canon(t.signer);
+  return sig ? `${sig}:${wallet}` : `:${wallet}:${normalizeTradeTimestamp(t.timestamp)}`;
+}
+
+/**
+ * Identity of a row in a list that spans tokens (a wallet's activity): a
+ * token-to-token swap is one row per token under the same (signature, wallet).
+ */
+export function tradeKeyAcrossTokens(t: Pick<Trade, "signature" | "signer" | "timestamp" | "tokenMint">): string {
+  return `${tradeKey(t)}:${canon(t.tokenMint)}`;
+}
+
 export function tradeIdentityKey(trade: Trade): string {
   return [
     trade.signature || "unknown-signature",

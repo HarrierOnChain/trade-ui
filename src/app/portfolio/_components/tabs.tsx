@@ -21,7 +21,7 @@ import { TokenIdentity } from "../../../components/atoms";
 import { useSolPrice } from "../../../hooks/useSolPrice";
 import { fmtUsd, fmtMcap } from "../../../lib/format";
 import { formatAge } from "../../../lib/ageRegistry";
-import { tradeIdentityKey } from "../../../lib/trades";
+import { tradeIdentityKey, tradeKeyAcrossTokens } from "../../../lib/trades";
 import { useIsPhone } from "../../../hooks/useMediaQuery";
 import { EmptyHero } from "./atoms";
 import { DataTable, dataCell, dataCellRight, PillSearch, MiniToggle, EmptyRow } from "./ui";
@@ -326,18 +326,20 @@ export function ActivityTab({
   onMarketClick?: (marketId: string) => void;
 }) {
   const spotRows = useMemo<SpotActivityRow[]>(() => {
-    const seenSigs = new Set<string>();
+    // One row per (signature, wallet, token): two scoped wallets co-signing a
+    // transaction are two fills.
+    const seen = new Set<string>();
     const out: SpotActivityRow[] = [];
     for (const a of liveAlerts) {
       const trade = alertToTrade(a);
-      if (trade.signature) seenSigs.add(trade.signature);
+      if (trade.signature) seen.add(tradeKeyAcrossTokens(trade));
       out.push({
         trade, isLive: true, isNew: Boolean(a.isNew),
         ms: a.timestamp || tradeMs(trade),
       });
     }
     for (const t of trades) {
-      if (t.signature && seenSigs.has(t.signature)) continue;
+      if (t.signature && seen.has(tradeKeyAcrossTokens(t))) continue;
       out.push({ trade: t, isLive: false, isNew: false, ms: tradeMs(t) });
     }
     out.sort((x, y) => y.ms - x.ms);

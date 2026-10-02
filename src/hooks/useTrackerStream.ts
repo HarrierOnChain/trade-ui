@@ -32,7 +32,7 @@ export interface TrackedWallet {
  * WebSocket's `wallet` channel.
  */
 export interface TrackerAlert {
-  /** Stable id (signature + tokenMint + side); used as React key. */
+  /** Stable id (signature + signer + tokenMint + side); used as React key. */
   id: string;
   /** Address that signed the trade. */
   signer: string;
@@ -90,7 +90,9 @@ function tradeMs(raw: Trade["timestamp"]): number {
 }
 
 function alertId(t: { signature?: string; tokenMint?: string; transactionType?: string; signer?: string; timestamp?: number }) {
-  if (t.signature) return `${t.signature}:${t.tokenMint}:${t.transactionType}`;
+  // The signer is part of it: two tracked wallets co-signing one transaction
+  // are two alerts.
+  if (t.signature) return `${t.signature}:${t.signer}:${t.tokenMint}:${t.transactionType}`;
   return `${t.signer}:${t.tokenMint}:${t.transactionType}:${t.timestamp}`;
 }
 

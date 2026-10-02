@@ -5,6 +5,7 @@ import { RazeWebSocket } from "../api/websocket";
 import { useBackend } from "../api/backend";
 import { demoMintHoldingSnapshot, demoMintTradeTotals } from "../lib/demoMintStats";
 import { onDemoChanged } from "../lib/demoEvents";
+import { tradeKey } from "../lib/trades";
 import { useTokenInfo } from "./useTokenInfo";
 import { useLiveTradePrices } from "./useLiveTradePrices";
 import { useUserWallets } from "./useUserWallets";
@@ -59,6 +60,8 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
   const [demoEntryPriceSol, setDemoEntryPriceSol] = useState(0);
   const [demoLoading, setDemoLoading] = useState(false);
 
+  // (signature, wallet): two of the user's wallets co-signing one transaction
+  // are two fills, both counted.
   const seenRef = useRef(new Set<string>());
 
   // ── Platform: paginated history ─────────────────────────────────────
@@ -84,8 +87,10 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
           try {
             const res = await fetchTradesBySignerMint(pubkey, mint, PAGE_SIZE, cursor, "desc");
             for (const t of res?.data ?? []) {
-              if (!t.signature || seenRef.current.has(t.signature)) continue;
-              seenRef.current.add(t.signature);
+              if (!t.signature) continue;
+              const key = tradeKey(t);
+              if (seenRef.current.has(key)) continue;
+              seenRef.current.add(key);
               if (t.transactionType === "buy") aggBought += t.solAmount;
               else if (t.transactionType === "sell") aggSold += t.solAmount;
             }
@@ -136,8 +141,11 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
       if (!pubkeySet.has(signer)) return;
 
       const sig = String(inner.signature ?? msg.signature ?? "");
-      if (sig && seenRef.current.has(sig)) return;
-      if (sig) seenRef.current.add(sig);
+      if (sig) {
+        const key = tradeKey({ signature: sig, signer, timestamp: 0 });
+        if (seenRef.current.has(key)) return;
+        seenRef.current.add(key);
+      }
 
       const solAmount = Number(inner.solAmount ?? inner.sol_amount ?? 0);
       if (!Number.isFinite(solAmount) || solAmount <= 0) return;

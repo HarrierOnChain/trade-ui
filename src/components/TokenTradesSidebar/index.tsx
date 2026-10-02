@@ -5,6 +5,7 @@ import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { ChainIcon } from "../atoms";
 import { getActiveChain, nativeSymbol } from "../../lib/chains";
 import { useIsMobile } from "../../hooks/useMediaQuery";
+import { tradeKey } from "../../lib/trades";
 
 /// Compact live trade tape pinned to the right of the chart on the token page.
 /// Mirrors the perps `OrderbookSidebar` → `SidebarTrades` chrome (fixed width,
@@ -12,10 +13,6 @@ import { useIsMobile } from "../../hooks/useMediaQuery";
 /// this renders trades only. Fed by the `trades` the page already streams via
 /// `useTrades(mint)` — no extra REST fetch or WS subscription.
 export const TOKEN_TRADES_SIDEBAR_WIDTH = 240;
-
-function tradeKey(t: Trade): string {
-  return t.signature || `${t.signer}:${t.timestamp}`;
-}
 
 // Normalize the polymorphic Trade.timestamp (ISO string from REST, unix ms or
 // seconds from WS) to epoch-ms. Same heuristic the TradesTable / useTrades use.
