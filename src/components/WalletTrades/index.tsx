@@ -2,7 +2,8 @@
 import React from "react";
 import { useWalletTrades } from "../../hooks/useWalletTrades";
 import { TokenIdentity } from "../atoms";
-import { tradeIdentityKey } from "../../lib/trades";
+import { tradeIdentityKey, tradeNative } from "../../lib/trades";
+import type { Trade } from "../../types";
 import styles from "../TradesTable/styles.module.css";
 
 interface Props {
@@ -32,6 +33,18 @@ function fmtTokens(v?: number) {
   if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
   if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
   return v.toFixed(0);
+}
+
+// Unknown volume is "–", never "0".
+function fmtSol(t: Trade): string {
+  const sol = tradeNative(t);
+  return sol != null ? sol.toFixed(3) : "–";
+}
+
+function fmtUsd(t: Trade, solPrice: number): string {
+  const sol = tradeNative(t);
+  const usd = sol != null ? sol * solPrice : typeof t.usdValue === "number" ? t.usdValue : null;
+  return usd != null && Number.isFinite(usd) ? `$${usd.toFixed(2)}` : "–";
 }
 
 export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }: Props) {
@@ -89,10 +102,10 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
                       chartToken={{ mint_address: mint, name: "", symbol: "", dex: "", created_at: "" }}
                     />
                   </td>
-                  <td data-label="SOL" className={styles.mono}>{t.solAmount?.toFixed(3)}</td>
+                  <td data-label="SOL" className={styles.mono}>{fmtSol(t)}</td>
                   <td data-label="Tokens" className={styles.mono}>{fmtTokens(t.tokensAmount)}</td>
                   {solPrice > 0 && (
-                    <td data-label="USD" className={styles.mono}>${((t.solAmount || 0) * solPrice).toFixed(2)}</td>
+                    <td data-label="USD" className={styles.mono}>{fmtUsd(t, solPrice)}</td>
                   )}
                 </tr>
               );

@@ -584,7 +584,8 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       return Number.isFinite(n) ? n : 0;
     };
     const trades = [...(snap.trades ?? [])]
-      .filter((t) => Number.isFinite(t.avgPrice) && t.avgPrice > 0)
+      .filter((t): t is typeof t & { avgPrice: number } =>
+        typeof t.avgPrice === "number" && Number.isFinite(t.avgPrice) && t.avgPrice > 0)
       .sort((a, b) => tsOf(a) - tsOf(b));
 
     if (trades.length === 0) {

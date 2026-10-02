@@ -5,7 +5,7 @@ import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { ChainIcon } from "../atoms";
 import { getActiveChain, nativeSymbol } from "../../lib/chains";
 import { useIsMobile } from "../../hooks/useMediaQuery";
-import { tradeKey } from "../../lib/trades";
+import { tradeKey, tradeNative } from "../../lib/trades";
 
 /// Compact live trade tape pinned to the right of the chart on the token page.
 /// Mirrors the perps `OrderbookSidebar` → `SidebarTrades` chrome (fixed width,
@@ -65,13 +65,14 @@ function priceUsd(t: Trade, solPrice: number): number {
   return (Number(t.avgPrice) || 0) * solPrice;
 }
 
-function valueSol(t: Trade): number {
-  return Number(t.solAmount) || 0;
-}
-
-function fmtAmountLabel(solAmt: number, currency: "usd" | "sol", solPrice: number): string {
-  if (currency === "usd" && solPrice > 0) return fmtUsdCompact(solAmt * solPrice);
-  return solAmt.toFixed(solAmt >= 100 ? 1 : solAmt >= 1 ? 2 : 3);
+// Unknown volume is "–", never "0".
+function fmtAmountLabel(t: Trade, currency: "usd" | "sol", solPrice: number): string {
+  const sol = tradeNative(t);
+  if (currency === "usd" && solPrice > 0) {
+    if (sol != null) return fmtUsdCompact(sol * solPrice);
+    return typeof t.usdValue === "number" ? fmtUsdCompact(t.usdValue) : "–";
+  }
+  return sol != null ? sol.toFixed(sol >= 100 ? 1 : sol >= 1 ? 2 : 3) : "–";
 }
 
 export function TokenTradesSidebar({
@@ -143,7 +144,6 @@ export function TokenTradesSidebar({
           {trades.map((t) => {
             const isBuy = t.transactionType === "buy";
             const mcap = priceUsd(t, solPrice) * supply;
-            const solAmt = valueSol(t);
             return (
               <div key={tradeKey(t)} style={{
                 display: "grid",
@@ -166,12 +166,12 @@ export function TokenTradesSidebar({
                   justifyContent: "flex-end",
                   gap: 3,
                 }}>
-                  {currency === "sol" && (
+                  {currency === "sol" && tradeNative(t) != null && (
                     <span style={{ display: "inline-flex", color: "var(--paper-4)", lineHeight: 0 }}>
                       <ChainIcon id={getActiveChain()} size={9} />
                     </span>
                   )}
-                  {fmtAmountLabel(solAmt, currency, solPrice)}
+                  {fmtAmountLabel(t, currency, solPrice)}
                 </span>
               </div>
             );

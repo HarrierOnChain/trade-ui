@@ -91,8 +91,9 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
               const key = tradeKey(t);
               if (seenRef.current.has(key)) continue;
               seenRef.current.add(key);
-              if (t.transactionType === "buy") aggBought += t.solAmount;
-              else if (t.transactionType === "sell") aggSold += t.solAmount;
+              const sol = t.solAmount ?? 0;
+              if (t.transactionType === "buy") aggBought += sol;
+              else if (t.transactionType === "sell") aggSold += sol;
             }
             if (!res?.hasMore || !res?.nextCursor) break;
             cursor = res.nextCursor;

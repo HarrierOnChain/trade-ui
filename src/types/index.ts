@@ -63,8 +63,11 @@ export interface Trade {
   signer: string;
   transactionType: "buy" | "sell";
   tokensAmount: number;
-  avgPrice: number;
-  solAmount: number;
+  /** Native coin per token; null when the API has no price for the row. */
+  avgPrice: number | null;
+  /** Native coin volume; null when the API has no volume for the row
+   *  (e.g. a token-quoted swap with no fresh quote price). Never a made-up 0. */
+  solAmount: number | null;
   timestamp: string | number; // ISO string from REST, may be unix ms from WS
   usdValue?: number;
   avgPriceUSD?: number | string;

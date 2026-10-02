@@ -130,7 +130,7 @@ export function buildDeploySnapshot(args: BuildDeploySnapshotArgs): PreviewSnaps
   const livePrice: LivePrice | null = liveSolPrice > 0
     ? {
         price: liveSolPrice,
-        prices: trades.map((t) => t.avgPrice),
+        prices: trades.map((t) => t.avgPrice ?? 0),
         ts: epochMs,
         volumeSol: totalVolume, feesSol: 0,
         tradeCount: trades.length,

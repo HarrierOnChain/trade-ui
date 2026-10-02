@@ -8,7 +8,7 @@ import { useApp } from "../../contexts/AppContext";
 import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { Icon, Tooltip, ChainIcon } from "../atoms";
 import { WalletLabel } from "../../hooks/useWalletLabels";
-import { tradeKey } from "../../lib/trades";
+import { tradeKey, tradeNative } from "../../lib/trades";
 import {
   formatTimestampRangeShort,
   msToDatetimeLocal,
@@ -163,9 +163,13 @@ export function TradesTable({
     if (!hasCatFilter && !hasMin && !hasMax && !hasTsMin && !hasTsMax) return merged;
     return merged.filter((t) => {
       if (hasCatFilter && !categorySigners!.has(t.signer)) return false;
-      const amt = t.solAmount ?? 0;
-      if (hasMin && amt < (amountMinSol as number)) return false;
-      if (hasMax && amt > (amountMaxSol as number)) return false;
+      if (hasMin || hasMax) {
+        // A row with no volume can't be placed in an amount range.
+        const amt = tradeNative(t);
+        if (amt == null) return false;
+        if (hasMin && amt < (amountMinSol as number)) return false;
+        if (hasMax && amt > (amountMaxSol as number)) return false;
+      }
       const ts = toMs(t.timestamp);
       if (hasTsMin && ts < (timestampMinMs as number)) return false;
       if (hasTsMax && ts > (timestampMaxMs as number)) return false;
@@ -419,11 +423,16 @@ const TradeRow = React.memo(function TradeRow({
     if (price > 0) mcapOrPrice = fmtPriceCompact(price);
   }
 
-  const solAmt = trade.solAmount ?? 0;
+  // Unknown volume renders "–" (never "0"), with no bar and the lightest tint.
+  const native = tradeNative(trade);
+  const solAmt = native ?? 0;
+  const usd = native != null && solPrice > 0
+    ? native * solPrice
+    : typeof trade.usdValue === "number" && Number.isFinite(trade.usdValue) ? trade.usdValue : null;
   const totalLabel =
     currency === "usd" && solPrice > 0
-      ? fmtUsdCompact(solAmt * solPrice)
-      : solAmt.toFixed(solAmt >= 100 ? 1 : solAmt >= 1 ? 2 : 3);
+      ? usd != null ? fmtUsdCompact(usd) : "–"
+      : native != null ? native.toFixed(native >= 100 ? 1 : native >= 1 ? 2 : 3) : "–";
 
   const pct = volumeBarPct(solAmt);
   const tintPct = rowTintOpacity(solAmt);
@@ -453,7 +462,7 @@ const TradeRow = React.memo(function TradeRow({
         style={{ ["--pct" as string]: pct } as React.CSSProperties}
       >
         <span className={styles.solLabel}>
-          {currency === "sol" && <span className={styles.solGlyph}><ChainIcon id={getActiveChain()} size={11} /></span>}
+          {currency === "sol" && native != null && <span className={styles.solGlyph}><ChainIcon id={getActiveChain()} size={11} /></span>}
           <span className={`${styles.mono} ${isBuy ? styles.amountBuy : styles.amountSell}`}>
             {totalLabel}
           </span>

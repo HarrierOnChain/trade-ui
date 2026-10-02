@@ -390,8 +390,8 @@ export function ActivityTab({
               const usdValue =
                 typeof t.usdValue === "number" && t.usdValue > 0
                   ? t.usdValue
-                  : solPrice > 0
-                  ? (t.solAmount ?? 0) * solPrice
+                  : solPrice > 0 && t.solAmount != null
+                  ? t.solAmount * solPrice
                   : null;
               return (
                 <tr

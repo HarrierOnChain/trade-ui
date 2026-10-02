@@ -171,8 +171,10 @@ export function apiTradeToTrade(row: Rec, native: number, fallbackMint = ""): Tr
     signer: String(row.wallet ?? ""),
     transactionType: row.side === "sell" ? "sell" : "buy",
     tokensAmount: num(row.amount) ?? 0,
-    avgPrice: usdToNative(priceUsd, native) ?? 0,
-    solAmount: solAmount ?? 0,
+    // Unpriced rows (a token-quoted swap with no fresh quote price) keep
+    // null: shown as "–", never as a 0 SOL trade.
+    avgPrice: usdToNative(priceUsd, native) ?? null,
+    solAmount: solAmount ?? null,
     timestamp: num(row.time) ?? Date.now(),
     usdValue: volumeUsd,
     avgPriceUSD: priceUsd,

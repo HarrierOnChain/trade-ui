@@ -14,6 +14,7 @@ function normalizeTradeTimestamp(timestamp: Trade["timestamp"] | null | undefine
 }
 
 function normalizeAmount(value: number | null | undefined): string {
+  if (value == null) return "";
   const numeric = Number(value);
   return Number.isFinite(numeric) ? String(numeric) : "";
 }
@@ -43,6 +44,12 @@ export function tradeKey(t: Pick<Trade, "signature" | "signer" | "timestamp">): 
  */
 export function tradeKeyAcrossTokens(t: Pick<Trade, "signature" | "signer" | "timestamp" | "tokenMint">): string {
   return `${tradeKey(t)}:${canon(t.tokenMint)}`;
+}
+
+/** Native volume of a row, or null when the API has none (never a made-up 0). */
+export function tradeNative(t: Pick<Trade, "solAmount">): number | null {
+  const v = t.solAmount;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 export function tradeIdentityKey(trade: Trade): string {

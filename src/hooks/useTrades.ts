@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
+import { num } from "../api/mappers";
 import { tradeKey } from "../lib/trades";
 import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
 import type { Trade } from "../types";
@@ -81,8 +82,8 @@ function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
       return raw.toLowerCase() === "sell" ? "sell" : "buy";
     })(),
     tokensAmount:    Number(inner.tokensAmount     ?? inner.tokenAmount   ?? 0),
-    avgPrice:        Number(inner.avgPrice         ?? inner.avg_price     ?? 0),
-    solAmount:       Number(inner.solAmount        ?? inner.sol_amount    ?? 0),
+    avgPrice:        num(inner.avgPrice ?? inner.avg_price) ?? null,
+    solAmount:       num(inner.solAmount ?? inner.sol_amount) ?? null,
     timestamp:       (inner.timestamp ?? msg.timestamp ?? Date.now()) as string | number,
     usdValue:        inner.usdValue != null ? Number(inner.usdValue) : undefined,
     avgPriceUSD:     inner.avgPriceUSD != null ? Number(inner.avgPriceUSD) : undefined,
