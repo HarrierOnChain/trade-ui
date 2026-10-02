@@ -113,7 +113,7 @@ export function TradesTable({
   const serverTimeFilter =
     (timestampMinMs != null && isFinite(timestampMinMs)) ||
     (timestampMaxMs != null && isFinite(timestampMaxMs));
-  const { trades, loading, loadingMore, hasMore, error, loadMore } =
+  const { trades, loading, loadingMore, hasMore, morePaused, error, loadMore } =
     useTrades(mint ?? null, signer, sortAsc ? "asc" : "desc", timeRange);
   const [timeMode, setTimeMode] = useState<TimeMode>("age");
   const [timestampFilterOpen, setTimestampFilterOpen] = useState(false);
@@ -173,7 +173,7 @@ export function TradesTable({
 
   const { sentinelRef, rootRef } = useInfiniteScroll<HTMLTableRowElement, HTMLDivElement>(
     loadMore,
-    hasMore && !loading && !loadingMore && !tableHovered,
+    hasMore && !loading && !loadingMore && !morePaused && !tableHovered,
   );
 
   // New mint / filter — jump back to the top so live rows sit under the header

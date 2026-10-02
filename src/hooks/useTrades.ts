@@ -10,6 +10,9 @@ import type { Trade } from "../types";
 
 const PAGE = 50;
 const CAP  = 500; // soft cap so infinite scroll can't balloon memory
+// After a failed page, scroll-loading waits this long (the API's Retry-After
+// on a 503), so a sentinel left in view can't retry in a tight loop.
+const MORE_RETRY_MS = 2000;
 
 export type TradeTimeRange = { fromMs?: number | null; toMs?: number | null };
 
@@ -92,6 +95,8 @@ export function useTrades(
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [morePaused, setMorePaused] = useState(false);
+  const pauseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cursorRef = useRef<string | null>(null);
   const prevMint = useRef<string | null>(null);
   const timeFilterActive = timeRangeActive(timeRange);
@@ -106,10 +111,18 @@ export function useTrades(
     () => null,
   );
 
+  const clearPause = useCallback(() => {
+    if (pauseTimer.current) clearTimeout(pauseTimer.current);
+    pauseTimer.current = null;
+    setMorePaused(false);
+  }, []);
+  useEffect(() => clearPause, [clearPause]);
+
   // Initial / filter-change fetch — re-runs whenever sort flips so the
   // server returns the actually-oldest trades, not just "oldest among the
   // first page of desc". asc pagination uses `time >` predicate server-side.
   useEffect(() => {
+    clearPause();
     if (!mint) {
       setTrades([]);
       setLoading(false);
@@ -157,11 +170,11 @@ export function useTrades(
       })
       .catch((e) => setError(friendlyFetchError(e)))
       .finally(() => setLoading(false));
-  }, [mint, signer, sort, previewSnapshot, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs]);
+  }, [mint, signer, sort, previewSnapshot, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs, clearPause]);
 
   // Page forward with the stored cursor (direction follows current sort)
   const loadMore = useCallback(async () => {
-    if (!mint || loadingMore || !hasMore || !cursorRef.current) return;
+    if (!mint || loadingMore || morePaused || !hasMore || !cursorRef.current) return;
     setLoadingMore(true);
     try {
       const res = await (signer
@@ -186,12 +199,20 @@ export function useTrades(
       setTrades((prev) => sortTrades(mergeTradeBatch(prev, more), sort).slice(0, CAP));
       cursorRef.current = res?.nextCursor ?? null;
       setHasMore(Boolean(res?.hasMore) && !!res?.nextCursor);
+      setError(null);
     } catch (e) {
+      // The cursor is kept: the retry asks for the same page.
       setError(friendlyFetchError(e));
+      setMorePaused(true);
+      if (pauseTimer.current) clearTimeout(pauseTimer.current);
+      pauseTimer.current = setTimeout(() => {
+        pauseTimer.current = null;
+        setMorePaused(false);
+      }, MORE_RETRY_MS);
     } finally {
       setLoadingMore(false);
     }
-  }, [mint, signer, sort, loadingMore, hasMore, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs]);
+  }, [mint, signer, sort, loadingMore, morePaused, hasMore, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs]);
 
   // WS live updates — only in the default newest-first view, and never
   // when a signer or time filter is applied (historical drill-down).
@@ -260,5 +281,5 @@ export function useTrades(
     };
   }, [mint, signer, sort, timeFilterActive]);
 
-  return { trades, loading, loadingMore, hasMore, error, loadMore };
+  return { trades, loading, loadingMore, hasMore, morePaused, error, loadMore };
 }
