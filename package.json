@@ -8,6 +8,7 @@
     "dev": "node server.cjs --dev",
     "build": "next build",
     "start": "NODE_ENV=production node server.cjs",
+    "test": "node --test src/lib/trades.test.ts",
     "electron": "electron .",
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3000 && env TRADE_UI_URL=http://127.0.0.1:3000 electron .\""
   },

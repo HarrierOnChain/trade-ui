@@ -8,7 +8,7 @@ import { useApp } from "../../contexts/AppContext";
 import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { Icon, Tooltip, ChainIcon } from "../atoms";
 import { WalletLabel } from "../../hooks/useWalletLabels";
-import { tradeKey, tradeNative } from "../../lib/trades";
+import { mergeTradeLists, tradeLegKey, tradeNative } from "../../lib/trades";
 import {
   formatTimestampRangeShort,
   msToDatetimeLocal,
@@ -133,20 +133,11 @@ export function TradesTable({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [timestampFilterOpen]);
 
-  // Merge in any extra trades (e.g. DEMO fills) and de-dupe by (signature,
-  // wallet): co-signers of one transaction stay two rows. Then apply the
-  // category / amount filters as before.
+  // Merge in any extra trades (e.g. DEMO fills): a tape row the extras hold
+  // (same signature and wallet) is taken from them; the tape's own rows all
+  // stay (co-signers, EVM legs). Then apply the category / amount filters.
   const merged = useMemo(() => {
-    const seen = new Set<string>();
-    const out: Trade[] = [];
-    const push = (t: Trade) => {
-      const key = tradeKey(t);
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(t);
-    };
-    if (extraTrades) for (const t of extraTrades) push(t);
-    for (const t of trades) push(t);
+    const out = mergeTradeLists(extraTrades ?? [], trades);
     return out.sort((a, b) => {
       const ta = toMs(a.timestamp);
       const tb = toMs(b.timestamp);
@@ -351,7 +342,7 @@ export function TradesTable({
               const isFresh = tsMs > mountTime.current && Date.now() - tsMs < 3000;
               return (
                 <TradeRow
-                  key={tradeKey(t)}
+                  key={tradeLegKey(t)}
                   trade={t}
                   tsMs={tsMs}
                   timeMode={timeMode}

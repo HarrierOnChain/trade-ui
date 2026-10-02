@@ -1,16 +1,16 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { fetchWalletTrades } from "../api/client";
-import { tradeKeyAcrossTokens } from "../lib/trades";
+import { tradeLegKeyAcrossTokens } from "../lib/trades";
 import type { Trade } from "../types";
 
 const CAP = 500; // soft cap, as the token tape's infinite scroll
 
 function append(prev: Trade[], more: Trade[]): Trade[] {
-  const seen = new Set(prev.map(tradeKeyAcrossTokens));
+  const seen = new Set(prev.map(tradeLegKeyAcrossTokens));
   const out = [...prev];
   for (const t of more) {
-    const key = tradeKeyAcrossTokens(t);
+    const key = tradeLegKeyAcrossTokens(t);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(t);

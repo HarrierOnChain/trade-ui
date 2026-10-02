@@ -4,7 +4,7 @@ import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
 import { num } from "../api/mappers";
-import { tradeKey } from "../lib/trades";
+import { addLiveTrade, mergeTradeBatch } from "../lib/trades";
 import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
 import type { Trade } from "../types";
 
@@ -44,20 +44,6 @@ function sortTrades(trades: Trade[], sort: "asc" | "desc"): Trade[] {
     const tb = tradeTimestampMs(b.timestamp);
     return sort === "asc" ? ta - tb : tb - ta;
   });
-}
-
-function mergeTrades(existing: Trade[], incoming: Trade[]): Trade[] {
-  const seen = new Set<string>();
-  const out: Trade[] = [];
-  const push = (t: Trade) => {
-    const key = tradeKey(t);
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push(t);
-  };
-  for (const t of existing) push(t);
-  for (const t of incoming) push(t);
-  return out;
 }
 
 function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
@@ -164,7 +150,7 @@ export function useTrades(
       .then((res) => {
         const incoming = extractTrades(res);
         setTrades((prev) =>
-          sortTrades(mergeTrades(prev, incoming), sort).slice(0, CAP),
+          sortTrades(mergeTradeBatch(prev, incoming), sort).slice(0, CAP),
         );
         cursorRef.current = res?.nextCursor ?? null;
         setHasMore(Boolean(res?.hasMore) && !!res?.nextCursor);
@@ -195,12 +181,9 @@ export function useTrades(
             serverTimeFilter ? timeRange ?? undefined : undefined,
           )) as TradesResponse;
       const more = extractTrades(res);
-      setTrades((prev) => {
-        // De-dup by (signature, wallet) in case of overlap
-        const seen = new Set(prev.map(tradeKey));
-        const merged = [...prev, ...more.filter((t) => !seen.has(tradeKey(t)))];
-        return merged.slice(0, CAP);
-      });
+      // The page is the authority for the transactions it names (overlap at
+      // the page boundary included).
+      setTrades((prev) => sortTrades(mergeTradeBatch(prev, more), sort).slice(0, CAP));
       cursorRef.current = res?.nextCursor ?? null;
       setHasMore(Boolean(res?.hasMore) && !!res?.nextCursor);
     } catch (e) {
@@ -230,9 +213,8 @@ export function useTrades(
       const trade = normalizeWsTrade(msg);
       if (!trade || trade.tokenMint !== mint) return;
       setTrades((prev) => {
-        const key = tradeKey(trade);
-        if (prev.some((t) => tradeKey(t) === key)) return prev;
-        return [trade, ...prev].slice(0, CAP);
+        const next = addLiveTrade(prev, trade);
+        return next === prev ? prev : next.slice(0, CAP);
       });
     }
 
@@ -241,7 +223,7 @@ export function useTrades(
       if (msg.tokenMint !== mint || !Array.isArray(msg.trades)) return;
       const incoming = msg.trades as Trade[];
       if (!incoming.length) return;
-      setTrades((prev) => sortTrades(mergeTrades(prev, incoming), "desc").slice(0, CAP));
+      setTrades((prev) => sortTrades(mergeTradeBatch(prev, incoming), "desc").slice(0, CAP));
     }
 
     function handleAnalysis(msg: Record<string, unknown>) {

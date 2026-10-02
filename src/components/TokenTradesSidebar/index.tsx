@@ -5,7 +5,7 @@ import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { ChainIcon } from "../atoms";
 import { getActiveChain, nativeSymbol } from "../../lib/chains";
 import { useIsMobile } from "../../hooks/useMediaQuery";
-import { tradeKey, tradeNative } from "../../lib/trades";
+import { tradeLegKey, tradeNative } from "../../lib/trades";
 
 /// Compact live trade tape pinned to the right of the chart on the token page.
 /// Mirrors the perps `OrderbookSidebar` → `SidebarTrades` chrome (fixed width,
@@ -145,7 +145,7 @@ export function TokenTradesSidebar({
             const isBuy = t.transactionType === "buy";
             const mcap = priceUsd(t, solPrice) * supply;
             return (
-              <div key={tradeKey(t)} style={{
+              <div key={tradeLegKey(t)} style={{
                 display: "grid",
                 gridTemplateColumns: "1fr 1fr 1fr",
                 padding: "3px 10px",

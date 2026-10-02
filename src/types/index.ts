@@ -77,6 +77,9 @@ export interface Trade {
   isProTrader?: boolean;
   /** The API's maker tags for the row, lowercase (openapi `Trade.tags`). */
   tags?: string[];
+  /** Set on a row the UI took from a single live frame; rows from an API
+   *  answer (REST page, WS snapshot) leave it unset. */
+  live?: boolean;
 }
 
 export interface Holder {

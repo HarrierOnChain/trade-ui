@@ -41,6 +41,7 @@
   "exclude": [
     "node_modules",
     "backend",
-    "src/lib/candleDespike.parity.test.ts"
+    "src/lib/candleDespike.parity.test.ts",
+    "src/lib/trades.test.ts"
   ]
 }

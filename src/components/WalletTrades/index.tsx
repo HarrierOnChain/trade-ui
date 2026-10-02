@@ -3,7 +3,7 @@ import React, { useCallback, useRef } from "react";
 import { useWalletTrades } from "../../hooks/useWalletTrades";
 import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { TokenIdentity } from "../atoms";
-import { tradeKeyAcrossTokens, tradeNative } from "../../lib/trades";
+import { tradeLegKeyAcrossTokens, tradeNative } from "../../lib/trades";
 import type { Trade } from "../../types";
 import styles from "../TradesTable/styles.module.css";
 
@@ -100,7 +100,7 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
               const mint = t.tokenMint;
               return (
                 <tr
-                  key={tradeKeyAcrossTokens(t)}
+                  key={tradeLegKeyAcrossTokens(t)}
                   className={`${styles.tradeRow} ${isBuy ? styles.buy : styles.sell}`}
                 >
                   <td data-label="Time" className={styles.time}>{fmtAge(toMs(t.timestamp))}</td>
