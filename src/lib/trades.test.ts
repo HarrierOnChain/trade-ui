@@ -8,6 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   addLiveTrade,
+  appendTradePage,
   mergeTradeBatch,
   mergeTradeLists,
   tradeKey,
@@ -184,4 +185,29 @@ test("display merge drops a later list's copy of a row an earlier list has", () 
   const rows = mergeTradeLists(demo, tape);
   assert.equal(rows.length, 2);
   assert.equal(rows[0].solAmount, 0.002);
+});
+
+// ── wallet pages ──────────────────────────────────────────────────────
+
+const page = (n: number, from = 0) =>
+  Array.from({ length: n }, (_, i) => trade({ signature: `${SIG.slice(0, 80)}${String(from + i).padStart(8, "0")}` }));
+
+test("a full wallet page keeps the list paging on scroll", () => {
+  const r = appendTradePage([], page(50), { cap: 500, limit: 50 });
+  assert.equal(r.rows.length, 50);
+  assert.equal(r.autoMore, true);
+});
+
+test("an empty or sparse wallet page stops paging on scroll", () => {
+  const first = appendTradePage([], page(50), { cap: 500, limit: 50 });
+  assert.equal(appendTradePage(first.rows, [], { cap: 500, limit: 50 }).autoMore, false);
+  assert.equal(appendTradePage(first.rows, page(3, 50), { cap: 500, limit: 50 }).autoMore, false);
+  // A page of rows already held adds nothing either.
+  assert.equal(appendTradePage(first.rows, page(50), { cap: 500, limit: 50 }).autoMore, false);
+});
+
+test("wallet pages stop at the cap", () => {
+  let rows: Trade[] = [];
+  for (let p = 0; p < 12; p++) rows = appendTradePage(rows, page(50, p * 50), { cap: 500, limit: 50 }).rows;
+  assert.equal(rows.length, 500);
 });

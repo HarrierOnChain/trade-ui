@@ -49,10 +49,13 @@ function fmtUsd(t: Trade, solPrice: number): string {
 }
 
 export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }: Props) {
-  const { trades, loading, loadingMore, hasMore, error, moreError, loadMore } = useWalletTrades(address, limit);
+  const { trades, loading, loadingMore, hasMore, autoMore, error, moreError, loadMore } =
+    useWalletTrades(address, limit);
 
   // Pages load on scroll only: a list that does not overflow its box would keep
   // the sentinel in view and walk every page unasked, so it gets the button.
+  // So does a page that added few rows (transfers filtered out): the sentinel
+  // would stay in view and the next page would follow at once.
   const scrollBox = useRef<HTMLDivElement | null>(null);
   const onSentinel = useCallback(() => {
     const el = scrollBox.current;
@@ -60,7 +63,7 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
   }, [loadMore]);
   const { sentinelRef, rootRef } = useInfiniteScroll<HTMLTableRowElement, HTMLDivElement>(
     onSentinel,
-    hasMore && !loading && !loadingMore && !moreError,
+    autoMore && !loading && !loadingMore && !moreError,
   );
   const setScrollBox = useCallback((el: HTMLDivElement | null) => {
     scrollBox.current = el;

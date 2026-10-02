@@ -191,6 +191,30 @@ export function mergeTradeLists(...lists: Trade[][]): Trade[] {
   return out;
 }
 
+/**
+ * Appends one page to a wallet's list, up to `cap` rows. `autoMore` says
+ * whether the page added enough rows for the list to keep loading on scroll:
+ * the wallet route filters an activity feed down to swaps, so a page can bring
+ * 0-3 rows with a cursor, leave the scroll sentinel in view and, paging on,
+ * walk the upstream one call after another.
+ */
+export function appendTradePage(
+  prev: Trade[],
+  page: Trade[],
+  { cap, limit }: { cap: number; limit: number },
+): { rows: Trade[]; autoMore: boolean } {
+  const seen = new Set(prev.map(tradeLegKeyAcrossTokens));
+  const out = prev.slice();
+  for (const t of page) {
+    const key = tradeLegKeyAcrossTokens(t);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  const added = out.length - prev.length;
+  return { rows: out.slice(0, cap), autoMore: added >= Math.ceil(limit / 2) };
+}
+
 export function tradeIdentityKey(trade: Trade): string {
   return [
     trade.signature || "unknown-signature",

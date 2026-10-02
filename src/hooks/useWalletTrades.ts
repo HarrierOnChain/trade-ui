@@ -1,22 +1,13 @@
 "use client";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { fetchWalletTrades } from "../api/client";
-import { tradeLegKeyAcrossTokens } from "../lib/trades";
+import { appendTradePage } from "../lib/trades";
 import type { Trade } from "../types";
 
 const CAP = 500; // soft cap, as the token tape's infinite scroll
 
-function append(prev: Trade[], more: Trade[]): Trade[] {
-  const seen = new Set(prev.map(tradeLegKeyAcrossTokens));
-  const out = [...prev];
-  for (const t of more) {
-    const key = tradeLegKeyAcrossTokens(t);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(t);
-  }
-  return out.slice(0, CAP);
-}
+// The API serves at most 100 rows a page (client.ts caps the ask).
+const pageOpts = (limit: number) => ({ cap: CAP, limit: Math.min(100, limit) });
 
 /** A wallet's swaps, paged by the API's `next` cursor. */
 export function useWalletTrades(address: string | null, limit = 50) {
@@ -27,6 +18,9 @@ export function useWalletTrades(address: string | null, limit = 50) {
   const [error, setError] = useState<string | null>(null);
   // A failed next page: auto-paging stops until the caller retries.
   const [moreError, setMoreError] = useState<string | null>(null);
+  // Off after a page that added few rows: the next page then waits for a click.
+  const [autoMore, setAutoMore] = useState(true);
+  const rowsRef = useRef<Trade[]>([]);
   // Drops answers that land after the address changed or a refresh started.
   const genRef = useRef(0);
 
@@ -38,7 +32,10 @@ export function useWalletTrades(address: string | null, limit = 50) {
     try {
       const res = await fetchWalletTrades(address, limit);
       if (gen !== genRef.current) return;
-      setTrades(append([], res.data));
+      const page = appendTradePage([], res.data, pageOpts(limit));
+      rowsRef.current = page.rows;
+      setTrades(page.rows);
+      setAutoMore(page.autoMore);
       setCursor(res.nextCursor ?? null);
       setError(null);
     } catch (e) {
@@ -57,7 +54,10 @@ export function useWalletTrades(address: string | null, limit = 50) {
     try {
       const res = await fetchWalletTrades(address, limit, cursor);
       if (gen !== genRef.current) return;
-      setTrades((prev) => append(prev, res.data));
+      const page = appendTradePage(rowsRef.current, res.data, pageOpts(limit));
+      rowsRef.current = page.rows;
+      setTrades(page.rows);
+      setAutoMore(page.autoMore);
       setCursor(res.nextCursor ?? null);
     } catch (e) {
       // The cursor is kept, so a retry asks for the same page.
@@ -70,6 +70,8 @@ export function useWalletTrades(address: string | null, limit = 50) {
   useEffect(() => {
     setCursor(null);
     setError(null);
+    setAutoMore(true);
+    rowsRef.current = [];
     if (!address) {
       ++genRef.current;
       setTrades([]);
@@ -84,5 +86,8 @@ export function useWalletTrades(address: string | null, limit = 50) {
   }, [load, address]);
 
   const hasMore = !!cursor && trades.length < CAP;
-  return { trades, loading, loadingMore, hasMore, error, moreError, loadMore, refresh: load };
+  return {
+    trades, loading, loadingMore, hasMore, autoMore: hasMore && autoMore,
+    error, moreError, loadMore, refresh: load,
+  };
 }
