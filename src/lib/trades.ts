@@ -166,6 +166,19 @@ export function addLiveTrade(prev: Trade[], frame: Trade): Trade[] {
 }
 
 /**
+ * Drops the rows of a Solana slot whose fork was lost (the API's `retract`
+ * frame names them by signature and wallet; no wallet drops every row of the
+ * signature). Those rows never executed; the copy from the slot where the
+ * transaction landed, if any, comes later as a new trade with its own amounts.
+ */
+export function dropRetracted(prev: Trade[], gone: { signature: string; wallet?: string }[]): Trade[] {
+  if (!gone.length) return prev;
+  const next = prev.filter((t) => !gone.some((g) =>
+    canon(t.signature) === canon(g.signature) && (!g.wallet || canon(t.signer) === canon(g.wallet))));
+  return next.length === prev.length ? prev : next;
+}
+
+/**
  * Merges lists for display (the tape with demo fills; the tape with wallet
  * histories for chart marks). Each list keeps its rows, which its source told
  * apart; a row an earlier list holds (same signature and wallet) is taken from

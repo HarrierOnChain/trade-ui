@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   addLiveTrade,
   appendTradePage,
+  dropRetracted,
   mergeTradeBatch,
   mergeTradeLists,
   tradeKey,
@@ -210,4 +211,30 @@ test("wallet pages stop at the cap", () => {
   let rows: Trade[] = [];
   for (let p = 0; p < 12; p++) rows = appendTradePage(rows, page(50, p * 50), { cap: 500, limit: 50 }).rows;
   assert.equal(rows.length, 500);
+});
+
+// ── retracted slots ───────────────────────────────────────────────────
+
+test("a retract drops the named rows only, and the copy then comes in as new", () => {
+  const voided = trade({ live: true, solAmount: 0.5, tokensAmount: 500 });
+  const cosigner = trade({ live: true, signer: COSIGNER });
+  const other = trade({ signature: SIG2, live: true });
+  const prev = [voided, cosigner, other];
+  // Before the retract a copy with the same signature is the same row.
+  const copy = trade({ solAmount: 0.45, tokensAmount: 480, timestamp: voided.timestamp + 400 });
+  assert.equal(addLiveTrade(prev, copy)[0].solAmount, 0.5);
+  const after = dropRetracted(prev, [{ signature: SIG, wallet: OWNER }]);
+  assert.deepEqual(wallets(after), [COSIGNER, OWNER]);
+  assert.equal(after[1].signature, SIG2);
+  const withCopy = addLiveTrade(after, copy);
+  assert.equal(withCopy.length, 3);
+  assert.equal(withCopy[0].solAmount, 0.45);
+  assert.equal(withCopy[0].tokensAmount, 480);
+});
+
+test("a retract without a wallet drops every row of the signature; nothing named keeps the list", () => {
+  const prev = [trade({}), trade({ signer: COSIGNER }), trade({ signature: SIG2 })];
+  assert.deepEqual(dropRetracted(prev, [{ signature: SIG }]).map((t) => t.signature), [SIG2]);
+  assert.equal(dropRetracted(prev, [{ signature: "nope", wallet: OWNER }]), prev);
+  assert.equal(dropRetracted(prev, []), prev);
 });

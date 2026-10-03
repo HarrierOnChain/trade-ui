@@ -17,6 +17,7 @@ import { readApiSettings } from "./settings";
  * | `migration`      | launchpad board=graduated  | same                                                 |
  * | `trade`          | trades                     | a Trade, flat                                        |
  * | `trade_snapshot` | trades                     | `{tokenMint, trades}` newest first, on (re)subscribe  |
+ * | `trade_retract`  | trades                     | `{tokenMint, rows: [{signature, wallet}]}`: rows of a slot whose fork was lost |
  * | `candle`         | candles                    | `{tokenMint, interval, unit, kind, candles | candle}` |
  * | `token`          | token                      | `{tokenMint, token: TokenEvent, raw}` (snapshot)      |
  * | `tick`           | token                      | `{tokenMint, time, priceUsd, marketCapUsd, liquidityUsd, lastPrice}` |
@@ -31,6 +32,7 @@ export type WsEventType =
   | "migrating"
   | "trade"
   | "trade_snapshot"
+  | "trade_retract"
   | "candle"
   | "token"
   | "tick"
@@ -580,6 +582,16 @@ export class RazeWebSocket {
             tokenMint: mint,
             trades: rows.map((r) => apiTradeToTrade(asRecord(r) ?? {}, native, mint)),
           });
+          return;
+        }
+        if (type === "retract") {
+          // A Solana slot whose fork was lost: its rows never executed. A
+          // transaction that landed in another slot comes later as a trade.
+          const rows = (Array.isArray(f.data) ? f.data : [])
+            .map((r) => asRecord(r) ?? {})
+            .map((r) => ({ signature: String(r.signature ?? ""), wallet: String(r.wallet ?? "") }))
+            .filter((r) => r.signature);
+          if (rows.length) this.dispatch("trade_retract", { type: "trade_retract", tokenMint: mint, rows });
           return;
         }
         const row = asRecord(f.data);

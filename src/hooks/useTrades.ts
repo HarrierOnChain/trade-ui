@@ -4,7 +4,7 @@ import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
 import { num } from "../api/mappers";
-import { addLiveTrade, mergeTradeBatch } from "../lib/trades";
+import { addLiveTrade, dropRetracted, mergeTradeBatch } from "../lib/trades";
 import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
 import type { Trade } from "../types";
 
@@ -268,14 +268,24 @@ export function useTrades(
       }));
     }
 
+    // Rows of a slot whose fork was lost go; the copy from the slot where
+    // the transaction landed, if any, comes as a new trade.
+    function handleRetract(msg: Record<string, unknown>) {
+      if (msg.tokenMint !== mint || !Array.isArray(msg.rows)) return;
+      const gone = msg.rows as { signature: string; wallet: string }[];
+      setTrades((prev) => dropRetracted(prev, gone));
+    }
+
     const unsub1 = ws.on("trade",          handleTrade);
     const unsub2 = ws.on("trade_snapshot", handleSnapshot);
     const unsub3 = ws.on("analysis",       handleAnalysis);
+    const unsub4 = ws.on("trade_retract",  handleRetract);
 
     return () => {
       unsub1();
       unsub2();
       unsub3();
+      unsub4();
       ws.unsubscribeToken(mint, ["trades"], { sse: true });
       prevMint.current = null;
     };
