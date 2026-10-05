@@ -78,7 +78,7 @@ Chain switcher: `sol`, `eth`, `bsc`, `base`, `robinhood`.
 
 ## Swaps
 
-Solana only for now: the EVM router (`api/crates/router/evm`) does not quote yet, so on ETH / BSC / Base / Robinhood the trading panel says so and does not trade.
+Solana only for now: the EVM router (`router/evm`) does not quote yet, so on ETH / BSC / Base / Robinhood the trading panel says so and does not trade.
 
 Where you trade:
 
