@@ -8,7 +8,7 @@ import { readApiSettings } from "./settings";
 
 /**
  * Events the UI listens to. Every live source is one channel of the API's
- * single WebSocket (`/v1/ws`), mapped to the UI's internal shapes:
+ * single WebSocket (`/ws`), mapped to the UI's internal shapes:
  *
  * | event            | channel                    | payload                                              |
  * |------------------|----------------------------|------------------------------------------------------|

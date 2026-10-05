@@ -31,7 +31,7 @@ const PERIODS: Array<{ value: LeaderboardPeriod; label: string }> = [
   { value: "monthly", label: "30d" },
 ];
 
-// The API's wallet leaderboard (/v1/wallets/top) is chain-wide: there is no
+// The API's wallet leaderboard (/wallets/top) is chain-wide: there is no
 // per-platform ranking, so the Pump.fun / Bonk / Raydium chips are gone rather
 // than left clickable and doing nothing.
 const PLATFORMS: Array<{ value: LeaderboardPlatform; label: string }> = [];

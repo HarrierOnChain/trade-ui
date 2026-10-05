@@ -1,7 +1,7 @@
 /**
  * SolanaDatafeed – IBasicDataFeed implementation over the market-data API.
  *
- *  - History: `/v1/tokens/{chain}/{address}/candles`, `unit=marketCap` for the
+ *  - History: `/tokens/{chain}/{address}/candles`, `unit=marketCap` for the
  *    market-cap display and `unit=usd` for price; SOL display divides by the
  *    native coin's USD price. Scroll-back pages with `to` = oldest bar − 1.
  *  - Live: the `candles` channel for the chart's (interval, unit) — the API's

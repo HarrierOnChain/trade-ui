@@ -16,7 +16,7 @@ function directWsUrl(base: string): string | null {
   try {
     const u = new URL(base.replace(/\/+$/, ""));
     u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
-    u.pathname = `${u.pathname.replace(/\/+$/, "")}/v1/ws`;
+    u.pathname = `${u.pathname.replace(/\/+$/, "")}/ws`;
     u.search = "";
     return u.toString();
   } catch {
@@ -33,7 +33,7 @@ async function isOpenApi(base: string): Promise<boolean> {
   if (hit && Date.now() - hit.at < 30_000) return hit.open;
   let open = false;
   try {
-    const r = await fetch(`${base}/v1/chains`, {
+    const r = await fetch(`${base}/chains`, {
       cache: "no-store",
       signal: AbortSignal.timeout(3_000),
     });

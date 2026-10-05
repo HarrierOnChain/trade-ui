@@ -28,7 +28,7 @@ export interface TrackedWallet {
 
 /**
  * A single tracker alert — either a historical trade pulled from
- * `/v1/wallets/{chain}/{address}/trades` or a live trade pushed over the
+ * `/wallets/{chain}/{address}/trades` or a live trade pushed over the
  * WebSocket's `wallet` channel.
  */
 export interface TrackerAlert {

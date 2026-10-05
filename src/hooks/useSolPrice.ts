@@ -9,7 +9,7 @@ import { CHAIN_CHANGED_EVENT } from "../lib/chains";
  * one module-level feed shared by every hook instance.
  *
  * Live: the WebSocket's `prices` channel pushes each change into the native
- * store (`api/native`), which notifies here. REST `/v1/prices` only primes it
+ * store (`api/native`), which notifies here. REST `/prices` only primes it
  * once; nothing polls.
  */
 

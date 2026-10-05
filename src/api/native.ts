@@ -6,7 +6,7 @@ import { evmapiGet } from "./evmapi";
  * native coin, so every USD field from the API is divided by these.
  *
  * Live: the WebSocket's `prices` channel pushes every change here
- * (`setNativePrices`). REST `/v1/prices` only primes the store before the
+ * (`setNativePrices`). REST `/prices` only primes the store before the
  * socket's snapshot lands, or when no socket is up.
  */
 export type NativeKey = "sol" | "eth" | "bnb";

@@ -4,7 +4,7 @@
  * it on the production build, `npm run dev` (`--dev`) with hot reload.
  *
  * The browser connects to same-origin `/api/ws`; this process upgrades that
- * socket and forwards it to `${RAZE_API_BASE}/v1/ws` (ws:// or wss:// by the
+ * socket and forwards it to `${RAZE_API_BASE}/ws` (ws:// or wss:// by the
  * base's scheme), adding `x-api-key` from RAZE_API_KEY. The key never reaches
  * the browser. Pages not allowed to open a cross-origin socket (Cursor's Simple
  * Browser, an https page against an http API) work the same way.
@@ -103,7 +103,7 @@ function proxyUpgrade(req, socket, head) {
     });
   } catch { /* ignore */ }
   const qs = params.toString();
-  const destPath = `${base.pathname.replace(/\/+$/, "")}/v1/ws${qs ? `?${qs}` : ""}`;
+  const destPath = `${base.pathname.replace(/\/+$/, "")}/ws${qs ? `?${qs}` : ""}`;
 
   const headers = {};
   for (const [name, value] of Object.entries(req.headers)) {

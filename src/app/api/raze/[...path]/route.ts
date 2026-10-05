@@ -5,11 +5,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /** RAZE_API_BASE is the API's host root (`https://api.raze.bot`,
- *  `http://localhost:8810`); this proxy adds the `/v1` prefix. */
+ *  `http://localhost:8810`); the API serves its routes there. */
 const DEFAULT_BASE = (process.env.RAZE_API_BASE || "https://api.raze.bot").replace(/\/+$/, "");
-
-/** Routes the API serves outside `/v1`. */
-const ROOT_ROUTES = new Set(["health"]);
 
 function sanitizeBase(raw: string): string | null {
   const s = raw.trim().replace(/\/+$/, "");
@@ -51,16 +48,16 @@ async function credentials(req: NextRequest): Promise<{ base: string; key: strin
 
 async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] }> }) {
   const params = await ctx.params;
-  // `/api/raze/v1/…` and `/api/raze/…` are the same route.
+  // `/api/raze/v1/…` and `/api/raze/…` are the same route (`/v1` was the
+  // API's prefix until 2026-10-05).
   const segs = (params.path || []).filter((s, i) => !(i === 0 && s === "v1"));
   const path = segs.map(encodeURIComponent).join("/");
   const { base, key } = await credentials(req);
   // No key is fine: an API without keys configured is open. When it is not,
   // it answers 401 itself and the UI asks for a key.
-  const prefix = ROOT_ROUTES.has(segs[0] || "") ? "" : "/v1";
   let url: URL;
   try {
-    url = new URL(`${base}${prefix}/${path}`);
+    url = new URL(`${base}/${path}`);
   } catch {
     return NextResponse.json(errorBody("bad_request", "Invalid API base"), { status: 400 });
   }
@@ -76,7 +73,7 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] 
   const contentType = req.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
 
-  // `/v1/stream/{channel}` is the API's Server-Sent Events route.
+  // `/stream/{channel}` is the API's Server-Sent Events route.
   const isStream =
     segs[0] === "stream" ||
     (req.headers.get("accept") || "").includes("text/event-stream");

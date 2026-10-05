@@ -21,9 +21,8 @@ export class EvmapiError extends Error {
 }
 
 /**
- * GET a `/v1` route through the same-origin proxy (`/api/raze/*`, which adds
- * the `/v1` prefix and the key). `path` is the route without `/v1`, e.g.
- * `/tokens/sol/<mint>`. `nextCursor` is the page's `next`, to pass back as
+ * GET an API route through the same-origin proxy (`/api/raze/*`, which adds
+ * the key), e.g. `/tokens/sol/<mint>`. `nextCursor` is the page's `next`, to pass back as
  * `cursor`.
  */
 export async function evmapiGet<T>(
@@ -89,8 +88,8 @@ export function imageSrc(path: string | null | undefined): string | null {
   }
   // Already rewritten (REST + WS both flow through here).
   if (path.startsWith("/api/raze/") || path === "/api/raze") return path;
-  // A relative API path (`/v1/tokens/…/image` or `/tokens/…/image`): the proxy
-  // adds `/v1` itself.
+  // A relative API path (`/tokens/…/image`, or `/v1/tokens/…/image` with the
+  // API's prefix until 2026-10-05, dropped here).
   const rel = (path.startsWith("/") ? path : `/${path}`).replace(/^\/v1(?=\/)/, "");
   return `/api/raze${rel}`;
 }
