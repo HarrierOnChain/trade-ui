@@ -7,6 +7,7 @@ import { getActiveChain } from "../../lib/chains";
 import { useUserWallets, type UserWallet } from "../../hooks/useUserWallets";
 import { WalletAvatar } from "../WalletAvatar";
 import { readWalletAvatars } from "../../app/portfolio/_components/preferences";
+import { BrowserWalletSection } from "./BrowserWalletSection";
 
 const WALLET_PREFS_EVENT = "portfolio:wallet-prefs";
 
@@ -185,6 +186,8 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
         </div>
       </div>
 
+      {!isDemoMode && getActiveChain() === "sol" && <BrowserWalletSection />}
+
       {/* Wallet list */}
       <div
         style={{
@@ -234,7 +237,7 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
               >
                 {userWallets.loading
                   ? "Loading wallets…"
-                  : "No platform wallets. Add one to trade without a Phantom prompt."}
+                  : "No local wallets. Add one to trade without a wallet prompt."}
               </div>
             )}
           </>

@@ -8,7 +8,7 @@
     "dev": "node server.cjs --dev",
     "build": "next build",
     "start": "NODE_ENV=production node server.cjs",
-    "test": "node --test src/lib/trades.test.ts",
+    "test": "node --test src/lib/trades.test.ts src/lib/swap/swap.test.ts",
     "electron": "electron .",
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3000 && env TRADE_UI_URL=http://127.0.0.1:3000 electron .\""
   },
@@ -17,7 +17,9 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@razedotbot/charts": "^0.5.0",
+    "@solana/kit": "^6.10.0",
     "@solana/web3.js": "^1.98.4",
+    "@wallet-standard/app": "^1.1.1",
     "lightweight-charts": "^5.2.0",
     "next": "^15.1.0",
     "react": "^19.0.0",

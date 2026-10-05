@@ -44,6 +44,7 @@ import { useChain } from "../contexts/ChainContext";
 import { nativeSymbol, type ChainId } from "../lib/chains";
 import { BackendClient, readSession, type BackendWallet, type WalletKind } from "../api/backend";
 import { PORTFOLIO_STORAGE_KEY } from "../lib/trackerWallets";
+import { BROWSER_WALLET_ID, useBrowserWallet } from "../lib/swap/browserWallet";
 
 const WALLETS_CHANGED_EVENT = "terminal:wallets-changed";
 const ACTIVE_WALLETS_STORAGE_KEY = "trade.active-wallets.v2";
@@ -259,7 +260,27 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
   const { region } = useRegion();
   const { chainId } = useChain();
 
-  const [wallets, setWallets] = useState<UserWallet[]>([]);
+  const [storedWallets, setWallets] = useState<UserWallet[]>([]);
+  // The connected browser wallet (Phantom, Solflare, … via the Wallet
+  // Standard) joins the list as the "connected" wallet, on Solana only.
+  const browser = useBrowserWallet().connected;
+  const wallets = useMemo<UserWallet[]>(() => {
+    if (!browser || chainId !== "sol") return storedWallets;
+    return [
+      ...storedWallets.filter((w) => w.id !== BROWSER_WALLET_ID && w.id !== "guest"),
+      {
+        id: BROWSER_WALLET_ID,
+        kind: "PHANTOM",
+        chainId: "sol",
+        pubkey: browser.address,
+        label: browser.wallet.name,
+        displayLabel: browser.wallet.name,
+        isConnected: true,
+        createdAt: "",
+        lastUsedAt: null,
+      },
+    ];
+  }, [storedWallets, browser, chainId]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Effective wallet cap + total usage from the backend. limit 0 = unlimited.

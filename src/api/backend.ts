@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRegion } from "../contexts/RegionContext";
 import { dispatchWalletRpc } from "./localWallets";
+import { executeLocalTrade, type TradeBody } from "./localTrade";
 // Re-exported from a standalone module so the wire singleton can read these
 // constants without importing backend.ts (would create a circular import →
 // TDZ at boot).
@@ -486,6 +487,10 @@ export class BackendClient {
     }
     if (method.startsWith("wallets.")) {
       return dispatchWalletRpc(method, params) as Promise<T>;
+    }
+    if (method === "trade.execute") {
+      // Swaps run on the Raze Solana router from this machine (localTrade.ts).
+      return executeLocalTrade(params as TradeBody) as Promise<T>;
     }
     throw Object.assign(new Error("not_supported_selfhosted"), { code: "not_supported_selfhosted" });
   }

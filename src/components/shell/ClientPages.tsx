@@ -31,6 +31,7 @@ import {
 const MonitorPage = lazy(() => import("../../app/monitor/page"));
 const PortfolioPage = lazy(() => import("../../app/portfolio/page"));
 const DeployPage = lazy(() => import("../../app/deploy/page"));
+const SwapPage = lazy(() => import("../../app/swap/page"));
 
 interface PageDef {
   id: string;
@@ -46,6 +47,7 @@ interface PageDef {
 const PAGES: PageDef[] = [
   { id: "monitor",    path: "/monitor",    title: "Monitor",    Component: MonitorPage },
   { id: "portfolio",  path: "/portfolio",  title: "Portfolio",  Component: PortfolioPage },
+  { id: "swap",       path: "/swap",       title: "Swap",       Component: SwapPage },
   { id: "deploy",     path: "/deploy",     title: "Deploy",     Component: DeployPage },
 ];
 

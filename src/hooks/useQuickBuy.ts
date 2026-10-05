@@ -39,9 +39,13 @@ export function useQuickBuy(mint: string) {
       return;
     }
 
-    const platforms = walletId
-      ? userWallets.wallets.filter((w) => w.id === walletId && !w.isConnected)
+    // The selected local wallets, else the connected browser wallet: the same
+    // rule as the trading panel.
+    const picked = walletId
+      ? userWallets.wallets.filter((w) => w.id === walletId)
       : userWallets.wallets.filter((w) => userWallets.activeIds.has(w.id) && !w.isConnected);
+    const connected = userWallets.wallets.find((w) => w.isConnected);
+    const platforms = picked.length > 0 || walletId ? picked : connected ? [connected] : [];
     if (platforms.length === 0) {
       pushToast({ title: "NO WALLET", body: "Pick a wallet to trade with.", tone: "sell" });
       return;
@@ -79,10 +83,10 @@ export function useQuickBuy(mint: string) {
       }
       if (ok.length > 0) {
         pushToast({
-          title: "BUY SENT",
+          title: "BUY CONFIRMED",
           body: ok.length === 1
-            ? `${shortAddr(ok[0].r.signature, 6)} · via ${region.flag}`
-            : `${ok.length}/${platforms.length} wallets · ${region.flag}`,
+            ? `tx ${shortAddr(ok[0].r.signature, 6)}`
+            : `${ok.length}/${platforms.length} wallets`,
           tone: "buy",
         });
       }
@@ -95,6 +99,7 @@ export function useQuickBuy(mint: string) {
       }
       if (ok.length === 0) throw new Error("All wallets failed");
       notifyDemoChanged();
+      void userWallets.refreshBalances();
     } catch (err) {
       pushToast({
         title: "TRADE FAILED",

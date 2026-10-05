@@ -1,0 +1,28 @@
+{
+  "inputMint": "So11111111111111111111111111111111111111112",
+  "inAmount": "10000000",
+  "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "outAmount": "1214719",
+  "otherAmountThreshold": "1208645",
+  "swapMode": "ExactIn",
+  "slippageBps": 50,
+  "priceImpactPct": "0",
+  "routePlan": [
+    {
+      "swapInfo": {
+        "ammKey": "3msVd34R5KxonDzyNSV5nT19UtUeJ2RF1NaQhvVPNLxL",
+        "label": "Meteora DLMM",
+        "inputMint": "So11111111111111111111111111111111111111112",
+        "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "inAmount": "10000000",
+        "outAmount": "1214719",
+        "walkSteps": 1
+      },
+      "percent": 100,
+      "bps": 10000
+    }
+  ],
+  "contextSlot": 453331293,
+  "timeTaken": 0.006405797,
+  "quoteId": "6caafdd5000159bf"
+}

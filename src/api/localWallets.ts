@@ -4,6 +4,7 @@ import { keccak_256 } from "@noble/hashes/sha3.js";
 import type { BackendWallet, WalletKind } from "./backend";
 import { getActiveChain, type ChainId } from "../lib/chains";
 import { evmapiGet } from "./evmapi";
+import { BROWSER_WALLET_ID, getBrowserWallet } from "../lib/swap/browserWallet";
 
 const STORAGE_KEY = "trade-ui.wallets.v1";
 
@@ -192,6 +193,26 @@ export function renameLocalWallet(walletId: string, label: string): BackendWalle
   return publicWallet(w);
 }
 
+/** Local Solana wallets that can sign (a key is stored, not watch-only). */
+export function localSolanaSigners(): Array<{ id: string; pubkey: string; label: string | null }> {
+  return load().wallets
+    .filter((w) => (w.chainId || "sol") === "sol" && w.kind === "PLATFORM" && !!w.secret)
+    .map((w) => ({ id: w.id, pubkey: w.pubkey, label: w.label }));
+}
+
+/** What a local trade signs with: the wallet's Solana keypair (64 bytes,
+ *  seed ‖ public key). Throws a sentence the trader can act on. */
+export function localSolanaSigner(walletId: string): { pubkey: string; secretKey: Uint8Array } {
+  const w = load().wallets.find((x) => x.id === walletId);
+  if (!w) throw new Error("Wallet not found");
+  if (w.kind === "DEMO") throw new Error("Demo wallets do not trade on chain");
+  if ((w.chainId || "sol") !== "sol") throw new Error("Not a Solana wallet");
+  if (!w.secret) throw new Error("Watch-only wallet: import its key to trade with it");
+  const secretKey = b64ToBytes(w.secret);
+  if (secretKey.length !== 64) throw new Error("Stored key is not a Solana keypair");
+  return { pubkey: w.pubkey, secretKey };
+}
+
 export function exportLocalSecret(walletId: string): { pubkey: string; chainId: string; secret: string } {
   const store = load();
   const w = store.wallets.find((x) => x.id === walletId);
@@ -239,7 +260,20 @@ export async function fetchLocalBalances(walletIds?: string[]): Promise<{
   balances: Record<string, { ok: true; balances: { sol: number; tokens: Array<{ mint: string; amount: number; decimals: number }> } } | { ok: false; error: string }>;
 }> {
   const store = load();
-  const targets = store.wallets.filter((w) => !walletIds?.length || walletIds.includes(w.id));
+  const targets: StoredWallet[] = store.wallets.filter((w) => !walletIds?.length || walletIds.includes(w.id));
+  // The connected browser wallet is in the list too (not stored here).
+  const browser = getBrowserWallet();
+  if (browser && getActiveChain() === "sol" && (!walletIds?.length || walletIds.includes(BROWSER_WALLET_ID))) {
+    targets.push({
+      id: BROWSER_WALLET_ID,
+      kind: "PHANTOM",
+      chainId: "sol",
+      pubkey: browser.address,
+      label: browser.wallet.name,
+      createdAt: "",
+      lastUsedAt: null,
+    });
+  }
   const balances: Record<string, { ok: true; balances: { sol: number; tokens: Array<{ mint: string; amount: number; decimals: number }> } } | { ok: false; error: string }> = {};
   await Promise.all(targets.map(async (w) => {
     if (w.kind === "DEMO") {

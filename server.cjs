@@ -8,6 +8,9 @@
  * base's scheme), adding `x-api-key` from RAZE_API_KEY. The key never reaches
  * the browser. Pages not allowed to open a cross-origin socket (Cursor's Simple
  * Browser, an https page against an http API) work the same way.
+ *
+ * `/api/solana/ws` is the same splice to the Solana RPC's WebSocket, which
+ * confirms a swap the moment it lands (`signatureSubscribe`).
  */
 const { createServer } = require("node:http");
 const http = require("node:http");
@@ -113,14 +116,19 @@ function proxyUpgrade(req, socket, head) {
   headers.host = base.host;
   if (key) headers["x-api-key"] = key;
 
+  connectUpgrade(socket, head, { secure, hostname: base.hostname, port: base.port, path: destPath, headers });
+}
+
+/** Open the upstream WebSocket and splice the two hops together. */
+function connectUpgrade(socket, head, { secure, hostname, port, path, headers }) {
   const upstream = (secure ? https : http).request({
     protocol: secure ? "https:" : "http:",
-    hostname: base.hostname,
-    port: base.port || (secure ? 443 : 80),
-    path: destPath,
+    hostname,
+    port: port || (secure ? 443 : 80),
+    path,
     method: "GET",
     headers,
-    servername: secure ? base.hostname : undefined,
+    servername: secure ? hostname : undefined,
     timeout: 10_000,
   });
 
@@ -137,7 +145,7 @@ function proxyUpgrade(req, socket, head) {
     fail(504, "Gateway Timeout");
   });
   upstream.on("error", () => fail(502, "Bad Gateway"));
-  // Not a 101: the API refused (401 without a valid key, 429, …). Relay the
+  // Not a 101: the upstream refused (401 without a valid key, 429, …). Relay the
   // status so the browser's socket fails fast and the client falls back.
   upstream.on("response", (res) => {
     res.resume();
@@ -175,6 +183,38 @@ function proxyUpgrade(req, socket, head) {
   upstream.end();
 }
 
+/**
+ * `/api/solana/ws` → the RPC's WebSocket (SOLANA_WS_URL, else SOLANA_RPC_URL
+ * with ws(s)://), for `signatureSubscribe` when a swap is confirmed. The URL,
+ * and any key in it, stays on this side.
+ */
+function proxySolanaWs(req, socket, head) {
+  let target;
+  try {
+    const raw = (process.env.SOLANA_WS_URL || "").trim()
+      || (process.env.SOLANA_RPC_URL || "").trim().replace(/^http/, "ws")
+      || "wss://api.mainnet-beta.solana.com";
+    target = new URL(raw);
+  } catch {
+    rejectUpgrade(socket, 502, "Bad Gateway");
+    return;
+  }
+  const secure = target.protocol === "wss:" || target.protocol === "https:";
+  const headers = {};
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value == null || DROP.has(name.toLowerCase())) continue;
+    headers[name] = value;
+  }
+  headers.host = target.host;
+  connectUpgrade(socket, head, {
+    secure,
+    hostname: target.hostname,
+    port: target.port,
+    path: `${target.pathname || "/"}${target.search}`,
+    headers,
+  });
+}
+
 app.prepare().then(() => {
   const server = createServer((req, res) => {
     void handle(req, res);
@@ -183,6 +223,10 @@ app.prepare().then(() => {
     const pathname = String(req.url || "").split("?")[0];
     if (pathname === "/api/ws") {
       proxyUpgrade(req, socket, head);
+      return;
+    }
+    if (pathname === "/api/solana/ws") {
+      proxySolanaWs(req, socket, head);
       return;
     }
     // In dev Next adds its own upgrade listener for hot reload (/_next/webpack-hmr).

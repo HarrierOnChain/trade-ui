@@ -12,7 +12,6 @@
  * the new backend `/preferences` store through useUserPreference.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { VersionedTransaction } from "@solana/web3.js";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useApp } from "../../contexts/AppContext";
 import { useRegion } from "../../contexts/RegionContext";
@@ -43,19 +42,11 @@ import { InstantTradePanel } from "./InstantTradePanel";
 import { CalculatePNLModal } from "./CalculatePNLModal";
 import { TokenMetricsGrid } from "./TokenMetricsGrid";
 import { AUTO_LABEL } from "../../app/automation/_components/atoms";
-
-interface PhantomProvider {
-  isPhantom?: boolean;
-  publicKey?: { toBase58(): string } | null;
-  connect(opts?: { onlyIfTrusted?: boolean }): Promise<{ publicKey: { toBase58(): string } }>;
-  signTransaction<T>(tx: T): Promise<T>;
-}
-function getPhantom(): PhantomProvider | null {
-  if (typeof window === "undefined") return null;
-  const w = window as unknown as { phantom?: { solana?: PhantomProvider }; solana?: PhantomProvider };
-  const p = w.phantom?.solana ?? w.solana;
-  return p && p.isPhantom ? p : null;
-}
+import { SOL_MINT, toRaw, toUi, viaLabel } from "../../lib/swap/quote";
+import { useDocumentHidden, useMintDecimals, useSwapQuote } from "../../lib/swap/useSwapQuote";
+import { signerReserveKeys } from "../../lib/swap/execute";
+import { getBrowserWallet } from "../../lib/swap/browserWallet";
+import { explorerTxUrl } from "../../lib/chains";
 
 const MIN_TRANSACTIONS_FEE_LAMPORTS = 100_000;
 
@@ -146,10 +137,6 @@ export function TradingPanel({ mint }: Props) {
     PREF_KEYS.transactionsFee,
     MIN_TRANSACTIONS_FEE_LAMPORTS,
   );
-  // User-set fixed platform fee (lamports) → admin fee wallet. Default 0 = none.
-  const [fixedFeeLamports, setFixedFeeLamports] = useUserPreference<number>(PREF_KEYS.fixedFee, 0);
-  // MEV protection: relay as a sponsor-tipped Jito bundle.
-  const [mevProtection, setMevProtection] = useUserPreference<boolean>(PREF_KEYS.mevProtection, false);
   const [floatingOpen, setFloatingOpen] = useUserPreference<boolean>(PREF_KEYS.floatingOpen, false);
   // Native (gas) asset for the active chain — labels the wallet-balance pill.
   const nativeQuote = defaultQuoteMint();
@@ -212,7 +199,6 @@ export function TradingPanel({ mint }: Props) {
     effectiveWallets.length === 0
       ? "none"
       : effectiveWallets[0].isConnected ? "connected" : "platform";
-  const isPhantomTrade = effectiveKind === "connected";
 
   // Limit + Adv modes both run server-side and need a platform wallet.
   useEffect(() => {
@@ -237,27 +223,93 @@ export function TradingPanel({ mint }: Props) {
   }, [effectiveWallets, userWallets.balances, mint, activeQuote.mint]);
 
   // ── Trade execution paths ──────────────────────────────────────────
+  // Market trades run on the Raze Solana router from this machine: per wallet
+  // one quote → build → sign → send → confirm, all wallets at once
+  // (`trade.execute`, src/api/localTrade.ts). Local wallets sign with their
+  // own key; the connected browser wallet asks for approval.
+  type TradeRequest = Parameters<typeof backend.execute>[0];
   async function placeMarketTrade(
-    _thisSide: Side,
-    _amountInput: string,
-    _mode: InputMode,
-    _denom: "quote" | "token" | "percent",
+    thisSide: Side,
+    amountInput: string,
+    mode: InputMode,
+    denom: "quote" | "token" | "percent",
   ) {
-    pushToast({
-      title: "SELF-HOSTED",
-      body: "The public API is market data only. Swap execution is not available in Trade UI.",
-      tone: "sell",
-    });
+    if (!onSol) {
+      pushToast({ title: "SOLANA ONLY", body: "Swaps run on the Solana router: the EVM router does not quote yet.", tone: "sell" });
+      return;
+    }
+    const n = parseFloat(String(amountInput).replace("%", ""));
+    if (!isFinite(n) || n <= 0) {
+      pushToast({ title: "ENTER AMOUNT", body: "Amount must be greater than 0", tone: "sell" });
+      return;
+    }
+    const targets = effectiveWallets.filter((w) => w.kind !== "DEMO");
+    if (targets.length === 0) {
+      pushToast({
+        title: "NO WALLET",
+        body: effectiveWallets.length ? "Demo wallets do not trade on chain." : "Connect a wallet or select a local one.",
+        tone: "sell",
+      });
+      return;
+    }
+    // Percent is per wallet; an amount is per wallet, or split across them
+    // when the mode is cumulative.
+    const each = denom === "percent" ? Math.min(100, n) : mode === "cumulative" ? n / targets.length : n;
+    const q = thisSide === "buy" ? buyInputMint : sellOutputMint;
+    const common = { side: thisSide, mint, slippageBps: clampSlippageBps(slipBps), transactionsFeeLamports };
+    let body: Omit<TradeRequest, "walletId">;
+    if (thisSide === "buy") {
+      const pay = q.mint ? { inputMint: q.mint } : {};
+      body = denom === "token"
+        ? { ...common, ...pay, swapMode: "exactOut", tokensAmount: each }
+        : { ...common, ...pay, solAmount: each };
+    } else {
+      const receive = q.mint ? { outputMint: q.mint } : {};
+      body = denom === "percent"
+        ? { ...common, ...receive, percentage: each }
+        : denom === "quote"
+          ? { ...common, ...receive, swapMode: "exactOut", solAmount: each }
+          : { ...common, ...receive, tokensAmount: each };
+    }
+
+    setBusy(true);
+    try {
+      const results = await Promise.allSettled(targets.map((w) => backend.execute({ ...body, walletId: w.id })));
+      const ok: string[] = [];
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled") ok.push(r.value.signature);
+        else {
+          pushToast({
+            title: targets.length > 1 ? "WALLET FAILED" : "TRADE FAILED",
+            body: `${targets.length > 1 ? `${targets[i].displayLabel}: ` : ""}${r.reason instanceof Error ? r.reason.message : String(r.reason)}`,
+            tone: "sell",
+            duration: 8000,
+          });
+        }
+      });
+      if (ok.length > 0) {
+        pushToast({
+          title: `${thisSide === "buy" ? "BUY" : "SELL"} CONFIRMED`,
+          body: ok.length === 1
+            ? <a href={explorerTxUrl(ok[0])} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>tx {shortAddr(ok[0], 6)} ↗</a>
+            : `${ok.length}/${targets.length} wallets`,
+          tone: thisSide,
+          duration: 7000,
+        });
+        void userWallets.refreshBalances();
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function placeLimitOrder() {
     pushToast({
-      title: "SELF-HOSTED",
-      body: "The public API is market data only. Limit orders are not available in Trade UI.",
+      title: "MARKET ONLY",
+      body: "Limit orders need a server watching the price around the clock. Trade UI swaps at market on the router.",
       tone: "sell",
     });
   }
-
 
   function onSubmit() {
     if (orderType === "limit") {
@@ -276,31 +328,62 @@ export function TradingPanel({ mint }: Props) {
     void placeMarketTrade(side, resolved, side === "buy" ? buyMode : sellMode, side === "buy" ? "quote" : "percent");
   }
 
-  // Estimated output (illustrative — uses rolling market cap). The manual
-  // amount is denominated by the active toggle: "quote" ⇒ the typed value is a
-  // SOL/quote amount; "token" ⇒ it's a token qty.
-  const estimate = useMemo(() => {
-    const num = parseFloat(side === "buy" ? buyAmount : sellAmount);
-    if (!info?.marketCap || !solPrice || !isFinite(num) || num <= 0) {
-      return { tokens: null as number | null, sol: null as number | null };
-    }
-    const supply = 1_000_000_000;
-    const avgPrice = info.marketCap / (solPrice * supply); // SOL per token
-    const mode = side === "buy" ? buyMode : sellMode;
-    const denom = side === "buy" ? buyDenom : sellDenom;
-    const total = mode === "cumulative" ? num : num * Math.max(1, effectiveWallets.length);
-    if (denom === "quote") {
-      // Typed value is SOL: buy spend / sell exact-out proceeds.
-      return { tokens: avgPrice > 0 ? total / avgPrice : null, sol: total };
-    }
-    // Typed value is a token qty: buy exact-out / sell exact-in.
-    return { tokens: total, sol: total * avgPrice };
-  }, [side, buyAmount, sellAmount, info?.marketCap, solPrice, buyMode, sellMode, buyDenom, sellDenom, effectiveWallets.length]);
+  const symbolLabel = (info?.symbol ?? "").trim() || "TOKEN";
+  // What the manual amount fetches right now, on the router: one wallet's
+  // share (per-wallet, or the cumulative total split), refreshed while the
+  // page is visible and an amount is typed.
+  const tabHidden = useDocumentHidden();
+  const tokenDecimals = useMintDecimals(onSol && mint ? mint : null);
+  const typed = side === "buy" ? buyAmount : sellAmount;
+  const previewMode = side === "buy" ? buyMode : sellMode;
+  const previewDenom = side === "buy" ? buyDenom : sellDenom;
+  const previewQuoteMint = activeQuote.mint ?? SOL_MINT;
+  const previewWallets = Math.max(1, effectiveWallets.length);
+  const previewReq = useMemo(() => {
+    if (!onSol || !mint || orderType !== "market") return null;
+    const n = parseFloat(typed);
+    if (!isFinite(n) || n <= 0) return null;
+    const each = previewMode === "cumulative" ? n / previewWallets : n;
+    const text = each.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
+    // quote denomination: buy spends it (exact-in), sell receives it (exact-out);
+    // token denomination: buy receives it (exact-out), sell spends it (exact-in).
+    const exactOut = (side === "buy") === (previewDenom === "token");
+    const dec = previewDenom === "token" ? tokenDecimals : activeQuote.decimals;
+    if (dec == null) return null;
+    return {
+      inputMint: side === "buy" ? previewQuoteMint : mint,
+      outputMint: side === "buy" ? mint : previewQuoteMint,
+      amount: toRaw(text, dec),
+      swapMode: exactOut ? ("ExactOut" as const) : ("ExactIn" as const),
+    };
+  }, [onSol, mint, orderType, typed, previewMode, previewWallets, side, previewDenom, previewQuoteMint, tokenDecimals, activeQuote.decimals]);
+  const browserSigner = effectiveKind === "connected" ? getBrowserWallet() : null;
+  const preview = useSwapQuote({
+    inputMint: previewReq?.inputMint ?? "",
+    outputMint: previewReq?.outputMint ?? "",
+    amount: previewReq?.amount ?? null,
+    swapMode: previewReq?.swapMode,
+    slippageBps: clampSlippageBps(slipBps),
+    reserveKeys: browserSigner ? signerReserveKeys({ kind: "browser", owner: browserSigner.address, wallet: browserSigner.wallet }) : undefined,
+    paused: tabHidden || busy,
+    pollMs: 2_000,
+  });
+  const previewText = (() => {
+    if (!previewReq) return null;
+    if (preview.noRoute) return preview.noRouteText ?? "No route";
+    const pq = preview.quote;
+    if (!pq) return preview.status === "error" ? preview.error : "Quoting…";
+    const tokenSide = side === "buy" ? pq.outAmount : pq.inAmount;
+    const quoteSide = side === "buy" ? pq.inAmount : pq.outAmount;
+    const tok = tokenDecimals != null ? fmtNum(toUi(tokenSide, tokenDecimals)) : "…";
+    const qt = toUi(quoteSide, activeQuote.decimals).toLocaleString("en-US", { maximumFractionDigits: 6 });
+    const head = side === "buy" ? `${qt} ${activeQuote.label} → ${tok} ${symbolLabel}` : `${tok} ${symbolLabel} → ${qt} ${activeQuote.label}`;
+    return `${head} · ${(pq.priceImpactBps / 100).toFixed(2)}% impact · ${viaLabel(pq)}`;
+  })();
 
   // Keep slip percentage display close to the wire format (bps).
   const slipPct = (slipBps / 100).toFixed(slipBps < 100 ? 2 : 1);
   const feeSol = (transactionsFeeLamports / 1e9).toFixed(4);
-  const fixedFeeSol = (fixedFeeLamports / 1e9).toFixed(4);
 
   // ── Preset edit helpers ─────────────────────────────────────────────
   function editBuyPreset(idx: number, val: string) {
@@ -316,7 +399,6 @@ export function TradingPanel({ mint }: Props) {
     setInstantPresets({ ...instantPresets, [activePreset]: { ...cur, sellAmounts: amounts } });
   }
 
-  const symbolLabel = (info?.symbol ?? "").trim() || "TOKEN";
   // Active manual-amount denomination + its display label/icon (market only).
   const activeDenom = side === "buy" ? buyDenom : sellDenom;
   const devAddr = info?.signer ?? null;
@@ -688,48 +770,20 @@ export function TradingPanel({ mint }: Props) {
               />
             </span>
           </Tooltip>
-          {!isPhantomTrade && (
-            <>
-          <span style={{ color: "var(--line)" }}>|</span>
-          <Tooltip content={`Platform fee (${nat}) — sent to the Raze fee wallet on each trade`}>
-            <span style={configChipStyle}>
-              <CoinIcon size={11} />
-              <input
-                type="text"
-                value={fixedFeeSol}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value.replace(/[^0-9.]/g, ""));
-                  if (isFinite(v) && v >= 0) setFixedFeeLamports(Math.floor(v * 1e9));
-                  else if (e.target.value.trim() === "") setFixedFeeLamports(0);
-                }}
-                style={{ ...configInputStyle, width: 44 }}
-              />
-            </span>
-          </Tooltip>
-          {onSol && (
-            <>
-          <span style={{ color: "var(--line)" }}>|</span>
-          <Tooltip content="MEV protection — relay via a Jito bundle with a sponsor tip (min 0.001 SOL)">
-            <button
-              type="button"
-              onClick={() => setMevProtection((v) => !v)}
-              style={{
-                ...configChipStyle,
-                cursor: "pointer",
-                background: "transparent",
-                border: "none",
-                padding: 0,
-                color: mevProtection ? "var(--buy)" : "var(--paper-2)",
-              }}
-            >
-              <BanIcon size={11} />
-              <span>{mevProtection ? "On" : "Off"}</span>
-            </button>
-          </Tooltip>
-            </>
-          )}
-            </>
-          )}
+        </div>
+      )}
+
+      {orderType === "market" && (previewText || !onSol) && (
+        <div
+          title={onSol ? "Live router quote for one wallet's trade" : undefined}
+          style={{
+            padding: "0 12px 8px",
+            fontSize: 10.5, fontFamily: "var(--font-mono)",
+            color: preview.noRoute || !onSol ? "var(--sell)" : "var(--paper-3)",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}
+        >
+          {onSol ? previewText : "Swaps run on Solana for now: the EVM router does not quote yet."}
         </div>
       )}
 
@@ -739,6 +793,7 @@ export function TradingPanel({ mint }: Props) {
             onClick={onSubmit}
             disabled={
               busy ||
+              !onSol ||
               effectiveKind === "none" ||
               (orderType === "limit"
                 ? (!limitPriceUsd || effectiveKind !== "platform")
@@ -761,7 +816,7 @@ export function TradingPanel({ mint }: Props) {
             {orderType === "limit"
               ? `Set Limit ${side === "buy" ? "Buy" : "Sell"}`
               : busy
-                ? effectiveKind === "connected" ? "Phantom…"
+                ? effectiveKind === "connected" ? `${browserSigner?.wallet.name ?? "Wallet"}…`
                   : effectiveWallets.length > 1 ? `× ${effectiveWallets.length}` : "Sending…"
                 : `${side === "buy" ? "Buy" : "Sell"} ${symbolLabel}`}
           </button>
@@ -1135,24 +1190,6 @@ function GasIcon({ size = 12 }: { size?: number }) {
       <rect x="3" y="3" width="6" height="11" rx="1" stroke="currentColor" strokeWidth="1.2" />
       <path d="M10 7l2 2v4a1 1 0 0 1-2 0V9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       <path d="M4.5 5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function CoinIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <ellipse cx="8" cy="6" rx="5" ry="2.4" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M3 6v3.5c0 1.3 2.2 2.4 5 2.4s5-1.1 5-2.4V6" stroke="currentColor" strokeWidth="1.2" />
-    </svg>
-  );
-}
-
-function BanIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M4 12L12 4" stroke="currentColor" strokeWidth="1.2" />
     </svg>
   );
 }

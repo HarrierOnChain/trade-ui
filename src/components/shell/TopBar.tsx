@@ -40,6 +40,14 @@ type NavItem = { id: string; label: string; path: string; icon: React.ReactNode;
 const NAV: NavItem[] = [
   { id: "monitor", label: "Monitor", path: "/monitor", icon: Icon.eyeLine(12) },
   { id: "portfolio", label: "Portfolio", path: "/portfolio", icon: Icon.portfolio(12) },
+  {
+    id: "swap", label: "Swap", path: "/swap",
+    icon: (
+      <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 5h9l-2.5-2.5M13 11H4l2.5 2.5" />
+      </svg>
+    ),
+  },
   { id: "deploy", label: "Deploy", path: "/deploy", icon: Icon.rocket(12), cta: true },
 ];
 
