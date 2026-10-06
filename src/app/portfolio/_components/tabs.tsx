@@ -1,6 +1,6 @@
 "use client";
 /**
- * Holdings / Activity / Perps tabs — the data panels that hang off the
+ * Holdings / Activity tabs — the data panels that hang off the
  * portfolio tab nav. Pure presentation: receives already-shaped data
  * from the page orchestrator and renders.
  *
@@ -11,12 +11,7 @@
 
 import React, { useMemo, useState } from "react";
 import type { Trade, TokenHolding } from "../../../types";
-import type {
-  PerpScopePosition,
-  PerpScopeTrade,
-} from "../../../hooks/usePortfolioPerps";
 import type { TrackerAlert } from "../../../hooks/useTrackerStream";
-import { liveUnrealizedPnl } from "../../../hooks/usePerpLivePrices";
 import { TokenIdentity } from "../../../components/atoms";
 import { useSolPrice } from "../../../hooks/useSolPrice";
 import { fmtUsd, fmtMcap } from "../../../lib/format";
@@ -25,11 +20,6 @@ import { tradeIdentityKey, tradeKeyAcrossTokens } from "../../../lib/trades";
 import { useIsPhone } from "../../../hooks/useMediaQuery";
 import { EmptyHero } from "./atoms";
 import { DataTable, dataCell, dataCellRight, PillSearch, MiniToggle, EmptyRow } from "./ui";
-
-const e6Num = (n: number) => n / 1_000_000;
-function marketLabel(market_id: string): string {
-  return market_id.includes(":") ? market_id.split(":")[1] : market_id;
-}
 
 function tradeMs(t: Trade | string | number | null | undefined): number {
   if (t == null) return 0;
@@ -232,78 +222,6 @@ export function HoldingsTab({
   );
 }
 
-/* ── Perps tab ───────────────────────────────────────────────────────── */
-
-export function PerpsTab({
-  positions, livePrices, loading, onMarketClick,
-}: {
-  positions: PerpScopePosition[];
-  livePrices: Record<string, number>;
-  loading: boolean;
-  onMarketClick?: (marketId: string) => void;
-}) {
-  if (loading && positions.length === 0) {
-    return <TableSkeleton columns={5} rows={4} />;
-  }
-  if (positions.length === 0) {
-    return (
-      <EmptyHero
-        title="No open perp positions."
-        body="Open a long or short on the perpetuals page. Open positions show up here with live uPnL based on the latest oracle close."
-      />
-    );
-  }
-  return (
-    <div style={{
-      background: "var(--ink-1)", border: "1px solid var(--line-soft)",
-      borderRadius: 12, overflow: "hidden",
-    }}>
-      <DataTable headers={[
-        { key: "market", label: "Market" },
-        { key: "side",   label: "Side" },
-        { key: "size",   label: "Size",  align: "right" },
-        { key: "entry",  label: "Entry", align: "right" },
-        { key: "uPnL",   label: "uPnL",  align: "right" },
-      ]}>
-        {positions.map((p) => {
-          const isLong = p.side === "long";
-          const sizeUsd = e6Num(p.size);
-          const entryUsd = e6Num(p.entry_price);
-          const live = livePrices[p.market_id];
-          const upnl = liveUnrealizedPnl(p.side, sizeUsd, entryUsd, live, e6Num(p.unrealized_pnl));
-          const profitable = upnl >= 0;
-          return (
-            <tr
-              key={p.position_pubkey}
-              style={dataRowStyle()}
-              onClick={() => onMarketClick?.(p.market_id)}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-            >
-              <td data-label="Market" style={cellStyle}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{marketLabel(p.market_id)}</span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--paper-4)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                    {p.venue}
-                  </span>
-                </div>
-              </td>
-              <td data-label="Side" style={cellStyle}>
-                <SidePill side={isLong ? "long" : "short"} />
-              </td>
-              <td data-label="Size" style={cellRight}>{fmtUsd(sizeUsd)}</td>
-              <td data-label="Entry" style={cellRight}>{fmtUsd(entryUsd)}</td>
-              <td data-label="uPnL" style={{ ...cellRight, color: profitable ? "var(--buy)" : "var(--sell)", fontWeight: 600 }}>
-                {upnl >= 0 ? "+" : "−"}{fmtUsd(Math.abs(upnl))}
-              </td>
-            </tr>
-          );
-        })}
-      </DataTable>
-    </div>
-  );
-}
-
 /* ── Activity tab ────────────────────────────────────────────────────── */
 
 interface SpotActivityRow {
@@ -314,16 +232,14 @@ interface SpotActivityRow {
 }
 
 export function ActivityTab({
-  trades, liveAlerts = [], perpTrades = [], solPrice = 0, loading,
-  onTokenClick, onMarketClick,
+  trades, liveAlerts = [], solPrice = 0, loading,
+  onTokenClick,
 }: {
   trades: Trade[];
   liveAlerts?: TrackerAlert[];
-  perpTrades?: PerpScopeTrade[];
   solPrice?: number;
   loading: boolean;
   onTokenClick: (mint: string) => void;
-  onMarketClick?: (marketId: string) => void;
 }) {
   const spotRows = useMemo<SpotActivityRow[]>(() => {
     // One row per (signature, wallet, token): two scoped wallets co-signing a
@@ -346,12 +262,7 @@ export function ActivityTab({
     return out.slice(0, 80);
   }, [trades, liveAlerts]);
 
-  const perpRows = useMemo(
-    () => [...perpTrades].sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0)).slice(0, 80),
-    [perpTrades],
-  );
-
-  if (loading && spotRows.length === 0 && perpRows.length === 0) {
+  if (loading && spotRows.length === 0) {
     return <TableSkeleton columns={6} rows={8} />;
   }
 
@@ -439,67 +350,14 @@ export function ActivityTab({
         )}
       </div>
 
-      {/* Perp activity */}
-      {perpRows.length > 0 && (
-        <div style={{
-          background: "var(--ink-1)", border: "1px solid var(--line-soft)",
-          borderRadius: 12, overflow: "hidden",
-        }}>
-          <div style={{
-            padding: "10px 14px",
-            borderBottom: "1px solid var(--line-soft)",
-          }}>
-            <span className="eyebrow" style={{ fontSize: 10, color: "var(--paper-3)" }}>
-              Perp fills ({perpRows.length})
-            </span>
-          </div>
-          <DataTable headers={[
-            { key: "age",    label: "Age" },
-            { key: "side",   label: "Side" },
-            { key: "market", label: "Market" },
-            { key: "size",   label: "Size",  align: "right" },
-            { key: "price",  label: "Price", align: "right" },
-            { key: "fee",    label: "Fee",   align: "right" },
-          ]}>
-            {perpRows.map((p) => {
-              const isLong = p.side === "long";
-              return (
-                <tr
-                  key={`perp:${p.signature ?? `${p.position_pubkey}:${p.timestamp}`}`}
-                  style={dataRowStyle()}
-                  onClick={() => onMarketClick?.(p.market_id)}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <td data-label="Age" style={{ ...cellStyle, fontFamily: "var(--font-mono)", color: "var(--paper-3)", fontSize: 11 }}>
-                    {p.timestamp ? formatAge(p.timestamp) : "—"}
-                  </td>
-                  <td data-label="Side" style={cellStyle}><SidePill side={isLong ? "long" : "short"} /></td>
-                  <td data-label="Market" style={cellStyle}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600 }}>{marketLabel(p.market_id)}</span>
-                      <span className="mono" style={{ fontSize: 10, color: "var(--paper-4)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                        {p.venue}
-                      </span>
-                    </div>
-                  </td>
-                  <td data-label="Size" style={cellRight}>{fmtUsd(e6Num(p.size))}</td>
-                  <td data-label="Price" style={cellRight}>{fmtUsd(e6Num(p.price))}</td>
-                  <td data-label="Fee" style={cellRight}>{fmtUsd(e6Num(p.fee))}</td>
-                </tr>
-              );
-            })}
-          </DataTable>
-        </div>
-      )}
     </div>
   );
 }
 
 /* ── Side pill ───────────────────────────────────────────────────────── */
 
-function SidePill({ side }: { side: "buy" | "sell" | "long" | "short" }) {
-  const isPos = side === "buy" || side === "long";
+function SidePill({ side }: { side: "buy" | "sell" }) {
+  const isPos = side === "buy";
   const label = side[0].toUpperCase() + side.slice(1);
   return (
     <span style={{

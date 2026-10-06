@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { tokenHref } from "../../lib/tokenHref";
-import { explorerAccountUrl, explorerName, explorerTxUrl } from "../../lib/chains";
+import { explorerAccountUrl, explorerName } from "../../lib/chains";
 import { useClientNav } from "./ClientPages";
 import { Modal, Icon, Change, SolAmount, TokenIdentity, Tooltip } from "../atoms";
 import { WalletTrades } from "../WalletTrades";
@@ -12,22 +12,12 @@ import { useWalletSummaryBatch } from "../../hooks/useWalletSummaryBatch";
 import { fmtNum, fmtPct, fmtSol, fmtUsd, shortAddr } from "../../lib/format";
 import { formatAge } from "../../lib/ageRegistry";
 import { useWalletLabel } from "../../hooks/useWalletLabels";
-import {
-  fetchPerpWalletPnl,
-  fetchPerpWalletPositions,
-  fetchPerpWalletLiquidations,
-  fetchSignerCounts,
-  type PerpPosition,
-  type PerpLiquidation,
-} from "../../api/client";
-import { usePerpLivePrices, liveUnrealizedPnl } from "../../hooks/usePerpLivePrices";
-import { perpHref } from "../../lib/perpRoutes";
+import { fetchSignerCounts } from "../../api/client";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
 import { fluidColsFit } from "../../lib/responsive";
 
 const WINDOW_DAYS = 30;
 
-type Mode = "spot" | "perps";
 type SpotTab = "holdings" | "activity" | "deployed";
 
 export function WalletModal() {
@@ -35,7 +25,6 @@ export function WalletModal() {
   const { walletModalAddress, closeWalletModal, pushToast } = useApp();
   const solPrice = useSolPrice();
   const [copied, setCopied] = useState(false);
-  const [mode, setMode] = useState<Mode>("spot");
   const [spotTab, setSpotTab] = useState<SpotTab>("holdings");
   const isMobile = useIsMobile();
 
@@ -59,11 +48,6 @@ export function WalletModal() {
     navigate(tokenHref(mint));
   };
 
-  const goPerpMarket = (marketId: string) => {
-    closeWalletModal();
-    navigate(perpHref(marketId));
-  };
-
   return (
     <Modal open={open} onClose={closeWalletModal} width={1040} align="top" mobileVariant={isMobile ? "sheet" : "center"}>
       <Header
@@ -73,8 +57,6 @@ export function WalletModal() {
         onClose={closeWalletModal}
       />
 
-      <ModeToggle mode={mode} onChange={setMode} />
-
       <div style={{
         flex: 1,
         minHeight: isMobile ? 0 : 320,
@@ -83,82 +65,15 @@ export function WalletModal() {
         display: "flex",
         flexDirection: "column",
       }}>
-        {mode === "spot" ? (
-          <SpotView
-            address={address}
-            solPrice={solPrice ?? 0}
-            tab={spotTab}
-            onTabChange={setSpotTab}
-            onTokenClick={goToken}
-          />
-        ) : (
-          <PerpsView address={address} onMarketClick={goPerpMarket} />
-        )}
+        <SpotView
+          address={address}
+          solPrice={solPrice ?? 0}
+          tab={spotTab}
+          onTabChange={setSpotTab}
+          onTokenClick={goToken}
+        />
       </div>
     </Modal>
-  );
-}
-
-/* ───────── Mode toggle (SPOT / PERPS) ───────── */
-
-function ModeToggle({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => void }) {
-  const opts: { id: Mode; label: string; sub: string }[] = [
-    { id: "spot", label: "Spot", sub: "Holdings · trades · realized PnL" },
-    { id: "perps", label: "Perps", sub: "Positions · volume · liquidations" },
-  ];
-  return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr",
-      borderBottom: "1px solid var(--line-soft)",
-      background: "var(--ink-0)",
-    }}>
-      {opts.map((o) => {
-        const active = mode === o.id;
-        return (
-          <button
-            key={o.id}
-            onClick={() => onChange(o.id)}
-            style={{
-              padding: "12px 16px",
-              background: active ? "var(--ink-1)" : "transparent",
-              border: 0,
-              borderBottom: "2px solid " + (active ? "var(--paper)" : "transparent"),
-              marginBottom: -1,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-              gap: 2,
-              cursor: "pointer",
-              textAlign: "left",
-            }}
-          >
-            <span
-              className="mono"
-              style={{
-                fontSize: 12,
-                letterSpacing: "0.16em",
-                textTransform: "uppercase",
-                color: active ? "var(--paper)" : "var(--paper-3)",
-                fontWeight: 700,
-              }}
-            >
-              {o.label}
-            </span>
-            <span
-              className="mono"
-              style={{
-                fontSize: 9,
-                color: "var(--paper-4)",
-                letterSpacing: "0.06em",
-              }}
-            >
-              {o.sub}
-            </span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 
@@ -993,434 +908,4 @@ function fmtTokenAmount(amount: number, decimals = 0): string {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   if (n >= 1) return n.toFixed(2);
   return n.toFixed(Math.min(4, Math.max(2, decimals)));
-}
-
-/* ───────── Perps tab ─────────
- * Three sources, all from the history crate's `/perp/wallets/{address}/*`
- * endpoints:
- *   - perp-pnl         → per-market volume / fees / size (gross PnL pending
- *                        in the upstream parser; today's `net_pnl_e6` is
- *                        just `-fees_paid_e6`)
- *   - perp-positions   → currently open positions (size, entry, collateral)
- *   - perp-liquidations → events where this wallet got liquidated
- */
-
-interface PerpPnlRow {
-  market_id: string;
-  venue: string;
-  long_size: number;
-  short_size: number;
-  volume_usd_e6: number;
-  fees_paid_e6: number;
-  gross_pnl_e6: number;
-  net_pnl_e6: number;
-  first_fill_ts: number;
-  last_fill_ts: number;
-}
-
-const e6n = (n: number) => n / 1_000_000;
-const fmtUsdCompact = (n: number): string => {
-  if (!Number.isFinite(n)) return "–";
-  const sign = n < 0 ? "-" : "";
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000_000) return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}k`;
-  return `${sign}$${abs.toFixed(2)}`;
-};
-
-function PerpsView({
-  address,
-  onMarketClick,
-}: {
-  address: string | null;
-  onMarketClick?: (marketId: string) => void;
-}) {
-  const [pnl, setPnl] = useState<PerpPnlRow[]>([]);
-  const [positions, setPositions] = useState<PerpPosition[]>([]);
-  const [liquidations, setLiquidations] = useState<(PerpLiquidation & { market_id: string; venue: string })[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!address) {
-      setPnl([]);
-      setPositions([]);
-      setLiquidations([]);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    // The history handlers return `{success: false, error}` (no `data`)
-    // when the SQL fails, so each branch needs an Array.isArray guard
-    // — `.data` can be undefined on error, which would explode the
-    // `for (const r of pnl)` walk in `totals`.
-    Promise.all([
-      fetchPerpWalletPnl(address)
-        .then((r) => Array.isArray(r.data) ? (r.data as PerpPnlRow[]) : [])
-        .catch(() => [] as PerpPnlRow[]),
-      fetchPerpWalletPositions(address)
-        .then((r) => Array.isArray(r.data) ? r.data : [])
-        .catch(() => [] as PerpPosition[]),
-      fetchPerpWalletLiquidations(address, 50)
-        .then((r) => Array.isArray(r.data) ? r.data : [])
-        .catch(() => [] as (PerpLiquidation & { market_id: string; venue: string })[]),
-    ]).then(([p, pos, liq]) => {
-      if (cancelled) return;
-      setPnl(p);
-      setPositions(pos);
-      setLiquidations(liq);
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [address]);
-
-  const totals = useMemo(() => {
-    let volume = 0, fees = 0, longSize = 0, shortSize = 0, firstTs = 0, lastTs = 0;
-    for (const r of pnl) {
-      volume += r.volume_usd_e6;
-      fees += r.fees_paid_e6;
-      longSize += r.long_size;
-      shortSize += r.short_size;
-      if (r.first_fill_ts && (!firstTs || r.first_fill_ts < firstTs)) firstTs = r.first_fill_ts;
-      if (r.last_fill_ts > lastTs) lastTs = r.last_fill_ts;
-    }
-    return {
-      volumeUsd: e6n(volume),
-      feesUsd: e6n(fees),
-      longSizeUsd: e6n(longSize),
-      shortSizeUsd: e6n(shortSize),
-      marketsTraded: pnl.length,
-      openPositions: positions.length,
-      liqCount: liquidations.length,
-      firstTs,
-      lastTs,
-    };
-  }, [pnl, positions, liquidations]);
-
-  if (!address) return null;
-
-  const empty = !loading && pnl.length === 0 && positions.length === 0 && liquidations.length === 0;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "auto" }}>
-      <PerpStatsRow loading={loading} totals={totals} />
-
-      {empty ? (
-        <div style={{
-          padding: "32px 18px",
-          color: "var(--paper-3)",
-          fontSize: 12,
-          textAlign: "center",
-        }}>
-          No perp activity from this wallet yet
-        </div>
-      ) : (
-        <>
-          {positions.length > 0 && (
-            <PerpSection title="Open Positions">
-              <PerpPositionsTable positions={positions} onMarketClick={onMarketClick} />
-            </PerpSection>
-          )}
-          {pnl.length > 0 && (
-            <PerpSection title="Per-Market Activity">
-              <PerpPnlTable rows={pnl} onMarketClick={onMarketClick} />
-            </PerpSection>
-          )}
-          {liquidations.length > 0 && (
-            <PerpSection title="Liquidations">
-              <PerpLiquidationsTable rows={liquidations} onMarketClick={onMarketClick} />
-            </PerpSection>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-function PerpStatsRow({
-  loading,
-  totals,
-}: {
-  loading: boolean;
-  totals: {
-    volumeUsd: number;
-    feesUsd: number;
-    longSizeUsd: number;
-    shortSizeUsd: number;
-    marketsTraded: number;
-    openPositions: number;
-    liqCount: number;
-    firstTs: number;
-    lastTs: number;
-  };
-}) {
-  const isPhone = useIsPhone();
-  const Cell = ({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) => (
-    <div style={{
-      flex: isPhone ? "1 1 45%" : 1,
-      minWidth: 0,
-      padding: "10px 14px",
-      borderRight: "1px solid var(--line-soft)",
-      display: "flex",
-      flexDirection: "column",
-      gap: 2,
-    }}>
-      <span className="eyebrow">{label}</span>
-      <span style={{
-        fontSize: 13,
-        color: loading ? "var(--paper-4)" : "var(--paper)",
-        fontFamily: "var(--font-mono)",
-        fontWeight: 600,
-      }}>{loading ? "—" : value}</span>
-      {hint != null && (
-        <span style={{ fontSize: 10, color: "var(--paper-4)", fontFamily: "var(--font-mono)" }}>{hint}</span>
-      )}
-    </div>
-  );
-
-  const directional = totals.longSizeUsd + totals.shortSizeUsd;
-  const longShare = directional > 0 ? totals.longSizeUsd / directional : 0;
-  const lastSeen = totals.lastTs ? formatAge(totals.lastTs) : "—";
-
-  return (
-    <div style={{
-      display: "flex",
-      flexWrap: isPhone ? "wrap" : "nowrap",
-      alignItems: "stretch",
-      borderBottom: "1px solid var(--line-soft)",
-      background: "var(--ink-1)",
-    }}>
-      <Cell label="Volume" value={fmtUsdCompact(totals.volumeUsd)} hint={`${totals.marketsTraded} market${totals.marketsTraded === 1 ? "" : "s"}`} />
-      <Cell label="Fees Paid" value={fmtUsdCompact(totals.feesUsd)} />
-      <Cell
-        label="Long / Short"
-        value={`${(longShare * 100).toFixed(0)}% / ${((1 - longShare) * 100).toFixed(0)}%`}
-        hint={`${fmtUsdCompact(totals.longSizeUsd)} / ${fmtUsdCompact(totals.shortSizeUsd)}`}
-      />
-      <Cell
-        label="Open Positions"
-        value={totals.openPositions}
-        hint={totals.liqCount ? `${totals.liqCount} liquidation${totals.liqCount === 1 ? "" : "s"}` : undefined}
-      />
-      <div style={{
-        flex: isPhone ? "1 1 45%" : 1,
-        minWidth: 0,
-        padding: "10px 14px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-      }}>
-        <span className="eyebrow">Last Fill</span>
-        <span style={{
-          fontSize: 13,
-          color: loading ? "var(--paper-4)" : "var(--paper)",
-          fontFamily: "var(--font-mono)",
-          fontWeight: 600,
-        }}>{loading ? "—" : lastSeen}</span>
-      </div>
-    </div>
-  );
-}
-
-function PerpSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid var(--line-soft)" }}>
-      <div style={{
-        padding: "8px 14px",
-        background: "var(--ink-1)",
-        borderBottom: "1px solid var(--line-soft)",
-      }}>
-        <span className="eyebrow">{title}</span>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function marketLabel(market_id: string): string {
-  return market_id.includes(":") ? market_id.split(":")[1] : market_id;
-}
-
-function MarketCell({
-  marketId,
-  onMarketClick,
-}: {
-  marketId: string;
-  onMarketClick?: (marketId: string) => void;
-}) {
-  if (!onMarketClick) {
-    return <span style={{ color: "var(--paper)" }}>{marketLabel(marketId)}</span>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        onMarketClick(marketId);
-      }}
-      style={{
-        background: "transparent",
-        border: 0,
-        padding: 0,
-        color: "var(--paper)",
-        cursor: "pointer",
-        font: "inherit",
-        textAlign: "left",
-        textDecoration: "underline dotted",
-        textUnderlineOffset: 3,
-      }}
-    >
-      {marketLabel(marketId)}
-    </button>
-  );
-}
-
-function PerpPositionsTable({
-  positions,
-  onMarketClick,
-}: {
-  positions: PerpPosition[];
-  onMarketClick?: (marketId: string) => void;
-}) {
-  const livePrices = usePerpLivePrices(positions.map((p) => p.market_id));
-  return (
-    <table className="table-cards" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono)", fontSize: 11 }}>
-      <thead>
-        <tr style={{ color: "var(--paper-4)", textAlign: "left", borderBottom: "1px solid var(--line-soft)" }}>
-          <th style={{ padding: "6px 14px", fontWeight: 500 }}>Market</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500 }}>Side</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Size</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Entry</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Collateral</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>uPnL</th>
-        </tr>
-      </thead>
-      <tbody>
-        {positions.map((p) => {
-          const sizeUsd = e6n(p.size);
-          const entryUsd = e6n(p.entry_price);
-          const upnl = liveUnrealizedPnl(
-            p.side,
-            sizeUsd,
-            entryUsd,
-            livePrices[p.market_id],
-            e6n(p.unrealized_pnl),
-          );
-          const inProfit = upnl >= 0;
-          return (
-            <tr key={p.position_pubkey} style={{ borderBottom: "1px solid var(--line-soft)" }}>
-              <td data-label="Market" style={{ padding: "6px 14px" }}>
-                <MarketCell marketId={p.market_id} onMarketClick={onMarketClick} />
-              </td>
-              <td data-label="Side" style={{ padding: "6px 14px", color: p.side === "long" ? "var(--buy)" : "var(--sell)", fontWeight: 600, textTransform: "uppercase" }}>
-                {p.side}
-              </td>
-              <td data-label="Size" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-2)" }}>{fmtUsdCompact(sizeUsd)}</td>
-              <td data-label="Entry" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-2)" }}>{fmtUsd(entryUsd)}</td>
-              <td data-label="Collateral" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-3)" }}>{fmtUsdCompact(e6n(p.collateral))}</td>
-              <td data-label="uPnL" style={{ padding: "6px 14px", textAlign: "right", color: inProfit ? "var(--buy)" : "var(--sell)", fontWeight: 600 }}>
-                {fmtUsdCompact(upnl)}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
-function PerpPnlTable({
-  rows,
-  onMarketClick,
-}: {
-  rows: PerpPnlRow[];
-  onMarketClick?: (marketId: string) => void;
-}) {
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => b.volume_usd_e6 - a.volume_usd_e6),
-    [rows],
-  );
-  return (
-    <table className="table-cards" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono)", fontSize: 11 }}>
-      <thead>
-        <tr style={{ color: "var(--paper-4)", textAlign: "left", borderBottom: "1px solid var(--line-soft)" }}>
-          <th style={{ padding: "6px 14px", fontWeight: 500 }}>Market</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Volume</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Long</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Short</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Fees</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Last</th>
-        </tr>
-      </thead>
-      <tbody>
-        {sorted.map((r) => (
-          <tr key={`${r.venue}:${r.market_id}`} style={{ borderBottom: "1px solid var(--line-soft)" }}>
-            <td data-label="Market" style={{ padding: "6px 14px" }}>
-              <MarketCell marketId={r.market_id} onMarketClick={onMarketClick} />
-            </td>
-            <td data-label="Volume" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-2)" }}>{fmtUsdCompact(e6n(r.volume_usd_e6))}</td>
-            <td data-label="Long" style={{ padding: "6px 14px", textAlign: "right", color: "var(--buy)" }}>{fmtUsdCompact(e6n(r.long_size))}</td>
-            <td data-label="Short" style={{ padding: "6px 14px", textAlign: "right", color: "var(--sell)" }}>{fmtUsdCompact(e6n(r.short_size))}</td>
-            <td data-label="Fees" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-3)" }}>{fmtUsdCompact(e6n(r.fees_paid_e6))}</td>
-            <td data-label="Last" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-3)" }}>
-              {r.last_fill_ts ? formatAge(r.last_fill_ts) : "—"}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function PerpLiquidationsTable({
-  rows,
-  onMarketClick,
-}: {
-  rows: (PerpLiquidation & { market_id: string; venue: string })[];
-  onMarketClick?: (marketId: string) => void;
-}) {
-  return (
-    <table className="table-cards" style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono)", fontSize: 11 }}>
-      <thead>
-        <tr style={{ color: "var(--paper-4)", textAlign: "left", borderBottom: "1px solid var(--line-soft)" }}>
-          <th style={{ padding: "6px 14px", fontWeight: 500 }}>Time</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500 }}>Market</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500 }}>Side</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Size Closed</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Oracle Px</th>
-          <th style={{ padding: "6px 14px", fontWeight: 500, textAlign: "right" }}>Tx</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((l) => (
-          <tr key={l.signature || `${l.position_pubkey}:${l.timestamp}`} style={{ borderBottom: "1px solid var(--line-soft)" }}>
-            <td data-label="Time" style={{ padding: "6px 14px", color: "var(--paper-3)" }}>{l.timestamp ? formatAge(l.timestamp) : "—"}</td>
-            <td data-label="Market" style={{ padding: "6px 14px" }}>
-              <MarketCell marketId={l.market_id} onMarketClick={onMarketClick} />
-            </td>
-            <td data-label="Side" style={{ padding: "6px 14px", color: l.side === "long" ? "var(--buy)" : "var(--sell)", fontWeight: 600, textTransform: "uppercase" }}>
-              {l.side}
-            </td>
-            <td data-label="Size Closed" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-2)" }}>{fmtUsdCompact(e6n(l.size_closed))}</td>
-            <td data-label="Oracle Px" style={{ padding: "6px 14px", textAlign: "right", color: "var(--paper-2)" }}>{fmtUsd(e6n(l.oracle_price))}</td>
-            <td data-label="Tx" style={{ padding: "6px 14px", textAlign: "right" }}>
-              {l.signature ? (
-                <a
-                  href={explorerTxUrl(l.signature)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: "var(--paper-4)" }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {Icon.ext(10)}
-                </a>
-              ) : (
-                <span style={{ color: "var(--paper-4)" }}>—</span>
-              )}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
 }

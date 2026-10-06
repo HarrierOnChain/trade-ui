@@ -1023,68 +1023,6 @@ export const fetchFundingChain = async (..._rest: unknown[]) => ({ success: true
 export const fetchFundingCluster = async (..._rest: unknown[]) => ({ success: true, clusters: [] as FundingCluster[], unclustered: [] as string[], enrichmentEnqueued: [] as string[] });
 export const fetchHolderEdges = async (mint: string, ..._rest: unknown[]) => ({ success: true, mint, edges: [] as HolderEdge[] });
 
-export type PerpVenue = "jup" | "phoenix";
-export type PerpSide = "long" | "short";
-export type PerpFundingMechanism = "funding" | "borrow_fee";
-export interface PerpMarket { market_id: string; venue: PerpVenue; asset: string; volume_24h_usd?: number; trades_24h?: number }
-export interface PerpCandle { timestamp: number; open: number; high: number; low: number; close: number; volume_usd: number; trade_count: number }
-export type PerpFillAction = "open" | "add" | "reduce" | "close" | "fill";
-export interface PerpMarketTrade {
-  timestamp: number; slot: number; signature: string; signer: string;
-  side: PerpSide; size: number; price: number; fee: number;
-  action?: PerpFillAction; realized_pnl_e6?: number | null;
-}
-export interface PerpLiquidation {
-  timestamp: number; slot: number; signature: string; signer: string;
-  position_pubkey: string; side: PerpSide; size_closed: number; oracle_price: number; fee: number;
-}
-export interface PerpPosition {
-  market_id: string; venue: PerpVenue; position_pubkey: string;
-  side: PerpSide; size: number; entry_price: number; collateral: number;
-  unrealized_pnl: number; slot: number; snapshot_ts: number; is_open: boolean;
-}
-export interface PerpQuote {
-  market_id: string; venue: string; side: PerpSide;
-  entry_price: number; est_liquidation_price: number; size: number;
-  mechanism: PerpFundingMechanism; funding_or_borrow_bps_per_hour: number;
-  fee_bps: number; quote_ts_ms: number; slot: number; provider: string;
-}
-export interface PerpUnsignedTx { wallet: string; tx_b64: string; status: string }
-export type PerpOrderKind = "limit" | "take_profit" | "stop_loss";
-export type PerpOrderState = "open" | "updated" | "filled" | "cancelled";
-export interface PerpOrder {
-  order_id: string; owner: string; market_id: string; venue: PerpVenue | string;
-  position_pubkey: string; kind: PerpOrderKind; side: PerpSide; state: PerpOrderState;
-  size_usd: number; collateral: number; trigger_price: number; trigger_above: boolean;
-  entire_position: boolean; created_slot: number; created_ts: number;
-  updated_slot: number; updated_ts: number; last_signature: string;
-}
-
 const emptyList = async <T,>(extra: T) => extra;
-
-export const fetchPerpMarkets = async (..._rest: unknown[]) => ({ data: [] as PerpMarket[], count: 0 });
-export const fetchPerpCandles = async (marketId: string, ..._rest: unknown[]) => ({ market_id: marketId, timeframe: "1m", data: [] as PerpCandle[], count: 0 });
-export const fetchPerpMarketTrades = async (marketId: string, ..._rest: unknown[]) => ({ market_id: marketId, data: [] as PerpMarketTrade[], count: 0 });
-export const fetchPerpLiquidations = async (marketId: string, ..._rest: unknown[]) => ({ market_id: marketId, data: [] as PerpLiquidation[], count: 0 });
-export const fetchPerpWalletPositions = async (address: string, ..._rest: unknown[]) => ({ address, data: [] as PerpPosition[], count: 0, is_fresh: false });
-export const fetchPerpWalletTrades = async (address: string, ..._rest: unknown[]) => ({ address, data: [] as (PerpMarketTrade & { market_id: string; venue: string; position_pubkey: string })[], count: 0 });
-export const fetchPerpWalletLiquidations = async (address: string, ..._rest: unknown[]) => ({ address, data: [] as (PerpLiquidation & { market_id: string; venue: string })[], count: 0 });
-export const fetchPerpWalletPnl = async (address: string, ..._rest: unknown[]) => ({ address, data: [] as Array<{
-  market_id: string; venue: string;
-  long_size: number; short_size: number;
-  volume_usd_e6: number; fees_paid_e6: number;
-  gross_pnl_e6: number; net_pnl_e6: number;
-  first_fill_ts: number; last_fill_ts: number;
-}>, count: 0 });
-export const fetchPerpQuote = async (..._rest: unknown[]) =>
-  ({ success: false as boolean, error: "not_supported_selfhosted", data: undefined as PerpQuote | undefined });
-export const submitPerpOrder = async (..._rest: unknown[]) => ({ success: false as boolean, error: "not_supported_selfhosted", data: undefined });
-export const submitPerpClose = async (..._rest: unknown[]) => ({ success: false as boolean, error: "not_supported_selfhosted", data: undefined });
-export const submitPerpTpsl = async (..._rest: unknown[]) => ({ success: false as boolean, error: "not_supported_selfhosted", data: undefined });
-export const submitPerpCancel = async (..._rest: unknown[]) => ({ success: false as boolean, error: "not_supported_selfhosted", data: undefined });
-export const submitPerpModify = async (..._rest: unknown[]) => ({ success: false as boolean, error: "not_supported_selfhosted", data: undefined });
-export const fetchPerpMarketOrders = async (marketId: string, ..._rest: unknown[]) => ({ market_id: marketId, data: [] as PerpOrder[], count: 0 });
-export const fetchPerpOrderbook = async (marketId: string, ..._rest: unknown[]) => ({ market_id: marketId, asks: [], bids: [], note: "unavailable" });
-export const fetchPerpWalletOrders = async (address: string, ..._rest: unknown[]) => ({ address, data: [] as PerpOrder[], count: 0 });
 
 void emptyList;

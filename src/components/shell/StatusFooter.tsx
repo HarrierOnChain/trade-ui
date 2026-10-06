@@ -22,7 +22,6 @@ import { useIsPhone, useIsMobile } from "../../hooks/useMediaQuery";
 import { parseTokenPath, tokenHref } from "../../lib/tokenHref";
 import { fmtMcap, fmtNum, fmtUsd } from "../../lib/format";
 import { PORTFOLIO_STORAGE_KEY, readUserWallets } from "../../lib/trackerWallets";
-import { perpHref } from "../../lib/perpRoutes";
 import { RegionPicker } from "./RegionPicker";
 import { FooterTapeButtons } from "./TapeQuickBar";
 import type { LivePrice } from "../../hooks/useLiveTradePrices";
@@ -43,8 +42,6 @@ export function StatusFooter() {
   const pathname = usePathname();
   const { chainId } = useChain();
   const solPrice = useSolPrice();
-  const btcPrice = 0;
-  const ethPrice = 0;
   const fps = useFps();
   const isPhone = useIsPhone();
   const isMobile = useIsMobile();
@@ -83,7 +80,7 @@ export function StatusFooter() {
     };
   }, [footerMint]);
 
-  // Chain-native USD price (SOL from the perp feed).
+  // Chain-native USD price (SOL from the spot price feed).
   const chainNativeUsd = solPrice ?? 0;
   const livePriceSol = live?.price ?? info?.lastPrice ?? info?.creatorBuyPrice ?? 0;
   const marketCap =
@@ -172,28 +169,6 @@ export function StatusFooter() {
         <>
           <FooterDivider />
           <FooterNativePrice price={solPrice} />
-        </>
-      )}
-      {btcPrice && !isPhone && (
-        <>
-          <FooterDivider />
-          <FooterPerpPrice
-            symbol="BTC"
-            price={btcPrice}
-            marketId="BTC"
-            valueColor="oklch(0.78 0.15 65)"
-          />
-        </>
-      )}
-      {ethPrice && !isPhone && (
-        <>
-          <FooterDivider />
-          <FooterPerpPrice
-            symbol="ETH"
-            price={ethPrice}
-            marketId="ETH"
-            valueColor="oklch(0.75 0.12 265)"
-          />
         </>
       )}
       {/* Always rendered — it hosts the Chain Health popup on hover. The
@@ -433,68 +408,18 @@ function FooterReadout({
 }
 
 function FooterNativePrice({ price }: { price: number }) {
-  const { navigate } = useClientNav();
   const { chainId, chain } = useChain();
   const label = nativeSymbol(chainId);
-  const inner = (
-    <>
-      <span style={{ display: "inline-flex", alignItems: "center", color: "var(--paper-4)" }}>
-        <ChainIcon id={chainId} size={11} />
-      </span>
-      <span className="mono" style={{ color: "var(--buy)", fontSize: 11, fontWeight: 500 }}>
-        ${price.toFixed(2)}
-      </span>
-    </>
-  );
-
-  if (chainId !== "sol") {
-    return (
-      <Tooltip content={`${chain.name} · ${label}/USD`} placement="top">
-        <span style={{ ...footerPriceButtonStyle, cursor: "default" }}>{inner}</span>
-      </Tooltip>
-    );
-  }
-
   return (
-    <Tooltip content="Open SOL-PERP" placement="top">
-      <button
-        type="button"
-        onClick={() => navigate(perpHref("SOL"))}
-        style={footerPriceButtonStyle}
-      >
-        {inner}
-      </button>
-    </Tooltip>
-  );
-}
-
-function FooterPerpPrice({
-  symbol,
-  price,
-  marketId,
-  valueColor,
-}: {
-  symbol: "BTC" | "ETH";
-  price: number;
-  marketId: string;
-  valueColor: string;
-}) {
-  const { navigate } = useClientNav();
-  const icon = symbol === "BTC" ? Icon.bitcoin(11) : Icon.ethereum(11);
-  return (
-    <Tooltip content={`Open ${symbol}-PERP`} placement="top">
-      <button
-        type="button"
-        onClick={() => navigate(perpHref(marketId))}
-        style={footerPriceButtonStyle}
-      >
-        <span style={{ display: "inline-flex", alignItems: "center", color: valueColor }}>
-          {icon}
+    <Tooltip content={`${chain.name} · ${label}/USD`} placement="top">
+      <span style={{ ...footerPriceButtonStyle, cursor: "default" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", color: "var(--paper-4)" }}>
+          <ChainIcon id={chainId} size={11} />
         </span>
-        <span className="mono" style={{ color: valueColor, fontSize: 11, fontWeight: 500 }}>
-          {fmtUsd(price)}
+        <span className="mono" style={{ color: "var(--buy)", fontSize: 11, fontWeight: 500 }}>
+          ${price.toFixed(2)}
         </span>
-      </button>
+      </span>
     </Tooltip>
   );
 }

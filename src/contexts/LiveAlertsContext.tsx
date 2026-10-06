@@ -23,7 +23,6 @@ import {
   type TrackedWallet,
 } from "../hooks/useTrackerStream";
 import { useTrackedDeploys, type TrackedDeploy } from "../hooks/useTrackedDeploys";
-import { useTrackedPerps, type TrackedPerpFill } from "../hooks/useTrackedPerps";
 
 /** A live tweet from a tracked X handle, shaped for the bell feed. */
 export interface TweetAlertItem {
@@ -36,7 +35,6 @@ export interface TweetAlertItem {
 export type LiveFeedItem =
   | { kind: "trade"; ts: number; data: TrackerAlert }
   | { kind: "deploy"; ts: number; data: TrackedDeploy }
-  | { kind: "perp"; ts: number; data: TrackedPerpFill }
   | { kind: "tweet"; ts: number; data: TweetAlertItem };
 
 interface LiveAlertsCtx {
@@ -246,7 +244,6 @@ function LiveAlertsInner({ children }: { children: React.ReactNode }) {
 
   const tradeStream = useTrackerStream(wallets, { seedLimit: 0, maxAlerts: FEED_CAP });
   const deployStream = useTrackedDeploys(wallets, { maxDeploys: 50, perWalletHistory: 0 });
-  const perpStream = useTrackedPerps(wallets, 50);
 
   // ── Tweet alerts — live tweets from every tracked X handle ────────────────
   // Global (this provider wraps the whole shell), so tweets notify no matter
@@ -312,13 +309,9 @@ function LiveAlertsInner({ children }: { children: React.ReactNode }) {
       if (d.live && !mutedWalletIds.has(d.walletId))
         out.push({ kind: "deploy", ts: d.timestampMs, data: d });
     }
-    for (const p of perpStream.fills) {
-      if (!mutedWalletIds.has(p.walletId))
-        out.push({ kind: "perp", ts: p.timestamp, data: p });
-    }
     out.push(...tweetItems);
     return out.sort((a, b) => b.ts - a.ts).slice(0, FEED_CAP);
-  }, [tradeStream.alerts, deployStream.deploys, perpStream.fills, tweetItems, mutedWalletIds]);
+  }, [tradeStream.alerts, deployStream.deploys, tweetItems, mutedWalletIds]);
 
   const unreadCount = useMemo(
     () => feedItems.filter((item) => item.ts > lastSeen).length,

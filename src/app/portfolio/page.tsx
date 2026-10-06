@@ -10,7 +10,7 @@
  *
  *   • Hero        — title + balance summary + realized-PnL chart
  *   • Mode toggle — Live / Demo (conditional)
- *   • Tabs        — Wallets · Holdings · Activity · Perps
+ *   • Tabs        — Wallets · Holdings · Activity
  *
  * Trading scope (which wallets sign orders) lives in the top-bar wallet popup.
  * We only reflect it, read-only, as a "Trading" badge in the Wallets tab.
@@ -18,15 +18,12 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useClientNav } from "../../components/shell/ClientPages";
-import { perpHref } from "../../lib/perpRoutes";
 import { Btn } from "../../components/atoms";
 import { useApp } from "../../contexts/AppContext";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import { usePortfolioScope } from "../../hooks/usePortfolioScope";
-import { usePortfolioPerps } from "../../hooks/usePortfolioPerps";
-import { usePerpLivePrices } from "../../hooks/usePerpLivePrices";
 import { useWalletSummaryBatch } from "../../hooks/useWalletSummaryBatch";
 import { useTrackerStream, type TrackedWallet } from "../../hooks/useTrackerStream";
 import { useUserWallets, type UserWallet, type BulkWalletResult } from "../../hooks/useUserWallets";
@@ -43,7 +40,7 @@ import {
   TabBar, EmptyHero,
 } from "./_components/atoms";
 import { WalletsTab } from "./_components/WalletsTab";
-import { HoldingsTab, PerpsTab, ActivityTab } from "./_components/tabs";
+import { HoldingsTab, ActivityTab } from "./_components/tabs";
 import { SpotSummary } from "./_components/SpotSummary";
 import { aggregateDemoScopes } from "./_components/demoScope";
 import {
@@ -56,7 +53,7 @@ import {
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
-type Tab = "wallets" | "holdings" | "activity" | "perps";
+type Tab = "wallets" | "holdings" | "activity";
 
 /* ── Page ────────────────────────────────────────────────────────────── */
 
@@ -193,7 +190,6 @@ export default function PortfolioPage() {
     { from: range.fromSec, to: range.toSec, resolution: range.resolution },
     refreshTick,
   );
-  const perps = usePortfolioPerps(liveAddresses, refreshTick);
 
   // Tracker stream — live alerts for every on-chain wallet
   const trackedWallets: TrackedWallet[] = useMemo(
@@ -315,10 +311,6 @@ export default function PortfolioPage() {
     [effectiveHoldings],
   );
   const effectiveTrades = usingDemo ? (demoScope?.trades ?? []) : visibleTrades;
-  const effectivePerpPositions = usingDemo ? (demoScope?.perps ?? []) : perps.positions;
-
-  // Live perp prices for whichever positions are showing → drives uPnL in Perps tab.
-  const livePrices = usePerpLivePrices(effectivePerpPositions.map((p) => p.market_id));
 
   // Live price map for tradable spot mints only (no stable-quote streaming).
   const spotMints = useMemo(() => spotHoldings.map((h) => h.mint), [spotHoldings]);
@@ -483,7 +475,6 @@ export default function PortfolioPage() {
     wallets: (usingDemo ? demoWallets : onChainWallets).length,
     holdings: spotHoldings.length,
     activity: usingDemo ? effectiveTrades.length : visibleTrades.length + liveAlerts.length,
-    perps: effectivePerpPositions.length,
   };
 
   const modalCtx = {
@@ -592,7 +583,6 @@ export default function PortfolioPage() {
           { value: "wallets",  label: "Wallets",  count: tabCounts.wallets },
           { value: "holdings", label: "Holdings", count: tabCounts.holdings },
           { value: "activity", label: "Activity", count: tabCounts.activity },
-          { value: "perps",    label: "Perps",    count: tabCounts.perps },
         ]}
       />
 
@@ -643,26 +633,13 @@ export default function PortfolioPage() {
           <ActivityTab
             trades={effectiveTrades}
             liveAlerts={usingDemo ? [] : liveAlerts}
-            perpTrades={usingDemo ? [] : perps.trades}
             solPrice={solPrice}
             loading={
               usingDemo
                 ? !demoReady
-                : (scope.loading && !visibleTrades.length && liveAlerts.length === 0 && perps.trades.length === 0)
+                : (scope.loading && !visibleTrades.length && liveAlerts.length === 0)
             }
             onTokenClick={(mint) => clientNav(tokenHref(mint))}
-            onMarketClick={(marketId) => clientNav(perpHref(marketId))}
-          />
-        </div>
-      )}
-
-      {tab === "perps" && (
-        <div style={{ flexShrink: 0 }}>
-          <PerpsTab
-            positions={effectivePerpPositions}
-            livePrices={livePrices}
-            loading={usingDemo ? !demoReady : (perps.loading && perps.positions.length === 0)}
-            onMarketClick={(marketId) => clientNav(perpHref(marketId))}
           />
         </div>
       )}
@@ -694,7 +671,7 @@ function Hero({ modeControl }: { modeControl?: React.ReactNode }) {
           fontSize: 12, color: "var(--paper-3)", margin: 0,
           maxWidth: 620, lineHeight: 1.5,
         }}>
-          Balances, holdings, trades and perps across every wallet you manage.
+          Balances, holdings and trades across every wallet you manage.
         </p>
       </div>
       {modeControl}

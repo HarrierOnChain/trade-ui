@@ -792,7 +792,7 @@ function AccountPanel({ onAfterDisconnect }: { onAfterDisconnect: () => void }) 
 // Only meaningful for users signed in via Privy (usePrivy().authenticated with
 // an embedded Solana wallet). For everyone else this renders nothing. Lets the
 // user grant our server permission to sign trades on their embedded wallet
-// (limit orders, ladders, perps) without the browser present — then re-syncs
+// (limit orders, ladders) without the browser present — then re-syncs
 // the backend's `signerProvisioned` gate via auth.privyRefresh.
 
 function PrivyDelegateRow() {
@@ -847,7 +847,7 @@ function PrivyDelegateRow() {
   return (
     <Row
       label="Automated trading"
-      hint="Delegate signing to the server so limit orders, ladders & perps can fire while you're away."
+      hint="Delegate signing to the server so limit orders & ladders can fire while you're away."
     >
       {delegated ? (
         <span className="mono" style={{

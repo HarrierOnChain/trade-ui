@@ -72,23 +72,6 @@ export function useSession(): SessionToken | null {
   return session;
 }
 
-/// What a Phoenix order costs the trader account, as computed by the
-/// trading API when it sized the order. `depositUsdcE6` is the collateral
-/// top-up folded into the SAME transaction as the order, so it can never
-/// land without the position. `effectiveLeverageBps` is what the order
-/// actually gets after reserving margin for fees — slightly below the
-/// requested leverage when the request sits at the market's cap.
-export type PhoenixOrderCost = {
-  requiredCollateralUsdcE6: number;
-  initialMarginUsdcE6: number;
-  costUsdcE6: number;
-  notionalUsdcE6: number;
-  effectiveLeverageBps: number;
-  maxLeverage: number | null;
-  depositUsdcE6: number;
-  availableBeforeUsdcE6: number | null;
-};
-
 export type WalletKind = "PHANTOM" | "PLATFORM" | "DEMO" | "PRIVY";
 export type UserRole = "USER" | "ADMIN";
 
@@ -152,42 +135,9 @@ export interface DemoWalletSummary {
     totalTrades: number;
     totalVolumeSol: number;
     openPositions: number;
-    openPerpPositions: number;
   };
   holdings: DemoHolding[];
   trades: DemoTrade[];
-  perpPositions: Array<{
-    id: string;
-    marketId: string;
-    side: "long" | "short";
-    collateralUsd: number;
-    leverageBps: number;
-    baseUnits: number;
-    entryPriceUsd: number;
-    status: string;
-    openedAt: string;
-    closedAt: string | null;
-    closePriceUsd: number | null;
-    realizedPnlUsd: number | null;
-  }>;
-}
-
-// DEMO perp position shape returned by trade.demoPerp* handlers.
-export interface DemoPerpPosition {
-  id: string;
-  walletId: string;
-  marketId: string;
-  side: "long" | "short";
-  collateralUsd: number;
-  leverageBps: number;
-  baseUnits: number;
-  entryPriceUsd: number;
-  fundingAccruedUsd: number;
-  status: "open" | "closed" | "liquidated";
-  openedAt: string;
-  closedAt: string | null;
-  closePriceUsd: number | null;
-  realizedPnlUsd: number | null;
 }
 
 // ── X tracker ────────────────────────────────────────────────────────────
@@ -693,25 +643,6 @@ export class BackendClient {
   demoSummary(walletId: string) {
     return this.call<DemoWalletSummary>("wallets.demoSummary", { walletId });
   }
-  demoPerpOpen(args: {
-    walletId: string; marketId: string;
-    side: "long" | "short"; collateralUsdcE6: number;
-    leverageBps: number; markPriceUsd: number;
-  }) {
-    return this.call<DemoPerpPosition>("trade.demoPerpOpen", args);
-  }
-  demoPerpClose(args: {
-    walletId: string; marketId: string;
-    closePctBps: number; markPriceUsd: number;
-  }) {
-    return this.call<{
-      ok: boolean; position: DemoPerpPosition;
-      pnlUsd: number; fundingPaidUsd: number; netReturnUsd: number;
-    }>("trade.demoPerpClose", args);
-  }
-  demoPerpList(walletId: string) {
-    return this.call<{ positions: DemoPerpPosition[] }>("trade.demoPerpList", { walletId });
-  }
   setWalletProfiles(id: string, body: { autosellProfile?: AutosellConfig; autobuyProfile?: AutobuyConfig }) {
     return this.call<BackendWallet>("wallets.setProfiles", { id, ...body });
   }
@@ -765,89 +696,6 @@ export class BackendClient {
   }) { return this.call<{ transaction: string; encoding: "base64" }>("trade.prepare", body); }
   submit(signedTx: string, walletId: string, opts?: { mev?: boolean; fixedFeeLamports?: number; mint?: string; side?: "buy" | "sell" }) {
     return this.call<{ signature: string; region: string }>("trade.submit", { signedTx, walletId, ...opts });
-  }
-  /** Perp platform path: backend signs the unsigned tx with the platform
-   *  wallet's stored keypair and relays via gateway. */
-  perpExecute(txB64: string, walletId: string) {
-    return this.call<{ signature: string; region: string }>("trade.perpExecute", { txB64, walletId });
-  }
-  /** Phoenix platform-wallet order — fully backend-driven. Backend holds
-   *  the keypair, signs the Phoenix auth nonce + the order tx, relays via
-   *  gateway. Returns the confirmed signature. */
-  phoenixExecute(body: {
-    walletId: string;
-    marketId: string;
-    side: "long" | "short";
-    clientOrderId: string;
-    collateralUsdcE6: number;
-    leverageBps: number;
-  }) {
-    return this.call<{ signature: string; region: string; cost?: PhoenixOrderCost }>(
-      "trade.phoenixExecute",
-      body,
-    );
-  }
-  /** Phoenix order prepare: backend builds the place-order ix locally
-   *  (no auth round-trip — Phoenix's Anchor IDL is bundled via the rise
-   *  SDK), returns an unsigned V0 tx for browser-side signing. Same
-   *  shape as Jupiter's order prepare. */
-  phoenixOrderPrepare(body: {
-    walletId: string;
-    marketId: string;
-    side: "long" | "short";
-    clientOrderId: string;
-    collateralUsdcE6: number;
-    leverageBps: number;
-  }) {
-    return this.call<{ txB64: string; encoding: "base64"; cost?: PhoenixOrderCost }>(
-      "trade.phoenixOrderPrepare",
-      body,
-    );
-  }
-  /** Phoenix collateral balance. Collateral lives in a Phoenix trader
-   *  account, NOT in the wallet, and it survives a failed order — without
-   *  this read the app had no way to show funds that had already left the
-   *  wallet, which is exactly how a stranded deposit read as lost money. */
-  phoenixBalance(body: { walletId: string }) {
-    return this.call<{ collateralUsdcE6: number | null; pubkey: string }>(
-      "trade.phoenixBalance",
-      body,
-    );
-  }
-  /** Phoenix collateral deposit — moves USDC from the wallet through the
-   *  Ember wrapper into the Phoenix trader account.
-   *
-   *  ⚠️ NEVER call this to fund an order. Orders carry their own collateral
-   *  top-up inside the order transaction, so funding and filling share a
-   *  fate; a deposit sent separately can confirm while the order reverts,
-   *  which is precisely the 2026-08-04 stranded-collateral incident. This
-   *  is for a deliberate, user-initiated pre-fund only, and no order path
-   *  reaches it. */
-  phoenixDepositExecute(body: { walletId: string; amountUsdcE6: number; clientOpId?: string }) {
-    return this.call<{ signature: string; region: string }>("trade.phoenixDepositExecute", body);
-  }
-  phoenixDepositPrepare(body: { walletId: string; amountUsdcE6: number; clientOpId?: string }) {
-    return this.call<{ txB64: string; encoding: "base64" }>("trade.phoenixDepositPrepare", body);
-  }
-  /** Phoenix collateral withdraw — pulls USDC out of the trader account
-   *  back to the user's wallet via Ember unwrap. Phoenix has a global
-   *  FIFO withdraw queue; the tx confirms immediately but the funds may
-   *  take time to actually settle depending on queue depth. */
-  phoenixWithdrawExecute(body: { walletId: string; amountUsdcE6: number; clientOpId?: string }) {
-    return this.call<{ signature: string; region: string }>("trade.phoenixWithdrawExecute", body);
-  }
-  phoenixWithdrawPrepare(body: { walletId: string; amountUsdcE6: number; clientOpId?: string }) {
-    return this.call<{ txB64: string; encoding: "base64" }>("trade.phoenixWithdrawPrepare", body);
-  }
-  /** Phoenix close (full or partial). Backend looks up the open position
-   *  from `/trader/state`, computes the opposite-direction market order,
-   *  signs (platform-wallet path) and relays. `closePctBps=10000` is a
-   *  full close, smaller values are partial. */
-  phoenixCloseExecute(body: { walletId: string; marketId: string; closePctBps?: number; clientOrderId?: string }) {
-    return this.call<{ signature: string; region: string }>("trade.phoenixCloseExecute", body);
-  }
-  phoenixClosePrepare(body: { walletId: string; marketId: string; closePctBps?: number; clientOrderId?: string }) {
-    return this.call<{ txB64: string; encoding: "base64" }>("trade.phoenixClosePrepare", body);
   }
   execute(body: {
     walletId: string; side: "buy" | "sell"; mint: string;

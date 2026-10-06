@@ -38,7 +38,7 @@ interface PageDef {
   path: string;
   /** Tab-title label — rendered as `"<title> | Raze Terminal"` while active. */
   title: string;
-  /** Page sets its own live tab title (e.g. perps: pair + price); the central
+  /** Page sets its own live tab title (e.g. ticker + market cap); the central
    *  title effect leaves it alone so it isn't stomped back to the static label. */
   dynamicTitle?: boolean;
   Component: React.LazyExoticComponent<React.ComponentType>;

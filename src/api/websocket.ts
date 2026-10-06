@@ -44,10 +44,6 @@ export type WsEventType =
   | "alert"
   | "dex_paid"
   | "raze_listeners"
-  | "perp_fill"
-  | "perp_liquidation"
-  | "perp_position_update"
-  | "perp_order"
   | "ohlcv";
 
 export type WsHandler = (data: Record<string, unknown>) => void;
@@ -746,12 +742,6 @@ export class RazeWebSocket {
       this.release(sidOf({ channel: "wallet", chain: "sol", wallet }), true);
     }
   }
-
-  // Perpetuals have no channel on this API.
-  subscribeMarket(_marketId: string): void {}
-  unsubscribeMarket(_marketId: string): void {}
-  subscribeMarkets(_markets: string[]): void {}
-  unsubscribeMarkets(_markets: string[]): void {}
 
   on(type: WsEventType, handler: WsHandler): () => void {
     let set = this.handlers.get(type);

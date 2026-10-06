@@ -33,7 +33,6 @@ interface PageDef {
 const CUSTOMIZE_PAGES: PageDef[] = [
   { id: "monitor",    label: "Monitor",            template: "Default 3-column", description: "Live deploy, migration and mayhem feeds.",     editPath: "/monitor?edit=1" },
   { id: "tokenTrade", label: "Token Trading",      template: "Chart-first",       description: "Per-token chart, trades, holders, trade panel." },
-  { id: "perpsTrade", label: "Perpetuals Trading", template: "Pro DOM",           description: "Order book, chart, positions, funding rail." },
   { id: "trending",   label: "Trending",           template: "Lanes",             description: "Hot, X-buzz, volume and volatility lanes." },
   { id: "portfolio",  label: "Portfolio",          template: "Summary",           description: "Holdings, PnL, history, deployed tokens." },
   { id: "tracker",    label: "Tracker",            template: "Cards",             description: "Watched wallets and their latest activity." },

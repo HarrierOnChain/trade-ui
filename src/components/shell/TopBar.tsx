@@ -996,10 +996,7 @@ function ScrollableNav({
         }}
       >
         {items.map((it) => {
-          const active =
-            it.id === "perpetuals"
-              ? pathname?.startsWith("/perps")
-              : isActive(it.path);
+          const active = isActive(it.path);
           if (it.cta) {
             return (
               <div
@@ -1148,7 +1145,7 @@ function MobileNavSheet({
 
         <nav style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "2px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
           {items.map((it) => {
-            const active = it.id === "perpetuals" ? pathname?.startsWith("/perps") : isActive(it.path);
+            const active = isActive(it.path);
             return (
               <button
                 key={it.id}

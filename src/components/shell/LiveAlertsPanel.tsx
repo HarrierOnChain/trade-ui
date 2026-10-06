@@ -22,7 +22,6 @@ function KindDot({ kind }: { kind: LiveFeedItem["kind"] }) {
   const colors: Record<LiveFeedItem["kind"], string> = {
     trade: "var(--accent)",
     deploy: "var(--amber)",
-    perp: "var(--blue, #4a9eff)",
     tweet: "var(--info, #1d9bf0)",
   };
   return (
@@ -116,22 +115,6 @@ function FeedRow({ item }: { item: LiveFeedItem }) {
             <span style={{ color: "var(--paper-2)", fontSize: 11, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               @{t.username}
               <span style={{ color: "var(--paper-3)" }}> {t.text}</span>
-            </span>
-          </>
-        );
-      })()}
-
-      {item.kind === "perp" && (() => {
-        const p = item.data;
-        const isLong = p.side === "long";
-        return (
-          <>
-            <span style={{ color: isLong ? "var(--buy, var(--accent))" : "var(--sell, #f87171)", fontWeight: 600, fontSize: 10, letterSpacing: "0.04em", flexShrink: 0 }}>
-              {isLong ? "LONG" : "SHORT"}
-            </span>
-            <span style={{ color: "var(--paper-2)", fontSize: 11, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {p.walletLabel} · {p.marketId}
-              <span style={{ color: "var(--paper-3)" }}> {fmtUsd(p.sizeUsd)}</span>
             </span>
           </>
         );

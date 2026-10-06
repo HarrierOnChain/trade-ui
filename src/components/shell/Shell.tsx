@@ -102,7 +102,7 @@ function AppZoomFrame({ children }: { children: React.ReactNode }) {
   const effectiveZoom = isMobile ? 1 : zoom;
   const zoomed = !isMobile && effectiveZoom !== 1;
 
-  // Nudge autosize canvas widgets (token/perp charts) to re-measure/redraw on
+  // Nudge autosize canvas widgets (token charts) to re-measure/redraw on
   // zoom change so they rasterise at the new scale.
   useEffect(() => {
     if (typeof window === "undefined") return;

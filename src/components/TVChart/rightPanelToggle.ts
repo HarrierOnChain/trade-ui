@@ -1,8 +1,7 @@
 // Show/hide toggle for the column that sits to the right of the chart — the
-// trades tape on the token page, the orderbook/trades sidebar on perps. Mounted
-// directly into the chart header toolbar (createButton returns an
-// HTMLElement), placed right after the "Lines" dropdown. Shared by TVChart and
-// PerpTVChart so both charts get an identical control.
+// trades tape on the token page. Mounted directly into the chart header
+// toolbar (createButton returns an HTMLElement), placed right after the
+// "Lines" dropdown.
 
 // Minimal structural type for the bit of the widget we touch — avoids
 // pulling the charting type surface into this helper.

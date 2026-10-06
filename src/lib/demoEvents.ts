@@ -3,7 +3,7 @@
  * Tiny pub-sub for "I just fired a demo trade — please refetch."
  *
  * Demo trades don't flow through the real-wallet WebSocket so the
- * portfolio / token-page / perp-page pollers can lag up to their
+ * portfolio / token-page pollers can lag up to their
  * interval before showing a fresh fill. We fire this event from every
  * site that mutates demo state and have the pollers listen for it to
  * trigger an immediate refresh. Backed by a window CustomEvent so the

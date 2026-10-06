@@ -7,10 +7,9 @@ import { getActiveChain, nativeSymbol } from "../../lib/chains";
 import { useIsMobile } from "../../hooks/useMediaQuery";
 import { tradeLegKey, tradeNative } from "../../lib/trades";
 
-/// Compact live trade tape pinned to the right of the chart on the token page.
-/// Mirrors the perps `OrderbookSidebar` → `SidebarTrades` chrome (fixed width,
-/// only as tall as the chart) but spot tokens have no resting orderbook, so
-/// this renders trades only. Fed by the `trades` the page already streams via
+/// Compact live trade tape pinned to the right of the chart on the token page:
+/// fixed width, only as tall as the chart, trades only (spot tokens have no
+/// resting orderbook). Fed by the `trades` the page already streams via
 /// `useTrades(mint)` — no extra REST fetch or WS subscription.
 export const TOKEN_TRADES_SIDEBAR_WIDTH = 240;
 

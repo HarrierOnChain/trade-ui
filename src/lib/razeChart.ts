@@ -40,10 +40,6 @@ export const TOKEN_CHART_INTERVALS = [
   "1S", "5S", "15S", "30S", "1", "5", "15", "30", "60", "240", "1D",
 ] as ResolutionString[];
 
-export const PERP_CHART_INTERVALS = [
-  "1", "5", "15", "60", "240", "1D",
-] as ResolutionString[];
-
 export const RAZE_CHART_OVERRIDES: ChartOverrides = {
   "paneProperties.background": "#181615",
   "paneProperties.backgroundType": "solid",
