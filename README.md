@@ -1,9 +1,10 @@
 # Raze Trade UI
 
 A self-hosted trading terminal for [Raze](https://raze.bot): live launchpads,
-token pages with charts, trades and holders, a portfolio, and Solana swaps on
-the Raze router — signed by wallets that live encrypted on **your** machine or
-server, behind a password, like a hardware wallet.
+token pages with charts, trades and holders, a portfolio, and swaps on the
+Raze routers (Solana; Ethereum, BNB Chain, Base and Robinhood) — signed by
+wallets that live encrypted on **your** machine or server, behind a password,
+like a hardware wallet.
 
 Run it in the browser from a server you own (a VPS), or as a desktop app on
 Windows, macOS and Linux. There is no account and no third-party login: one
@@ -31,8 +32,8 @@ Raze API key in the server's configuration, and one password for the vault.
 ```
  browser ──────────────► Trade UI server (server.mjs) ──────► api.raze.bot   market data, REST + WebSocket
   │ pages, charts,         │ the lock: password → session          (RAZE_API_KEY added here)
-  │ addresses only         │ the vault: encrypted keys      ──────► router.raze.bot  quotes, swap builds
-  │                        │ signs swaps and transfers      ──────► Solana RPC       send, confirm, balances
+  │ addresses only         │ the vault: encrypted keys      ──────► router.raze.bot  quotes, swap builds (/evm: EVM)
+  │                        │ signs swaps and transfers      ──────► Solana / EVM RPCs  send, confirm, balances
   └─ never sees a key      └─ data/vault.json (0600)
 ```
 
@@ -183,6 +184,9 @@ None of it reaches the browser.
 | `RAZE_API_KEY` | — | Your Raze key. Sent as `x-api-key` to the API and the router. |
 | `RAZE_API_BASE` | `https://api.raze.bot` | The market-data API. |
 | `RAZE_ROUTER_BASE` | `https://router.raze.bot` | The Solana router: quotes and builds. |
+| `RAZE_ROUTER_EVM_BASE` | `https://router.raze.bot/evm` | The EVM router: quotes and builds on Ethereum, BNB Chain, Base and Robinhood. Same key. |
+| `EVM_RPC_URL_ETH`, `_BSC`, `_BASE`, `_ROBINHOOD` | free public RPCs (below) | Sends, reads balances and receipts. Must answer `eth_getTransactionReceipt`. Use your own for real volume. |
+| `EVM_WS_URL_ETH`, `_BSC`, `_BASE`, `_ROBINHOOD` | your RPC's with `ws(s)://`, else publicnode's | New blocks (`newHeads`), on which a sent swap's receipt is read. |
 | `SOLANA_RPC_URL` | `https://api.mainnet-beta.solana.com` | Sends and confirms, reads balances. Must accept v1 transactions (SIMD-0385). Use your own for real volume; a key in the URL stays on the server. |
 | `SOLANA_WS_URL` | the RPC URL with `ws(s)://` | Confirmations. |
 | `SWAP_PRIORITY_MAX_LAMPORTS` | `500000` | Cap of the router's priority-fee estimate when you set none. |
@@ -194,6 +198,12 @@ None of it reaches the browser.
 | `TRADE_UI_PUBLIC_URL` | — | The address you open it at, when it is a domain name (needed then). |
 | `TRADE_UI_ALLOWED_HOSTS` | — | More host names to answer for, comma-separated. |
 | `TRADE_UI_SETUP_TOKEN` | random | A fixed first-run setup code (automation). |
+
+The EVM defaults: Ethereum and Robinhood `https://ethereum-rpc.publicnode.com`
+and `https://robinhood-rpc.publicnode.com`; BNB Chain
+`https://bsc-dataseed.bnbchain.org`; Base `https://mainnet.base.org`. The last
+two are the chains' own endpoints because publicnode's free tier does not
+answer receipts there. New blocks come from publicnode's WebSockets.
 
 ## The lock and the wallets
 
@@ -228,8 +238,8 @@ stays closed: keep exported keys as a last backup.
 - **Trading switch** — which wallets the panels and quick buys trade with
   (also in the top bar's wallet picker). Several at once: one trade each.
 
-One EVM key is the same address on Ethereum, BNB Chain, Base and Robinhood.
-EVM trading waits for the EVM router; balances already show.
+One EVM key is the same address on Ethereum, BNB Chain, Base and Robinhood,
+and trades on all four. Sending coins runs on Solana for now.
 
 Upgrading from a version that kept wallets in the browser (unencrypted, in
 `localStorage`): the Wallets page offers to move them into the vault and then
@@ -239,7 +249,8 @@ browser: import those keys by hand.
 
 ## Swaps
 
-Solana only for now: on ETH / BSC / Base / Robinhood the trading panel says so.
+On Solana the Raze router swaps; on Ethereum, BNB Chain, Base and Robinhood
+the Raze EVM router does (below, [On the EVM chains](#on-the-evm-chains)).
 
 Where you trade: the token page's panel (market buy and sell, presets, the
 floating Instant Trade panel), the ⚡ quick buy on monitor rows and the
@@ -267,9 +278,30 @@ Market orders only: a trade is swapped on the router when you press the button.
 Trade UI has no limit orders, no automations (TP/SL ladders, market making), no
 wallet or X trackers, and it does not launch tokens.
 
-Swaps run on Solana. On the EVM chains (Ethereum, BNB Chain, Base, Robinhood)
-Trade UI shows market data and balances, without trade buttons: the EVM router
-does not quote yet.
+### On the EVM chains
+
+The same places trade, through the EVM router (`RAZE_ROUTER_EVM_BASE`), with
+an EVM wallet of the vault:
+
+1. **Quote** — `GET /api/evm/quote` → router `POST /quote`, kept a minute
+   under a `quoteToken`, shown under the amount (output, minimum, venue) and
+   refreshed every 2 s while visible.
+2. **Build, check, sign, send** — `POST /api/wallets/{id}/swap` with that
+   token: the router builds the kept quote for the wallet (`POST /build`). The
+   server signs only if the router's simulation passed and every transaction
+   is what the quote says: from this wallet, on this chain; approvals only of
+   the token you pay with, only to the venue's router, for at most the amount;
+   the swap to that router with the quote's value. It signs the approvals and
+   the swap as EIP-1559 transactions with the router's gas and fees and sends
+   them in nonce order.
+3. **Confirm** — `POST /api/evm/confirm`: the server reads the swap's receipt
+   on each new block the chain's WebSocket announces, and says if it reverted.
+
+The EVM router quotes exact amounts in: on EVM chains you buy by what you
+spend and sell by an amount or a share of the holding (the panel says so for
+the other denominations). Slippage tops out at 50 %. A token you pay with is
+approved for the exact amount before the swap, in its own transaction; the
+priority fee setting is Solana's (the router suggests EVM fees).
 
 ## Development
 

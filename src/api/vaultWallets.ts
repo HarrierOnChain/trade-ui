@@ -38,6 +38,16 @@ export function toChainWallet(w: VaultWallet, chain: ChainId): ChainWallet {
   };
 }
 
+/** The EVM wallet a trade signs with (one key, every EVM chain). Throws a
+ *  sentence the trader can act on. */
+export function evmWallet(walletId: string): { id: string; address: string } {
+  const w = cachedWallets().find((x) => x.id === walletId);
+  if (!w) throw new Error("Wallet not found: reload the wallet list");
+  if (w.family !== "evm") throw new Error("Not an EVM wallet");
+  if (w.watchOnly) throw new Error("Watch-only wallet: import its key to trade with it");
+  return { id: w.id, address: w.address };
+}
+
 /** Solana wallets that can sign, from the last list the server returned. */
 export function solanaSigners(): Array<{ id: string; pubkey: string; label: string | null }> {
   return cachedWallets()

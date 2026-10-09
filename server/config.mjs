@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { EVM_CHAINS } from "./evm.mjs";
 
 /** Parse `KEY=value` lines (comments, blank lines and optional quotes). */
 export function parseEnv(text) {
@@ -72,6 +73,18 @@ export function loadConfig({ root, argv = process.argv, env = process.env }) {
   const routerBase = httpUrl(env.RAZE_ROUTER_BASE, "https://router.raze.bot", "RAZE_ROUTER_BASE");
   const rpcUrl = httpUrl(env.SOLANA_RPC_URL, "https://api.mainnet-beta.solana.com", "SOLANA_RPC_URL");
   const rpcWsUrl = String(env.SOLANA_WS_URL || "").trim() || rpcUrl.replace(/^http/, "ws");
+  const routerEvmBase = httpUrl(env.RAZE_ROUTER_EVM_BASE, "https://router.raze.bot/evm", "RAZE_ROUTER_EVM_BASE");
+  // One RPC per EVM chain (EVM_RPC_URL_ETH, _BSC, _BASE, _ROBINHOOD), and a
+  // WebSocket for new blocks (EVM_WS_URL_*): by default your RPC's own with
+  // ws(s)://, or, without one, the free endpoints of server/evm.mjs.
+  const evmRpc = {};
+  for (const [chain, c] of Object.entries(EVM_CHAINS)) {
+    const name = chain.toUpperCase();
+    const own = String(env[`EVM_RPC_URL_${name}`] || "").trim();
+    const http = httpUrl(own, c.rpc, `EVM_RPC_URL_${name}`);
+    const ws = String(env[`EVM_WS_URL_${name}`] || "").trim() || (own ? http.replace(/^http/, "ws") : c.ws);
+    evmRpc[chain] = { http, ws };
+  }
 
   const publicUrl = String(env.TRADE_UI_PUBLIC_URL || "").trim().replace(/\/+$/, "");
   const allowedHosts = new Set(
@@ -100,6 +113,8 @@ export function loadConfig({ root, argv = process.argv, env = process.env }) {
     routerBase,
     rpcUrl,
     rpcWsUrl,
+    routerEvmBase,
+    evmRpc,
     priorityMaxLamports: Number.isFinite(priorityMax) && priorityMax >= 0 ? Math.floor(priorityMax) : 500_000,
     allowSplit: env.SWAP_ALLOW_SPLIT === "1",
     maxSlippageBps: Number.isInteger(slipCap) && slipCap >= 0 && slipCap <= 10_000 ? slipCap : 5000,

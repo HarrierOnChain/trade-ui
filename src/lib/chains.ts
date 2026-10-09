@@ -49,11 +49,10 @@ export function isEvmChain(id: ChainId): boolean {
   return chainFamily(id) === "evm";
 }
 
-/** Swaps run on the Solana router only (src/api/localTrade.ts): the EVM
- *  router does not quote yet, so EVM chains show market data without
- *  trade buttons. */
+/** Whether the terminal trades on `id`: Solana on the Solana router, the EVM
+ *  chains on the EVM router (src/api/localTrade.ts). Every chain does. */
 export function swapsOn(id: ChainId = getActiveChain()): boolean {
-  return id === "sol";
+  return isChainId(id);
 }
 
 export function coerceChainId(v: unknown): ChainId {

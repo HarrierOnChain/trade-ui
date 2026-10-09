@@ -158,7 +158,7 @@ export default function WalletsPage() {
           {family === "evm" && (
             <p style={{ margin: 0, padding: "0 16px 12px", fontSize: 11.5, color: "var(--paper-4)", lineHeight: 1.5 }}>
               One EVM key works on Ethereum, BNB Chain, Base and Robinhood with the same address.
-              Trading on EVM chains waits for the EVM router; balances and holdings already show.
+              It trades on all four through the Raze EVM router; sending coins runs on Solana for now.
             </p>
           )}
 

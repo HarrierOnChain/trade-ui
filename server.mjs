@@ -6,8 +6,8 @@
  *
  * Everything under `/api/` needs a session, given out for the vault's
  * password (server/api.mjs, server/gate.mjs): the proxies that carry the Raze
- * API key (`/api/raze/*`, `/api/ws`), the router, the Solana RPC and the
- * wallets. Pages and static files are public: they are the open-source app,
+ * API key (`/api/raze/*`, `/api/ws`), the routers (Solana and EVM), the RPCs
+ * and the wallets. Pages and static files are public: they are the open-source app,
  * and show the lock screen until the browser is unlocked.
  *
  * Configuration comes from the environment and `.env` (server/config.mjs).
@@ -22,6 +22,7 @@ import { Vault } from "./server/vault.mjs";
 import { Auth } from "./server/auth.mjs";
 import { createSolana } from "./server/solana.mjs";
 import { createQuotes } from "./server/quotes.mjs";
+import { createEvm } from "./server/evm.mjs";
 import { createApi, sendError } from "./server/api.mjs";
 import { createGate } from "./server/gate.mjs";
 
@@ -50,18 +51,20 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf
 let gate;
 const vault = new Vault({ dir: config.dataDir });
 const quotes = createQuotes(config);
+const evm = createEvm(config);
 const auth = new Auth({
   vault,
   onLock: (reason) => {
     gate?.closeSockets();
     quotes.book.clear();
+    evm.book.clear();
     console.log(`[trade-ui] locked (${reason})`);
   },
 });
 auth.startIdleTimer();
 
 const solana = createSolana(config);
-const api = createApi({ vault, auth, solana, quotes, config, setupToken: () => config.setupToken, version: VERSION });
+const api = createApi({ vault, auth, solana, quotes, evm, config, setupToken: () => config.setupToken, version: VERSION });
 
 const { default: next } = await import("next");
 let conf;
@@ -102,7 +105,7 @@ server.listen(config.port, config.host, async () => {
   if (!config.loopbackOnly && !config.publicUrl) {
     lines.push(`  ! listening on ${config.host}: put it behind HTTPS (see README) and set TRADE_UI_PUBLIC_URL`);
   }
-  for (const [name, u] of [["RAZE_API_BASE", config.apiBase], ["RAZE_ROUTER_BASE", config.routerBase]]) {
+  for (const [name, u] of [["RAZE_API_BASE", config.apiBase], ["RAZE_ROUTER_BASE", config.routerBase], ["RAZE_ROUTER_EVM_BASE", config.routerEvmBase]]) {
     const h = new URL(u).hostname;
     if (u.startsWith("http:") && h !== "localhost" && h !== "127.0.0.1" && h !== "::1" && !h.startsWith("10.")) {
       lines.push(`  ! ${name} is plain http on a remote host: the API key would cross the network readable`);

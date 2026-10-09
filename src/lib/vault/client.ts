@@ -40,7 +40,10 @@ export interface AuthStatus {
 export interface RuntimeConfig {
   apiBase: string;
   routerBase: string;
+  routerEvmBase: string;
   rpcHost: string;
+  /** the host of each EVM chain's RPC */
+  evmRpcHosts: Record<string, string>;
   apiKeyConfigured: boolean;
   vaultFile: string;
   recoveryKeySet: boolean;
@@ -84,7 +87,7 @@ export function announceLocked(): void {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(LOCKED_EVENT));
 }
 
-async function request<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown): Promise<T> {
+async function request<T>(method: "GET" | "POST" | "PATCH", path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
   if (method !== "GET") {
     headers["x-trade-ui"] = "1";
@@ -98,8 +101,10 @@ async function request<T>(method: "GET" | "POST" | "PATCH", path: string, body?:
       body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
       cache: "no-store",
       credentials: "same-origin",
+      signal,
     });
-  } catch {
+  } catch (e) {
+    if (signal?.aborted) throw e;
     throw new ApiError(0, "offline", "Trade UI's server is not reachable");
   }
   let j: unknown = null;
@@ -181,9 +186,11 @@ export const vault = {
     await vault.list();
   },
   exportKey: (id: string, password: string) => request<ExportedKey>("POST", `/api/wallets/${id}/export`, { password }),
-  /** Build the server's kept quote on the router, sign it there, send it. */
+  /** Build the server's kept quote on the router (the Solana one, or the
+   *  EVM one for an EVM wallet), sign it there, send it. On EVM `signature`
+   *  is the swap's transaction hash. */
   swap: (id: string, quoteToken: string, priorityFeeLamports?: number) =>
-    request<{ signature: string; lastValidBlockHeight: number | null }>("POST", `/api/wallets/${id}/swap`, {
+    request<{ signature: string; lastValidBlockHeight?: number | null }>("POST", `/api/wallets/${id}/swap`, {
       quoteToken,
       priorityFeeLamports,
     }),
@@ -194,4 +201,45 @@ export const vault = {
       ...(lamports === "max" ? { amount: "max" } : { lamports }),
       password,
     }),
+};
+
+// ── EVM swaps (server/evm.mjs) ──────────────────────────────────────────
+
+export type EvmAsset = { kind: "native" } | { kind: "erc20"; address: string };
+
+/** `native` or the token's lowercase address. */
+export function evmAssetId(a: EvmAsset): string {
+  return a.kind === "native" ? "native" : a.address.toLowerCase();
+}
+
+/** The EVM router's quote, kept by this Trade UI's server under `quoteToken`. */
+export interface EvmQuote {
+  quoteToken: string;
+  quoteId: string;
+  chain: string;
+  chainId: number;
+  tokenIn: EvmAsset;
+  tokenOut: EvmAsset;
+  amountIn: string;
+  amountOut: string;
+  minimumAmountOut: string;
+  slippageBps: number;
+  route:
+    | { kind: "swap"; venue: string; protocol: string; router: string; tokens: string[]; fees: number[]; pools: string[] }
+    | { kind: "wrap" | "unwrap"; contract: string };
+  gasEstimate: string;
+  expiresAt: string;
+  candidates: number;
+}
+
+export const evmRoutes = {
+  quote: (q: { chain: string; tokenIn: string; tokenOut: string; amountIn: string; slippageBps: number }, signal?: AbortSignal) =>
+    request<EvmQuote>("GET", `/api/evm/quote?${new URLSearchParams({ ...q, slippageBps: String(q.slippageBps) })}`, undefined, signal),
+  /** `owner`'s balance of `token` (`native` or a 0x address), raw, and its
+   *  decimals; with `owner` empty, the decimals only. */
+  balance: (chain: string, owner: string, token: string) =>
+    request<{ raw: string | null; decimals: number }>("GET", `/api/evm/balance?${new URLSearchParams({ chain, owner, token })}`),
+  /** Resolves once the transaction is in a block and succeeded; throws if it reverted. */
+  confirm: (chain: string, hash: string) =>
+    request<{ status: "confirmed"; block: number | null; gasUsed: string | null }>("POST", "/api/evm/confirm", { chain, hash }),
 };

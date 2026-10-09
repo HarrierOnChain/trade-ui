@@ -18,8 +18,12 @@
  *   POST /api/wallets/:id/delete     session + password
  *   POST /api/wallets/:id/export     session + password
  *   POST /api/wallets/:id/swap       session: build a kept quote, sign, send
+ *                                    (Solana or EVM, by the wallet's family)
  *   POST /api/wallets/:id/send       session + password: SOL transfer
- *   GET  /api/swap/quote             session: the router's quote, kept here
+ *   GET  /api/swap/quote             session: the Solana router's quote, kept here
+ *   GET  /api/evm/quote              session: the EVM router's quote, kept here
+ *   GET  /api/evm/balance            session: an EVM wallet's balance of a token
+ *   POST /api/evm/confirm            session: wait for an EVM transaction's receipt
  *
  * Every other `/api/*` path needs a session too and goes on to Next.js.
  */
@@ -27,6 +31,7 @@ import crypto from "node:crypto";
 import { KeyError, exportFormats } from "./keys.mjs";
 import { AUTO_LOCK_CHOICES, VaultError, checkNewPassword, parseRecoveryKey } from "./vault.mjs";
 import { SolanaError } from "./solana.mjs";
+import { EvmError } from "./evm.mjs";
 import { QuoteError } from "./quotes.mjs";
 import { Auth, clientAddress, sessionCookie } from "./auth.mjs";
 
@@ -99,12 +104,13 @@ const WALLET_ROUTE = /^\/api\/wallets\/(w_[0-9a-f]{16})(?:\/(delete|export|swap|
  *   auth: import("./auth.mjs").Auth,
  *   solana: ReturnType<typeof import("./solana.mjs").createSolana>,
  *   quotes: ReturnType<typeof import("./quotes.mjs").createQuotes>,
+ *   evm: ReturnType<typeof import("./evm.mjs").createEvm>,
  *   config: any,
  *   setupToken: () => string,
  *   version: string,
  * }} deps
  */
-export function createApi({ vault, auth, solana, quotes, config, setupToken, version }) {
+export function createApi({ vault, auth, solana, quotes, evm, config, setupToken, version }) {
   const ipKey = (req) => `ip:${clientAddress(req)}`;
   const cookieOpts = (req) => ({ secure: isSecure(req, config) });
 
@@ -256,7 +262,9 @@ export function createApi({ vault, auth, solana, quotes, config, setupToken, ver
     sendJson(res, 200, {
       apiBase: config.apiBase,
       routerBase: config.routerBase,
+      routerEvmBase: config.routerEvmBase,
       rpcHost: hostOnly(config.rpcUrl),
+      evmRpcHosts: Object.fromEntries(Object.entries(config.evmRpc).map(([c, r]) => [c, hostOnly(r.http)])),
       apiKeyConfigured: Boolean(config.apiKey),
       vaultFile: vault.file,
       recoveryKeySet: vault.hasRecoveryKey,
@@ -302,6 +310,29 @@ export function createApi({ vault, auth, solana, quotes, config, setupToken, ver
     }
   }
 
+  /** The EVM router's quote, kept here; errors as `{ error: { code, message } }`. */
+  async function evmQuote(req, res) {
+    requireSession(req);
+    const url = new URL(req.url || "/", "http://local");
+    const out = await evm.quote(url.searchParams);
+    sendJson(res, out.status, out.body);
+  }
+
+  async function evmBalance(req, res) {
+    requireSession(req);
+    const sp = new URL(req.url || "/", "http://local").searchParams;
+    sendJson(res, 200, await evm.balance(sp.get("chain") || "", sp.get("owner") || "", sp.get("token") || ""));
+  }
+
+  /** Held open until the receipt (or the timeout): the lock ends it. */
+  async function evmConfirm(req, res) {
+    requireSession(req);
+    const body = await readJson(req);
+    const gone = new AbortController();
+    res.once("close", () => gone.abort());
+    sendJson(res, 200, await evm.confirm(String(body.chain || ""), body.hash, { signal: gone.signal }));
+  }
+
   async function walletRoute(req, res, id, action) {
     const token = requireSession(req);
     if (!action && req.method === "PATCH") {
@@ -339,8 +370,15 @@ export function createApi({ vault, auth, solana, quotes, config, setupToken, ver
       auth.touch();
       return sendJson(res, 200, { id: w.id, family: w.family, address: w.address, ...exportFormats(w.family, w.secret) });
     }
-    if (w.family !== "sol") throw new HttpError(400, "unsupported_chain", "Trading and sending run on Solana for now");
     if (w.watchOnly) throw new HttpError(400, "watch_only", "Watch-only wallet: import its key to trade or send");
+    if (w.family === "evm") {
+      if (action !== "swap") throw new HttpError(400, "unsupported_chain", "Sending runs on Solana for now: EVM wallets swap");
+      const kept = evm.book.get(body.quoteToken);
+      if (!kept) throw new HttpError(409, "quote_expired", "That quote expired: get a new one");
+      auth.touch();
+      return sendJson(res, 200, await evm.swap(w, kept, { stillUnlocked }));
+    }
+    if (w.family !== "sol") throw new HttpError(400, "unsupported_chain", "Unknown wallet type");
     if (action === "swap") {
       const quote = quotes.book.get(body.quoteToken);
       if (!quote) throw new HttpError(409, "quote_expired", "That quote expired: get a new one");
@@ -369,6 +407,9 @@ export function createApi({ vault, auth, solana, quotes, config, setupToken, ver
     "POST /api/auth/settings": settings,
     "GET /api/config": runtimeConfig,
     "GET /api/swap/quote": swapQuote,
+    "GET /api/evm/quote": evmQuote,
+    "GET /api/evm/balance": evmBalance,
+    "POST /api/evm/confirm": evmConfirm,
     "GET /api/wallets": listWallets,
     "POST /api/wallets/generate": generate,
     "POST /api/wallets/import": importWallets,
@@ -381,7 +422,8 @@ export function createApi({ vault, auth, solana, quotes, config, setupToken, ver
   return async function handle(req, res, pathname) {
     const fn = routes[`${req.method} ${pathname}`];
     const m = fn ? null : WALLET_ROUTE.exec(pathname);
-    const ours = fn || m || pathname.startsWith("/api/auth/") || pathname === "/api/wallets" || pathname.startsWith("/api/wallets/");
+    const ours = fn || m || pathname.startsWith("/api/auth/") || pathname === "/api/wallets" || pathname.startsWith("/api/wallets/")
+      || pathname.startsWith("/api/evm/");
     if (!ours) return false;
     try {
       if (fn) await fn(req, res);
@@ -396,6 +438,7 @@ export function createApi({ vault, auth, solana, quotes, config, setupToken, ver
       else if (e instanceof VaultError) sendError(res, e.status, e.code, e.message);
       else if (e instanceof KeyError) sendError(res, 400, e.code, e.message);
       else if (e instanceof SolanaError) sendError(res, e.status, e.code, e.message);
+      else if (e instanceof EvmError) sendError(res, e.status, e.code, e.message);
       else if (e instanceof QuoteError) sendError(res, e.status, e.code, e.message);
       else {
         console.error("[trade-ui] request failed:", e);

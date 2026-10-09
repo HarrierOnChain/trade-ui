@@ -32,6 +32,8 @@ import { InstantTradePanel } from "./InstantTradePanel";
 import { TokenMetricsGrid } from "./TokenMetricsGrid";
 import { SOL_MINT, toRaw, toUi, viaLabel } from "../../lib/swap/quote";
 import { useDocumentHidden, useMintDecimals, useSwapQuote } from "../../lib/swap/useSwapQuote";
+import { useEvmDecimals, useEvmQuote } from "../../lib/evm/useEvmQuote";
+import { EXACT_OUT_EVM } from "../../lib/evm/plan";
 import { explorerTxUrl } from "../../lib/chains";
 
 const MIN_TRANSACTIONS_FEE_LAMPORTS = 100_000;
@@ -140,18 +142,15 @@ export function TradingPanel({ mint }: Props) {
   }, [effectiveWallets, userWallets.balances, mint, activeQuote.mint]);
 
   // ── Trade execution paths ──────────────────────────────────────────
-  // Market trades run on the Raze Solana router: per wallet one quote, then
-  // the server builds, signs with the vault's key and sends; the browser
-  // confirms. All wallets at once (src/api/localTrade.ts).
+  // Market trades run on the Raze routers (Solana, or EVM on Ethereum, BNB
+  // Chain, Base and Robinhood): per wallet one quote, then the server builds,
+  // signs with the vault's key and sends; then the confirmation. All wallets
+  // at once (src/api/localTrade.ts).
   async function placeMarketTrade(
     thisSide: Side,
     amountInput: string,
     denom: "quote" | "token" | "percent",
   ) {
-    if (!onSol) {
-      pushToast({ title: "SOLANA ONLY", body: "Swaps run on the Solana router: the EVM router does not quote yet.", tone: "sell" });
-      return;
-    }
     const n = parseFloat(String(amountInput).replace("%", ""));
     if (!isFinite(n) || n <= 0) {
       pushToast({ title: "ENTER AMOUNT", body: "Amount must be greater than 0", tone: "sell" });
@@ -263,7 +262,48 @@ export function TradingPanel({ mint }: Props) {
     paused: tabHidden || busy,
     pollMs: 2_000,
   });
+  // EVM: the EVM router's quote for one wallet's trade. It quotes exact
+  // amounts in only: buying a token amount or selling for a quote amount
+  // says so instead.
+  const evmToken = !onSol && /^0x[0-9a-fA-F]{40}$/.test(mint) ? mint.toLowerCase() : null;
+  const evmTokenDecimals = useEvmDecimals(chainId, evmToken);
+  const evmExactOut = !onSol && (side === "buy") === (previewDenom === "token");
+  const evmQuoteToken = activeQuote.mint ? activeQuote.mint.toLowerCase() : "native";
+  const evmReq = useMemo(() => {
+    if (onSol || !evmToken || evmExactOut) return null;
+    const n = parseFloat(typed);
+    if (!isFinite(n) || n <= 0) return null;
+    const text = n.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
+    if (side === "buy") return { tokenIn: evmQuoteToken, tokenOut: evmToken, amountIn: toRaw(text, activeQuote.decimals) };
+    if (evmTokenDecimals == null) return null;
+    return { tokenIn: evmToken, tokenOut: evmQuoteToken, amountIn: toRaw(text, evmTokenDecimals) };
+  }, [onSol, evmToken, evmExactOut, typed, side, evmQuoteToken, activeQuote.decimals, evmTokenDecimals]);
+  const evmPreview = useEvmQuote({
+    chain: chainId,
+    tokenIn: evmReq?.tokenIn ?? null,
+    tokenOut: evmReq?.tokenOut ?? null,
+    amountIn: evmReq?.amountIn ?? null,
+    slippageBps: clampSlippageBps(slipBps),
+    paused: tabHidden || busy,
+  });
+  const evmPreviewText = (() => {
+    if (onSol) return null;
+    if (evmExactOut) return parseFloat(typed) > 0 ? EXACT_OUT_EVM : null;
+    if (!evmReq) return null;
+    if (evmPreview.noRoute) return "No route on the EVM router";
+    const q = evmPreview.quote;
+    if (!q) return evmPreview.status === "error" ? evmPreview.error : "Quoting…";
+    const tokDec = evmTokenDecimals;
+    const tok = (raw: string) => (tokDec != null ? fmtNum(toUi(BigInt(raw), tokDec)) : "…");
+    const qt = (raw: string) => toUi(BigInt(raw), activeQuote.decimals).toLocaleString("en-US", { maximumFractionDigits: 6 });
+    const head = side === "buy"
+      ? `${qt(q.amountIn)} ${activeQuote.label} → ${tok(q.amountOut)} ${symbolLabel}`
+      : `${tok(q.amountIn)} ${symbolLabel} → ${qt(q.amountOut)} ${activeQuote.label}`;
+    const min = side === "buy" ? `${tok(q.minimumAmountOut)} ${symbolLabel}` : `${qt(q.minimumAmountOut)} ${activeQuote.label}`;
+    return `${head} · min ${min} · ${q.route.kind === "swap" ? q.route.venue : q.route.kind}`;
+  })();
   const previewText = (() => {
+    if (!onSol) return evmPreviewText;
     if (!previewReq) return null;
     if (preview.noRoute) return preview.noRouteText ?? "No route";
     const pq = preview.quote;
@@ -611,17 +651,17 @@ export function TradingPanel({ mint }: Props) {
         </Tooltip>
       </div>
 
-      {(previewText || !onSol) && (
+      {previewText && (
         <div
-          title={onSol ? "Live router quote for one wallet's trade" : undefined}
+          title="Live router quote for one wallet's trade"
           style={{
             padding: "0 12px 8px",
             fontSize: 10.5, fontFamily: "var(--font-mono)",
-            color: preview.noRoute || !onSol ? "var(--sell)" : "var(--paper-3)",
+            color: (onSol ? preview.noRoute : evmPreview.noRoute || evmExactOut) ? "var(--sell)" : "var(--paper-3)",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}
         >
-          {onSol ? previewText : "Swaps run on Solana for now: the EVM router does not quote yet."}
+          {previewText}
         </div>
       )}
 
@@ -630,7 +670,6 @@ export function TradingPanel({ mint }: Props) {
           onClick={onSubmit}
           disabled={
             busy ||
-            !onSol ||
             effectiveKind === "none" ||
             !(side === "buy" ? buyAmount : sellAmount)
           }
@@ -694,7 +733,7 @@ export function TradingPanel({ mint }: Props) {
       )}
 
       <InstantTradePanel
-        isOpen={floatingOpen && onSol}
+        isOpen={floatingOpen}
         onClose={() => setFloatingOpen(false)}
         mint={mint}
         buyQuote={buyInputMint}

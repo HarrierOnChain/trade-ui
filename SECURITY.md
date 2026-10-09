@@ -52,8 +52,14 @@ same browser…) and what they get.
   point of a trading terminal.
 - **What the server signs.** Only (1) a swap transaction it has just received
   from the configured router (`RAZE_ROUTER_BASE`) for that wallet, after
-  checking that the wallet is its one and only signer, and (2) a SOL transfer
-  it builds itself. There is no endpoint that signs bytes sent by the browser.
+  checking that the wallet is its one and only signer, (2) on the EVM chains,
+  the approvals and swap the EVM router (`RAZE_ROUTER_EVM_BASE`) has just
+  built for that wallet, after its simulation passed and after checking each
+  one: this wallet and chain, approvals only of the input token, only to the
+  venue's router named in the quote and for at most the amount, the swap to
+  that router with the quote's value, and a bounded gas limit; and (3) a SOL
+  transfer it builds itself. There is no endpoint that signs bytes sent by the
+  browser.
 - **What a swap may be.** The quote is the router's: the server asks for it,
   keeps it for a minute and gives the browser a random token for it. A trade
   names the token, and the router builds that quote as it gave it: a browser
