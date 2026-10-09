@@ -1,45 +1,5 @@
-// Trading-panel preset model + defaults. Persisted via the backend
-// `/preferences` store (see useUserPreference). Solana-ui's "DEGEN /
-// DIAMOND / YOLO" tabs are kept as the seed values so a fresh login
-// matches the source UI on first paint.
-
-export interface PresetTab {
-  id: string;
-  label: string;
-  buyPresets: string[];   // SOL, per-wallet (or total — see InputMode)
-  sellPresets: string[];  // percentage strings ("25" = 25%)
-}
-
-export interface PresetState {
-  tabs: PresetTab[];
-  activeTabId: string;
-}
-
-export const defaultPresetTabs: PresetTab[] = [
-  {
-    id: "degen",
-    label: "DEGEN",
-    buyPresets: ["0.01", "0.05", "0.1", "0.5"],
-    sellPresets: ["25", "50", "75", "100"],
-  },
-  {
-    id: "diamond",
-    label: "DIAMOND",
-    buyPresets: ["0.001", "0.01", "0.05", "0.1"],
-    sellPresets: ["10", "25", "50", "75"],
-  },
-  {
-    id: "yolo",
-    label: "YOLO",
-    buyPresets: ["0.1", "0.5", "1", "5"],
-    sellPresets: ["50", "75", "90", "100"],
-  },
-];
-
-export const defaultPresetState: PresetState = {
-  tabs: defaultPresetTabs,
-  activeTabId: "degen",
-};
+// Trading-panel presets and preference keys, kept in this browser's
+// localStorage (see useUserPreference).
 
 // "0.01-0.05" — randomized buy size between min/max each fire.
 export function resolvePresetValue(value: string): string {
@@ -73,9 +33,7 @@ export function isValidPresetValue(val: string): boolean {
   return false;
 }
 
-export type InputMode = "perWallet" | "cumulative";
 export type Side = "buy" | "sell";
-export type OrderType = "market" | "limit" | "adv" | "mm";
 
 // ── Instant-trade panel (b33 InstantTradePanel design) ─────────────
 // Five numbered presets P1..P5, each holding up to 8 buy + 8 sell
@@ -113,21 +71,12 @@ export const defaultInstantPresets: InstantPresets = {
   },
 };
 
-// Backend preference keys — namespaced, version-suffixed so we can evolve
-// the shape without breaking already-stored values.
+// Preference keys — namespaced, version-suffixed so we can evolve the shape
+// without breaking already-stored values.
 export const PREF_KEYS = {
-  presets: "trading.presets.v1",
   buyAmount: "trading.buyAmount.v1",
-  buyInputMode: "trading.buyInputMode.v1",
-  sellInputMode: "trading.sellInputMode.v1",
   slippageBps: "trading.slippageBps.v1",
   transactionsFee: "trading.transactionsFeeLamports.v1",
-  // User-set fixed platform fee (lamports) → admin fee wallet. Formerly the
-  // mislabeled "MEV tip" chip.
-  fixedFee: "trading.fixedFeeLamports.v1",
-  // MEV protection: relay trades as a sponsor-tipped Jito bundle.
-  mevProtection: "trading.mevProtection.v1",
-  floatingPos: "trading.floatingPos.v1",
   floatingOpen: "trading.floatingOpen.v1",
   instantPresets: "trading.instantPresets.v1",
   instantActivePreset: "trading.instantActivePreset.v1",

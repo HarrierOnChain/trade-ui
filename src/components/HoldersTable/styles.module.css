@@ -31,12 +31,10 @@
    table width; min-width on .table caps how narrow the row can
    get before horizontal scroll kicks in. */
 .cRank    { width: 5%;  }
-.cWallet  { width: 22%; }
-.cFunding { width: 10%; }
-.cNum     { width: 13%; }
-.cPnl     { width: 11%; }
-.cHeld    { width: 19%; }
-.cAge     { width: 7%;  }
+.cWallet  { width: 30%; }
+.cNum     { width: 15%; }
+.cPnl     { width: 14%; }
+.cHeld    { width: 21%; }
 
 /* ── Header ──────────────────────────────────────────────────── */
 .table thead th {
@@ -260,9 +258,6 @@
   text-align: right;
   letter-spacing: 0.02em;
 }
-
-/* ── Funding cell ────────────────────────────────────────────── */
-.fundingCell { display: flex; align-items: center; }
 
 /* ── States ──────────────────────────────────────────────────── */
 .error  { padding: 20px; color: var(--sell); text-align: center; font-size: 12px; }

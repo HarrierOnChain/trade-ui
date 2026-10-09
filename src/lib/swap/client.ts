@@ -1,15 +1,15 @@
 /**
- * Browser side of the swap routes: `/api/swap/*` (the Solana router) and
- * `/api/solana/rpc` + `/api/solana/ws` (the RPC that sends and confirms).
+ * Browser side of the swap routes: `/api/swap/*` (quotes and venues on the
+ * Solana router) and `/api/solana/rpc` + `/api/solana/ws` (the RPC reads a
+ * trade needs, and the confirmation). Building, signing and sending happen on
+ * the server (`/api/wallets/{id}/swap`, src/lib/vault/client.ts).
  */
 import { withBasePath } from "../basePath";
 import {
   SOL_MINT,
   USDC_MINT,
-  describeBuildError,
   type ErrorBody,
   type RouterQuote,
-  type SwapBuild,
   type VenueInfo,
 } from "./quote";
 
@@ -21,8 +21,6 @@ export interface QuoteRequest {
   slippageBps: number;
   /** venue labels to keep out of the route */
   excludeDexes?: string[];
-  /** keys the route must leave free out of 64 (V0_RESERVE_KEYS for a v0 wallet) */
-  reserveKeys?: number;
 }
 
 export type QuoteResult =
@@ -38,7 +36,6 @@ export async function fetchQuote(req: QuoteRequest, signal?: AbortSignal): Promi
   });
   if (req.swapMode === "ExactOut") q.set("swapMode", "ExactOut");
   if (req.excludeDexes?.length) q.set("excludeDexes", req.excludeDexes.join(","));
-  if (req.reserveKeys) q.set("reserveKeys", String(req.reserveKeys));
   const r = await fetch(withBasePath(`/api/swap/quote?${q}`), { signal, cache: "no-store" });
   let body: unknown = null;
   try {
@@ -80,33 +77,11 @@ export async function fetchVenues(): Promise<VenueInfo[]> {
   return j.data;
 }
 
-/** The unsigned transaction for `wallet`, built from exactly `quote`. `v0`
- *  also asks for the v0 form (a browser wallet that cannot sign v1). */
-export async function buildSwap(
-  wallet: string,
-  quote: RouterQuote,
-  opts: { priorityFeeLamports?: number; v0?: boolean } = {},
-): Promise<SwapBuild> {
-  const r = await fetch(withBasePath("/api/swap/build"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ wallet, quote, priorityFeeLamports: opts.priorityFeeLamports, v0: opts.v0 === true }),
-  });
-  let j: { data?: SwapBuild } & ErrorBody;
-  try {
-    j = await r.json();
-  } catch {
-    throw new Error(`router unavailable (${r.status})`);
-  }
-  if (!r.ok || !j.data) throw new Error(describeBuildError(r.status, j));
-  return j.data;
-}
-
 /** One JSON-RPC call through `/api/solana/rpc` (whitelisted methods only). */
 export async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
   const r = await fetch(withBasePath("/api/solana/rpc"), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-trade-ui": "1" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
   let j: { result?: T; error?: { message?: string; data?: { err?: unknown } } | string; reason?: string };
@@ -125,16 +100,6 @@ export async function rpcCall<T>(method: string, params: unknown[]): Promise<T> 
     throw new Error(`${j.error.message || "RPC error"}${detail}`);
   }
   return j.result as T;
-}
-
-/** Send a signed transaction (base64); resolves to its signature. */
-export function sendSigned(b64: string): Promise<string> {
-  // skipPreflight false: a swap that would fail (slippage, balance) is refused
-  // by the RPC's simulation instead of paying a fee on chain.
-  return rpcCall<string>("sendTransaction", [
-    b64,
-    { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 3 },
-  ]);
 }
 
 type SigStatus = { state: "pending" | "confirmed" } | { state: "failed"; err: unknown };
@@ -160,11 +125,11 @@ function solanaWsUrl(): string {
 
 /**
  * Wait for `sig` to reach `confirmed`. Push first: `signatureSubscribe` on the
- * RPC's WebSocket (`/api/solana/ws`, served by server.cjs), plus one status
+ * RPC's WebSocket (`/api/solana/ws`, served by server.mjs), plus one status
  * read right after subscribing for a transaction that landed before the
- * subscription. Only when no socket can be opened (plain `next dev`) does it
- * fall back to reading the status every 1.5 s. Throws on an on-chain failure
- * or the timeout.
+ * subscription. Only when no socket can be opened does it fall back to
+ * reading the status every 1.5 s. Throws on an on-chain failure or the
+ * timeout.
  */
 export function confirmSignature(sig: string, timeoutMs = 60_000): Promise<void> {
   return new Promise((resolve, reject) => {

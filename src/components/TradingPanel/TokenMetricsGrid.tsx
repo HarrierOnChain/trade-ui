@@ -3,7 +3,6 @@
 import React, { useMemo } from "react";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useHolders } from "../../hooks/useHolders";
-import { useDexPaid } from "../../hooks/useDexPaid";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import {
   computeTokenMetrics,
@@ -23,7 +22,6 @@ export function TokenMetricsGrid({ mint }: Props) {
   const isPhone = useIsPhone();
   const { info } = useTokenInfo(mint);
   const { holders: holderRows, supply } = useHolders(mint);
-  const { dexPaid, dexscreenerUrl } = useDexPaid(mint);
   const liveMap = useLiveTradePrices(useMemo(() => [mint], [mint]));
   const live = liveMap.get(mint);
   const token = (info ?? {}) as TokenEvent;
@@ -37,17 +35,11 @@ export function TokenMetricsGrid({ mint }: Props) {
     });
   }, [token, live, holderRows, supply]);
 
-  const dexPaidKnown = typeof dexPaid === "boolean";
-  const dexPaidValue = dexPaidKnown
-    ? (dexPaid ? "YES" : "NO")
-    : "—";
-
   const cells: Array<{
     icon: React.ReactNode;
     value: React.ReactNode;
     label: string;
     tone?: "buy" | "sell" | "warn" | "paper";
-    href?: string;
   }> = [
     {
       icon: <UsersIcon size={12} />,
@@ -79,13 +71,6 @@ export function TokenMetricsGrid({ mint }: Props) {
       label: "Holders",
       tone: "paper",
     },
-    {
-      icon: <ShieldIcon size={12} />,
-      value: dexPaidValue,
-      label: "Dexscreener",
-      tone: dexPaid === true ? "buy" : "paper",
-      href: dexPaid === true ? dexscreenerUrl : undefined,
-    },
   ];
 
   return (
@@ -104,30 +89,18 @@ export function TokenMetricsGrid({ mint }: Props) {
 }
 
 function StatCard({
-  icon, value, label, tone = "paper", href,
+  icon, value, label, tone = "paper",
 }: {
   icon: React.ReactNode;
   value: React.ReactNode;
   label: string;
   tone?: "buy" | "sell" | "warn" | "paper";
-  href?: string;
 }) {
   const valueColor =
     tone === "buy" ? "var(--buy)"
       : tone === "sell" ? "var(--sell)"
       : tone === "warn" ? "var(--warn)"
       : "var(--paper)";
-  const valueNode = (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4,
-      fontSize: 13, fontWeight: 600,
-      color: valueColor,
-      fontFamily: "var(--font-mono)",
-    }}>
-      <span style={{ color: valueColor, lineHeight: 0 }}>{icon}</span>
-      {value}
-    </span>
-  );
   return (
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -137,17 +110,15 @@ function StatCard({
       border: "1px solid var(--line-soft)",
       borderRadius: 6,
     }}>
-      {href ? (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="DexScreener Enhanced Info"
-          style={{ textDecoration: "none", color: "inherit" }}
-        >
-          {valueNode}
-        </a>
-      ) : valueNode}
+      <span style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 13, fontWeight: 600,
+        color: valueColor,
+        fontFamily: "var(--font-mono)",
+      }}>
+        <span style={{ color: valueColor, lineHeight: 0 }}>{icon}</span>
+        {value}
+      </span>
       <span className="eyebrow">{label}</span>
     </div>
   );
@@ -198,14 +169,6 @@ function PeopleIcon({ size = 12 }: { size?: number }) {
       <circle cx="5.5" cy="5" r="2" stroke="currentColor" strokeWidth="1.2" />
       <circle cx="10.5" cy="5" r="2" stroke="currentColor" strokeWidth="1.2" />
       <path d="M1.5 13c0-2 1.8-3.5 4-3.5M10.5 9.5c2.2 0 4 1.5 4 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function ShieldIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M8 1.5L3 3.5v4c0 3 2.2 5.5 5 6.5 2.8-1 5-3.5 5-6.5v-4L8 1.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
     </svg>
   );
 }

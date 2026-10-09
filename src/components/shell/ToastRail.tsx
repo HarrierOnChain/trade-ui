@@ -1,7 +1,6 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { useApp } from "../../contexts/AppContext";
-import { Icon } from "../atoms";
 import { useIsPhone } from "../../hooks/useMediaQuery";
 import {
   toastRailStyle,
@@ -42,7 +41,6 @@ export function ToastRail() {
 type ToneKey = "buy" | "sell" | "default";
 
 function ToastCard({ toast: t }: { toast: ReturnType<typeof useApp>["toasts"][number] }) {
-  const [muted, setMuted] = useState(false);
   const [sound] = useNotifSound();
   const [volume] = useNotifVolume();
   const tone: ToneKey = t.tone ?? "default";
@@ -54,12 +52,6 @@ function ToastCard({ toast: t }: { toast: ReturnType<typeof useApp>["toasts"][nu
     if (sound) playNotifTone(tone, volume / 100);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  function handleMute(e: React.MouseEvent) {
-    e.stopPropagation();
-    t.onMute?.();
-    setMuted(true);
-  }
 
   return (
     <div
@@ -77,17 +69,6 @@ function ToastCard({ toast: t }: { toast: ReturnType<typeof useApp>["toasts"][nu
           <span className="toast-card__kicker-sep" aria-hidden="true">·</span>
           <span className="toast-card__msg">{t.body}</span>
         </>
-      )}
-      {t.onMute && (
-        <button
-          type="button"
-          onClick={handleMute}
-          className="toast-card__mute"
-          title={muted ? "Muted" : "Mute this wallet's alerts"}
-          aria-pressed={muted}
-        >
-          {Icon.eyeOff(12)}
-        </button>
       )}
       <span className="toast-card__progress" aria-hidden="true" />
     </div>

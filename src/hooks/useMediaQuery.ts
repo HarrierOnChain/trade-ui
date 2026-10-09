@@ -50,22 +50,3 @@ export function useIsMobile(): boolean {
 export function useIsPhone(): boolean {
   return useMediaQuery(`(max-width: ${PHONE_BREAKPOINT}px)`);
 }
-
-/** True on tablet-sized screens only (481–768px). */
-export function useIsTablet(): boolean {
-  return useMediaQuery(`(min-width: ${PHONE_BREAKPOINT + 1}px) and (max-width: ${MOBILE_BREAKPOINT}px)`);
-}
-
-export type Breakpoint = "phone" | "tablet" | "desktop";
-
-/** Coarse breakpoint bucket for `isMobile ? … : …`-style structural branching. */
-export function useBreakpoint(): Breakpoint {
-  const phone = useIsPhone();
-  const mobile = useIsMobile();
-  return phone ? "phone" : mobile ? "tablet" : "desktop";
-}
-
-/** True on touch / coarse-pointer devices (independent of width). */
-export function useIsTouch(): boolean {
-  return useMediaQuery("(pointer: coarse)");
-}

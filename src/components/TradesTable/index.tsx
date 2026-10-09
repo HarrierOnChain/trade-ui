@@ -30,7 +30,7 @@ interface Props {
   signer?: string | null;
   devSigner?: string | null;
   /**
-   * Client-side signer filter for one wallet category (DEV / TRACKED / YOU).
+   * Client-side signer filter for one wallet category (DEV / YOU).
    * `null`/undefined means no category filter is active.
    */
   categorySigners?: Set<string> | null;
@@ -41,12 +41,6 @@ interface Props {
   timestampMinMs?: number | null;
   timestampMaxMs?: number | null;
   onTimestampRangeChange?: (range: { minMs: number | null; maxMs: number | null }) => void;
-  /**
-   * Extra trades to merge into the fetched list (de-duped by (signature, wallet)).
-   * Used for DEMO wallet fills which aren't on the upstream history
-   * feed but should still appear in the user's transaction view.
-   */
-  extraTrades?: Trade[];
   /** Optional trigger rendered next to the "Total SOL/USD" header (e.g. amount filter popover). */
   renderTotalHeaderSlot?: () => React.ReactNode;
   onCurrencyChange?: (c: "usd" | "sol") => void;
@@ -97,7 +91,6 @@ export function TradesTable({
   timestampMinMs,
   timestampMaxMs,
   onTimestampRangeChange,
-  extraTrades,
   renderTotalHeaderSlot,
   onCurrencyChange,
   onDisplayChange,
@@ -133,17 +126,16 @@ export function TradesTable({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [timestampFilterOpen]);
 
-  // Merge in any extra trades (e.g. DEMO fills): a tape row the extras hold
-  // (same signature and wallet) is taken from them; the tape's own rows all
-  // stay (co-signers, EVM legs). Then apply the category / amount filters.
+  // One row per leg (co-signers, EVM legs stay), sorted; then the category /
+  // amount filters apply.
   const merged = useMemo(() => {
-    const out = mergeTradeLists(extraTrades ?? [], trades);
+    const out = mergeTradeLists(trades);
     return out.sort((a, b) => {
       const ta = toMs(a.timestamp);
       const tb = toMs(b.timestamp);
       return sortAsc ? ta - tb : tb - ta;
     });
-  }, [trades, extraTrades, sortAsc]);
+  }, [trades, sortAsc]);
 
   const sorted = useMemo(() => {
     const hasCatFilter = categorySigners && categorySigners.size > 0;

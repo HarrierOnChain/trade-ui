@@ -1,28 +1,24 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, usePathname } from "next/navigation";
 import { useClientNav } from "./ClientPages";
-import { fetchTokenSupply, fetchWalletHoldings } from "../../api/client";
+import { fetchWalletHoldings } from "../../api/client";
 import { fetchPublicMetadata } from "../../api/metadata";
 import { queueBatchEnrich } from "../../lib/batchEnrichCoordinator";
 
-import { ChainHealthPopup, type SentimentTab } from "./ChainHealthPopup";
+import { ChainHealthPopup } from "./ChainHealthPopup";
 import { useChainSentiment } from "../../hooks/useChainSentiment";
 import { useSolPrice } from "../../hooks/useSolPrice";
-import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import { useChain } from "../../contexts/ChainContext";
 import { type ChainId, nativeSymbol } from "../../lib/chains";
 import { ChainIcon, Icon, PlatformLogo, TokenIcon, Tooltip } from "../atoms";
 import { TokenChartPopup } from "../TokenRow/TokenChartPopup";
-import { useRegion } from "../../contexts/RegionContext";
 import { useApp } from "../../contexts/AppContext";
 import { useTickerBar } from "../../hooks/useTickerBar";
 import { useIsPhone, useIsMobile } from "../../hooks/useMediaQuery";
-import { parseTokenPath, tokenHref } from "../../lib/tokenHref";
-import { fmtMcap, fmtNum, fmtUsd } from "../../lib/format";
-import { PORTFOLIO_STORAGE_KEY, readUserWallets } from "../../lib/trackerWallets";
-import { RegionPicker } from "./RegionPicker";
+import { tokenHref } from "../../lib/tokenHref";
+import { fmtNum, fmtUsd } from "../../lib/format";
+import { PORTFOLIO_STORAGE_KEY, readUserWallets } from "../../lib/userWalletsMirror";
 import { FooterTapeButtons } from "./TapeQuickBar";
 import type { LivePrice } from "../../hooks/useLiveTradePrices";
 import type { TokenEvent, TokenHolding } from "../../types";
@@ -38,63 +34,21 @@ const MIGRATION_FDV_NATIVE: Record<ChainId, number> = {
 };
 
 export function StatusFooter() {
-  const params = useParams<{ mint?: string }>();
-  const pathname = usePathname();
   const { chainId } = useChain();
   const solPrice = useSolPrice();
   const fps = useFps();
   const isPhone = useIsPhone();
   const isMobile = useIsMobile();
-  const paramMint = typeof params?.mint === "string" && params.mint
-    ? decodeURIComponent(params.mint)
-    : null;
-  const routeMint = useMemo(() => {
-    const parsed = parseTokenPath(pathname);
-    return parsed?.address ?? null;
-  }, [pathname]);
-  const isTokenPage = routeMint != null;
-  const activeMint = paramMint ?? routeMint;
-  const footerMint = isTokenPage ? null : activeMint;
-  const { info } = useTokenInfo(footerMint);
-  const liveMap = useLiveTradePrices(footerMint ? [footerMint] : []);
-  const live = footerMint ? liveMap.get(footerMint) : undefined;
-  const [supply, setSupply] = useState(0);
-
-  useEffect(() => {
-    if (!footerMint) {
-      setSupply(0);
-      return;
-    }
-    let cancelled = false;
-    fetchTokenSupply(footerMint)
-      .then((res) => {
-        if (cancelled) return;
-        const s = Number(res.supply ?? 0);
-        setSupply(s >= 1_000_000 ? s : 1_000_000_000);
-      })
-      .catch(() => {
-        if (!cancelled) setSupply(1_000_000_000);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [footerMint]);
 
   // Chain-native USD price (SOL from the spot price feed).
   const chainNativeUsd = solPrice ?? 0;
-  const livePriceSol = live?.price ?? info?.lastPrice ?? info?.creatorBuyPrice ?? 0;
-  const marketCap =
-    livePriceSol > 0 && chainNativeUsd > 0 && supply > 0
-      ? livePriceSol * chainNativeUsd * supply
-      : info?.marketCap ?? info?.initialMarketCap ?? 0;
   const migThreshold = MIGRATION_FDV_NATIVE[chainId] ?? 0;
   const bondingCurve =
     chainNativeUsd > 0 && migThreshold > 0 ? chainNativeUsd * migThreshold : 0;
   const fpsColor = fps == null ? "var(--paper-4)" : "var(--accent)";
 
   // Mobile: the dense desktop readout row is replaced by a slim status strip —
-  // SOL price (+ MC on a token page) on the left, a couple of action icons on
-  // the right. No horizontal scroll; the nav now lives in the header ☰ sheet.
+  // SOL price on the left, a couple of action icons on the right. No horizontal scroll; the nav now lives in the header ☰ sheet.
   if (isMobile) {
     return (
       <div
@@ -109,12 +63,6 @@ export function StatusFooter() {
         }}
       >
         {solPrice ? <FooterNativePrice price={solPrice} /> : <span style={{ flex: 1 }} />}
-        {footerMint && marketCap > 0 && (
-          <>
-            <FooterDivider />
-            <FooterReadout label="MC" value={`$${fmtNum(marketCap)}`} />
-          </>
-        )}
         <div style={{ flex: 1, minWidth: 0 }} />
         <FooterTickerToggle />
         <FooterNotificationsButton />
@@ -159,12 +107,6 @@ export function StatusFooter() {
       >
         <HoldingsCarousel solPrice={solPrice} />
       </div>
-      {footerMint && marketCap > 0 && (
-        <>
-          <FooterDivider />
-          <FooterReadout label="MC" value={`$${fmtNum(marketCap)}`} />
-        </>
-      )}
       {solPrice && (
         <>
           <FooterDivider />
@@ -175,7 +117,6 @@ export function StatusFooter() {
           migration FDV is chain-aware ("—" on chains with no bonding curve). */}
       <FooterDivider />
       <FooterBondingCurve value={bondingCurve > 0 ? `$${fmtNum(bondingCurve)}` : "—"} />
-      <RegionPickerSlot />
       <FooterDivider />
       <FooterTickerToggle />
       <FooterNotificationsButton />
@@ -196,7 +137,7 @@ export function StatusFooter() {
   );
 }
 
-// Uniform size for every footer icon (tape tabs, tracker gear, action icons).
+// Uniform size for every footer icon (tape tabs, tape gear, action icons).
 const FOOTER_ICON = 14;
 
 // Action icons sit brighter than the passive readouts (paper-2, not paper-4)
@@ -282,17 +223,6 @@ function FooterIconLink({ label, href, children }: { label: string; href: string
   );
 }
 
-function RegionPickerSlot() {
-  const { regionSelectionEnabled } = useRegion();
-  if (!regionSelectionEnabled) return null;
-  return (
-    <>
-      <FooterDivider />
-      <RegionPicker />
-    </>
-  );
-}
-
 function FooterMadeWithLove() {
   const openRaze = () =>
     window.open("https://raze.bot", "_blank", "noopener,noreferrer");
@@ -338,44 +268,6 @@ function FooterMadeWithLove() {
         </span>
       </Tooltip>
     </span>
-  );
-}
-
-function FooterCraftingIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-      <path
-        d="M13.7 3.2 20.8 10.3 18.5 12.6 11.4 5.5l2.3-2.3Z"
-        fill="currentColor"
-        opacity="0.28"
-      />
-      <path
-        d="m4 20 8.35-8.35M12.1 5.8l6.1 6.1M14 3.9l6.1 6.1M6.2 4.1l.92 2.08 2.08.92-2.08.92-.92 2.08-.92-2.08-2.08-.92 2.08-.92.92-2.08Z"
-        stroke="currentColor"
-        strokeWidth="1.55"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M4 20h3.1" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function FooterLoveIcon() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
-      <path
-        d="M12 20.1s-7.75-4.32-8.78-10.16c-.7-3.98 3.94-6.51 6.67-3.71L12 8.4l2.11-2.17c2.73-2.8 7.37-.27 6.67 3.71C19.75 15.78 12 20.1 12 20.1Z"
-        fill="currentColor"
-      />
-      <path
-        d="M7.25 7.15c-1.22.47-1.83 1.56-1.63 2.76"
-        stroke="var(--paper)"
-        strokeWidth="1.45"
-        strokeLinecap="round"
-        opacity="0.58"
-      />
-    </svg>
   );
 }
 
@@ -441,7 +333,6 @@ const footerPriceButtonStyle: React.CSSProperties = {
 function FooterBondingCurve({ value }: { value: string }) {
   const sentiment = useChainSentiment();
   const [showPopup, setShowPopup] = useState(false);
-  const [activeTab, setActiveTab] = useState<SentimentTab>("status");
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -488,8 +379,6 @@ function FooterBondingCurve({ value }: { value: string }) {
       </span>
       {showPopup && (
         <ChainHealthPopup
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
           sentiment={sentiment}
           placement="above"
         />
@@ -671,7 +560,6 @@ function HoldingsCarousel({ solPrice }: { solPrice: number | null }) {
             meta.volumeUsd = vol * solPrice;
           }
           if (typeof row.holders === "number") meta.holders = row.holders;
-          if (typeof row.unique_traders === "number") meta.holders = row.unique_traders;
           if (row.name) meta.name = row.name;
           holdingMetaCache.set(mint, meta);
         }

@@ -19,7 +19,6 @@ interface Props {
   badgeSize?: number;
   badgeInset?: number;
   marketCap?: number;
-  initialMarketCap?: number;
   priceSol?: number;
   solPrice?: number | null;
   supply?: number;
@@ -44,7 +43,6 @@ export function TokenAvatarFrame({
   badgeSize = 18,
   badgeInset = -4,
   marketCap,
-  initialMarketCap,
   priceSol,
   solPrice,
   supply = DEFAULT_SUPPLY,
@@ -64,7 +62,7 @@ export function TokenAvatarFrame({
   const fallbackMarketCap =
     priceSol && solPrice && priceSol > 0 && solPrice > 0
       ? priceSol * solPrice * supply
-      : initialMarketCap;
+      : undefined;
 
   const effectiveMarketCap =
     marketCap && marketCap > 0

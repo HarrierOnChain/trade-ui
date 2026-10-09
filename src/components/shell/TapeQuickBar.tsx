@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useApp } from "../../contexts/AppContext";
 import { Tooltip } from "../atoms";
 import {
@@ -8,7 +8,6 @@ import {
   TAPE_VIEW_LABEL,
   TAPE_VIEW_SHORT,
   TAPE_ACCENT,
-  DEFAULT_TAPE_KINDS,
   type TapeKind,
 } from "../../hooks/useTapeKinds";
 
@@ -99,23 +98,6 @@ export function IconMine({ size = 11 }: { size?: number }) {
   );
 }
 
-export function IconWatch({ size = 11 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: "block", flexShrink: 0 }}>
-      <path d="M2 12C4 7 7.5 4.5 12 4.5S20 7 22 12c-2 5-5.5 7.5-10 7.5S4 17 2 12Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-      <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="1.5"/>
-    </svg>
-  );
-}
-
-export function IconX({ size = 11 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden style={{ display: "block", flexShrink: 0 }}>
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.742l7.732-8.835L2.216 2.25H8.48l4.265 5.634L18.244 2.25Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/>
-    </svg>
-  );
-}
-
 export function IconSettings({ size = 11 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden style={{ display: "block", flexShrink: 0 }}>
@@ -131,8 +113,6 @@ export const TAPE_ICON: Record<TapeKind, React.FC<{ size?: number }>> = {
   migration: IconMigration,
   trending: IconTrending,
   mine: IconMine,
-  watch: IconWatch,
-  x: IconX,
 };
 
 // ── Inline footer buttons ─────────────────────────────────────────────────────
@@ -193,10 +173,10 @@ export function FooterTapeButtons() {
   return (
     <>
       {/* Gear */}
-      <Tooltip content="Tracker settings" placement="top">
+      <Tooltip content="Tape settings" placement="top">
         <button
           type="button"
-          aria-label="Tracker settings"
+          aria-label="Tape settings"
           onClick={() => setSettingsOpen(true)}
           style={{
             ...footerBtnBase,
@@ -380,7 +360,7 @@ function TapeQuickBarSettings({
           padding: "16px 20px 12px",
           borderBottom: "1px solid var(--line-soft)",
         }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--paper)" }}>Trackers Settings</span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "var(--paper)" }}>Tape Settings</span>
           <button type="button" onClick={onClose} style={{
             background: "transparent", border: 0,
             color: "var(--paper-3)", cursor: "pointer", padding: 4, lineHeight: 0,

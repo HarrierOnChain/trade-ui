@@ -6,12 +6,10 @@ import {
   razeWidgetCtor,
   TOKEN_CHART_INTERVALS,
   type IChartingLibraryWidget,
-  type ITradingLineAdapter,
   type ResolutionString,
   type ThemeName,
   type Mark,
   type EntityId,
-  type TradingLineEvent,
 } from "../../lib/razeChart";
 import {
   getSolanaDatafeedInstance,
@@ -20,32 +18,22 @@ import {
 } from "../SolanaDatafeed";
 import { useSelectedToken } from "../../contexts/SelectedTokenContext";
 import { getActiveChain, nativeSymbol } from "../../lib/chains";
-import { isPreviewMint, subscribePreview } from "../../lib/previewData";
 import { barRangeFromChartTime } from "../../lib/chartInterval";
 import { mountRightPanelToggleButton } from "./rightPanelToggle";
 import { clampLeft, clampTop, viewportMaxWidth } from "../../lib/popover";
 import styles from "./styles.module.css";
 
-export type MarkKind = "dev" | "tracked" | "user" | "filtered" | "ath" | "migration";
+export type MarkKind = "dev" | "user" | "filtered" | "ath" | "migration";
 /** Kinds that can also draw a horizontal price line on the chart.
  *  `dev` is excluded (no aggregate of dev trades on a horizontal line).
  *  `migration` is excluded (a single point-in-time event, not a price level).
  *  `migration_threshold` is line-only (a fixed reference price, no marks). */
 export type LineKind =
   | Exclude<MarkKind, "dev" | "migration">
-  | "migration_threshold"
-  | "top_holders";
+  | "migration_threshold";
 /** Side discriminator for line entries. ATH and migration-threshold are
  *  single-line kinds with no buy/sell split. */
 type LineSide = "buy" | "sell" | "ath" | "level";
-
-export interface OrderLine {
-  id: string;
-  side: "buy" | "sell";
-  targetMcapUsd: number;
-  /** Optional quantity label on the native order overlay (e.g. `0.5 SOL`). */
-  quantity?: string;
-}
 
 export interface TradeMark {
   id: string;
@@ -80,15 +68,6 @@ interface Props {
   onDisplayChange?: (d: "mcap" | "price") => void;
   /** Trade marks to render on the chart, filterable via the toolbar dropdown. */
   marks?: TradeMark[];
-  /** Active limit orders — each draws a persistent horizontal line at the
-   *  target market cap, coloured buy-green or sell-red. */
-  orderLines?: OrderLine[];
-  /** Called when the user drags a limit-order line to a new price.
-   *  `id` is the order id; `newTargetMcapUsd` is the drag destination
-   *  converted back to USD market cap from whatever scale the chart shows. */
-  onOrderLineDrag?: (id: string, newTargetMcapUsd: number) => void;
-  /** Called when the user cancels a limit order from the chart overlay. */
-  onOrderLineCancel?: (id: string) => void;
   /** ISO timestamp (or unix-ms) of the token's bonding-curve→AMM migration.
    *  When present, a single "M" pin is drawn on that bar. */
   migratedAt?: string | number | null;
@@ -98,8 +77,9 @@ interface Props {
   /** Token supply — used to convert the threshold market cap to a per-token
    *  price when the chart is in price mode. */
   supply?: number | null;
-  /** Top-10 holder avg buy/sell in the chart's current y-axis scale. */
-  topHolderLines?: { buy?: number; sell?: number };
+  /** The token is still on a Pump.fun bonding curve: only then does the
+   *  Migration Threshold line mean something. */
+  onBondingCurve?: boolean;
   /** Right-click chart → "Filter Timestamp" applies this bar's time range. */
   onFilterTimestamp?: (range: { minMs: number; maxMs: number }) => void;
   /** Current visibility of the column to the right of the chart (trades tape).
@@ -109,10 +89,6 @@ interface Props {
   /** Toggle the right-of-chart column. Mounting the toolbar button is gated on
    *  this being provided. */
   onToggleRightPanel?: () => void;
-  /** Chrome-less mode: hide the left drawing toolbar, the top header and the
-   *  bottom timeframe/control bars so ONLY the chart shows. Used by the /deploy
-   *  launch-preview (the user just wants the curve). Off everywhere else. */
-  minimal?: boolean;
 }
 
 const INTERVAL_STORAGE_KEY = "tvchart:interval";
@@ -121,7 +97,6 @@ const INTERVAL_STORAGE_KEY = "tvchart:interval";
 const MARKS_ENABLED_KEY = "tvchart:marks.enabled.v4";
 // Bumped to v4 when `migration_threshold` was added so existing users see
 // it enabled by default.
-// Bumped to v5 when `top_holders` was added so existing users see it enabled.
 const LINES_ENABLED_KEY = "tvchart:lines.enabled.v5";
 const SUPPORTED_INTERVALS = new Set<string>(["1S", "5S", "15S", "30S", "1", "5", "15", "30", "60", "240", "1D"]);
 
@@ -129,10 +104,9 @@ const SUPPORTED_INTERVALS = new Set<string>(["1S", "5S", "15S", "30S", "1", "5",
 // timestamp would force a chart-wide clearMarks on every new high — the
 // flash the user sees on a pumping token). The All-Time High level is
 // surfaced via the Lines dropdown instead.
-const MARK_KINDS: MarkKind[] = ["dev", "tracked", "user", "filtered", "migration"];
+const MARK_KINDS: MarkKind[] = ["dev", "user", "filtered", "migration"];
 const MARK_LABELS: Record<MarkKind, string> = {
   dev: "Dev trades",
-  tracked: "Tracked wallets",
   user: "My wallets",
   filtered: "Filtered wallet",
   ath: "All-Time High",
@@ -140,7 +114,6 @@ const MARK_LABELS: Record<MarkKind, string> = {
 };
 const MARK_COLORS: Record<MarkKind, string> = {
   dev: "#e5b34a",      // amber — the creator
-  tracked: "#8ab4ff",  // blue — watchlist
   user: "#66d89e",     // green — own wallets
   filtered: "#c084fc", // purple — the wallet set via the Transactions filter
   ath: "#facc15",      // gold — peak price
@@ -151,33 +124,18 @@ const BUY_COLOR  = "#66d89e"; // same green as the up candle
 const ATH_COLOR  = MARK_COLORS.ath;
 const MIGRATION_COLOR = MARK_COLORS.migration;
 
-function chartPriceToTargetMcapUsd(
-  chartPrice: number,
-  solPrice: number,
-  supply: number,
-  currency: "usd" | "sol",
-  display: "mcap" | "price",
-): number {
-  if (currency === "usd" && display === "mcap") return chartPrice;
-  if (currency === "usd" && display === "price") return chartPrice * supply;
-  if (currency === "sol" && display === "mcap") return chartPrice * solPrice;
-  return chartPrice * solPrice * supply;
-}
-
 // Lines dropdown — dev intentionally excluded. `filtered` only appears in
 // the dropdown as a toggle; its underlying data is fed by the Transactions
 // filter, and when no filter is set there's simply nothing to draw. `ath`
 // pulls its level from the chart's bar history via the datafeed.
 // `migration_threshold` is a fixed reference price (`solPrice × 411`,
 // matching the footer's bonding-curve readout) — no underlying marks.
-const LINE_KINDS: LineKind[] = ["user", "tracked", "filtered", "ath", "migration_threshold", "top_holders"];
+const LINE_KINDS: LineKind[] = ["user", "filtered", "ath", "migration_threshold"];
 const LINE_LABELS: Record<LineKind, string> = {
   user: "My Wallets",
-  tracked: "Tracked Wallets",
   filtered: "Filtered Wallet",
   ath: "All-Time High",
   migration_threshold: "Migration Threshold",
-  top_holders: "Top 10 Holders",
 };
 // SOL-denominated reference for the migration / bonding-curve graduation
 // level. Derived from Pump.fun's constant-product curve: at ~85 SOL real
@@ -242,8 +200,6 @@ function readStoredInterval(fallback: ResolutionString): ResolutionString {
   return fallback;
 }
 
-const DRAG_SETTLE_MS = 12_000;
-
 export const TVChart = memo(function TVChart({
   mint: mintProp,
   interval = "1" as ResolutionString,
@@ -253,17 +209,13 @@ export const TVChart = memo(function TVChart({
   onCurrencyChange,
   onDisplayChange,
   marks,
-  orderLines,
-  onOrderLineDrag,
-  onOrderLineCancel,
   migratedAt,
   solPrice,
   supply,
-  topHolderLines,
+  onBondingCurve = false,
   onFilterTimestamp,
   rightPanelVisible,
   onToggleRightPanel,
-  minimal = false,
 }: Props) {
   const { selectedMint } = useSelectedToken();
   const mint = mintProp ?? selectedMint;
@@ -294,16 +246,6 @@ export const TVChart = memo(function TVChart({
   const lineEntitiesRef = useRef<Map<string, { id: EntityId; price: number; time: number }>>(new Map());
   const pendingLinesRef = useRef<Set<string>>(new Set());
   const paintLinesRef = useRef<() => void>(() => {});
-  // Separate painter for limit-order overlays (independent of the
-  // trade-mark aggregation path so order lines never get merged into avg lines).
-  const orderLinesRef = useRef<OrderLine[]>(orderLines ?? []);
-  const orderLineAdaptersRef = useRef<Map<string, { line: ITradingLineAdapter; price: number }>>(new Map());
-  const orderLinePendingRef = useRef<Set<string>>(new Set());
-  const paintOrderLinesRef = useRef<() => void>(() => {});
-  // Settle window suppresses poll snap-back for 12 s after each drag.
-  const orderDragSettleRef = useRef<Map<string, number>>(new Map());
-  const onOrderLineDragRef = useRef<((id: string, newTargetMcapUsd: number) => void) | undefined>(undefined);
-  const onOrderLineCancelRef = useRef<((id: string) => void) | undefined>(undefined);
   const onFilterTimestampRef = useRef(onFilterTimestamp);
   const currentResolutionRef = useRef<ResolutionString>(readStoredInterval(interval));
   useEffect(() => { onFilterTimestampRef.current = onFilterTimestamp; }, [onFilterTimestamp]);
@@ -334,20 +276,19 @@ export const TVChart = memo(function TVChart({
   const supplyRef = useRef<number | null>(supply ?? null);
   const currencyRef = useRef<"usd" | "sol">(currencyProp ?? "usd");
   const displayRef = useRef<"mcap" | "price">(displayProp ?? "mcap");
-  const topHolderLinesRef = useRef<{ buy?: number; sell?: number }>(topHolderLines ?? {});
+  const onBondingCurveRef = useRef(onBondingCurve);
   useEffect(() => {
     solPriceRef.current = solPrice ?? null;
     supplyRef.current = supply ?? null;
     currencyRef.current = currencyProp ?? currencyRef.current;
     displayRef.current = displayProp ?? displayRef.current;
     paintLinesRef.current?.();
-    paintOrderLinesRef.current?.();
   }, [solPrice, supply, currencyProp, displayProp]);
 
   useEffect(() => {
-    topHolderLinesRef.current = topHolderLines ?? {};
+    onBondingCurveRef.current = onBondingCurve;
     paintLinesRef.current?.();
-  }, [topHolderLines]);
+  }, [onBondingCurve]);
 
   const resolvedMigratedAtMs = useMemo<number | null>(() => {
     if (migratedAt == null) return null;
@@ -402,18 +343,6 @@ export const TVChart = memo(function TVChart({
   }, [marks]);
 
   useEffect(() => {
-    onOrderLineDragRef.current = onOrderLineDrag;
-  }, [onOrderLineDrag]);
-  useEffect(() => {
-    onOrderLineCancelRef.current = onOrderLineCancel;
-  }, [onOrderLineCancel]);
-
-  useEffect(() => {
-    orderLinesRef.current = orderLines ?? [];
-    paintOrderLinesRef.current();
-  }, [orderLines]);
-
-  useEffect(() => {
     if (!mint || !containerRef.current) {
       widgetRef.current?.remove();
       widgetRef.current = null;
@@ -437,13 +366,12 @@ export const TVChart = memo(function TVChart({
       for (const m of marksRef.current) {
         if (!enabled.has(m.kind)) continue;
         if (m.time < fromMs || m.time > toMs) continue;
-        // Dev / tracked / filtered marks use their own single-letter label
-        // (D/T/F) with candle-matched colors: green buys, red sells. Other
+        // Dev / filtered marks use their own single-letter label
+        // (D/F) with candle-matched colors: green buys, red sells. Other
         // kinds keep B/S labels; their buys take the kind color, sells
         // always use the red down-candle color.
         const KIND_LETTER: Partial<Record<MarkKind, string>> = {
           dev: "D",
-          tracked: "T",
           filtered: "F",
         };
         const letter = KIND_LETTER[m.kind];
@@ -506,8 +434,6 @@ export const TVChart = memo(function TVChart({
         "symbol_search_hot_key",
         "header_compare",
         "popup_hints",
-        // Chrome-less preview (/deploy): strip every toolbar so only the chart shows.
-        ...(minimal ? ["left_toolbar", "header_widget", "header_resolutions", "scale_bar"] : []),
       ],
       theme,
       favorites: { intervals: TOKEN_CHART_INTERVALS },
@@ -522,26 +448,8 @@ export const TVChart = memo(function TVChart({
     // chart's resolution, re-bound when the interval changes, and disposed
     // by the useEffect cleanup below.
     let athDispose: (() => void) | null = null;
-    let previewDispose: (() => void) | null = null;
 
     tvWidget.onChartReady(() => {
-      // Preview mint (deploy form): the synthetic candles change every time
-      // the form re-publishes its snapshot. The datafeed invalidates TV's bar
-      // cache via the subscribeBars reset callback; this forces the refetch.
-      // Debounced so typing in the wallet-amount fields doesn't thrash TV.
-      if (isPreviewMint(mint)) {
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        const unsub = subscribePreview(mint, () => {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(() => {
-            try { tvWidget.activeChart().resetData(); } catch { /* torn down */ }
-          }, 350);
-        });
-        previewDispose = () => {
-          if (timer) clearTimeout(timer);
-          unsub();
-        };
-      }
       const chart = tvWidget.activeChart();
       try {
         currentResolutionRef.current = chart.resolution();
@@ -597,14 +505,6 @@ export const TVChart = memo(function TVChart({
       // weight is the trade's SOL size. Re-running paint adjusts existing
       // shapes via setPoints instead of tearing them down, so on every
       // streamed trade the lines slide to the new avg without flashing.
-      const LINE_BASE_COLORS: Record<LineKind, string> = {
-        user: MARK_COLORS.user,
-        tracked: MARK_COLORS.tracked,
-        filtered: MARK_COLORS.filtered,
-        ath: MARK_COLORS.ath,
-        migration_threshold: MIGRATION_COLOR,
-        top_holders: "#8ab4ff",
-      };
 
       type Agg = { priceSum: number; solSum: number; latestTime: number };
       const buildDesired = () => {
@@ -654,7 +554,7 @@ export const TVChart = memo(function TVChart({
         // bonding-curve graduation level (`MIGRATION_THRESHOLD_SOL` SOL,
         // matching the footer's `solPrice × 411` USD readout). Converted
         // to whatever scale the chart is currently rendering in.
-        if (enabled.has("migration_threshold")) {
+        if (enabled.has("migration_threshold") && onBondingCurveRef.current) {
           const sp = solPriceRef.current ?? 0;
           const sup = supplyRef.current ?? 0;
           const cur = currencyRef.current;
@@ -675,26 +575,6 @@ export const TVChart = memo(function TVChart({
               side: "level",
               price,
               time: Date.now(),
-            });
-          }
-        }
-        if (enabled.has("top_holders")) {
-          const th = topHolderLinesRef.current;
-          const now = Date.now();
-          if (typeof th.buy === "number" && Number.isFinite(th.buy) && th.buy > 0) {
-            desired.set("top_holders:buy", {
-              kind: "top_holders",
-              side: "buy",
-              price: th.buy,
-              time: now,
-            });
-          }
-          if (typeof th.sell === "number" && Number.isFinite(th.sell) && th.sell > 0) {
-            desired.set("top_holders:sell", {
-              kind: "top_holders",
-              side: "sell",
-              price: th.sell,
-              time: now,
             });
           }
         }
@@ -793,9 +673,6 @@ export const TVChart = memo(function TVChart({
               pendingLinesRef.current.delete(pendingKey);
             });
           }
-          // Touch LINE_BASE_COLORS to keep it in scope — reserved for
-          // future per-kind color customization on the avg lines.
-          void LINE_BASE_COLORS;
         }
       };
 
@@ -804,128 +681,11 @@ export const TVChart = memo(function TVChart({
       // and "A" mark show up on first render when history is already cached.
       subscribeATHFor(chart.resolution() as ResolutionString);
 
-      // ── Limit-order overlays (native trading primitives in 0.5.0) ────────
-      // Broker lines sit above the series, participate in auto-scale, and
-      // expose drag / cancel without the old horizontal_line shape hack.
-      paintOrderLinesRef.current = () => {
-        const orders = orderLinesRef.current;
-        const sp = solPriceRef.current ?? 0;
-        const sup = supplyRef.current ?? 0;
-        const cur = currencyRef.current;
-        const disp = displayRef.current;
-        const nowMs = Date.now();
-
-        const desired = new Map<string, { side: "buy" | "sell"; price: number; quantity?: string }>();
-        for (const o of orders) {
-          let price = 0;
-          if (cur === "usd" && disp === "mcap") price = o.targetMcapUsd;
-          else if (cur === "usd" && disp === "price") price = sup > 0 ? o.targetMcapUsd / sup : 0;
-          else if (cur === "sol" && disp === "mcap") price = sp > 0 ? o.targetMcapUsd / sp : 0;
-          else price = sp > 0 && sup > 0 ? o.targetMcapUsd / sp / sup : 0;
-          if (price <= 0) continue;
-          desired.set(o.id, { side: o.side, price, quantity: o.quantity });
-        }
-
-        for (const [key, entry] of orderLineAdaptersRef.current) {
-          if (desired.has(key)) continue;
-          try { entry.line.remove(); } catch { /* ignore */ }
-          orderLineAdaptersRef.current.delete(key);
-        }
-
-        const onTradingChange = (orderId: string, event: TradingLineEvent) => {
-          if (event.reason === "api") return;
-          if (event.type === "cancelled") {
-            onOrderLineCancelRef.current?.(orderId);
-            return;
-          }
-          if (event.type !== "moved") return;
-          const chartPrice = event.line.price;
-          if (!Number.isFinite(chartPrice) || chartPrice <= 0) return;
-          const target = chartPriceToTargetMcapUsd(
-            chartPrice,
-            solPriceRef.current ?? 0,
-            supplyRef.current ?? 0,
-            currencyRef.current,
-            displayRef.current,
-          );
-          if (target <= 0) return;
-          orderDragSettleRef.current.set(orderId, Date.now() + DRAG_SETTLE_MS);
-          const tracked = orderLineAdaptersRef.current.get(orderId);
-          if (tracked) tracked.price = chartPrice;
-          onOrderLineDragRef.current?.(orderId, target);
-        };
-
-        for (const [key, spec] of desired) {
-          const existing = orderLineAdaptersRef.current.get(key);
-          if (existing) {
-            const settle = orderDragSettleRef.current.get(key);
-            if (settle && nowMs < settle) continue;
-            try {
-              if (existing.price !== spec.price) {
-                existing.line.setPrice(spec.price);
-                existing.price = spec.price;
-              }
-              if (spec.quantity) existing.line.setQuantity(spec.quantity);
-            } catch {
-              try { existing.line.remove(); } catch { /* ignore */ }
-              orderLineAdaptersRef.current.delete(key);
-            }
-            if (orderLineAdaptersRef.current.has(key)) continue;
-          }
-          if (orderLinePendingRef.current.has(key)) continue;
-          const color = spec.side === "buy" ? BUY_COLOR : SELL_COLOR;
-          let promise: Promise<ITradingLineAdapter> | undefined;
-          try {
-            promise = chart.createOrderLine({
-              id: key,
-              side: spec.side,
-              price: spec.price,
-              quantity: spec.quantity,
-              text: spec.side === "buy" ? "Limit Buy" : "Limit Sell",
-              lineColor: color,
-              bodyBackgroundColor: color,
-              bodyTextColor: "#181615",
-              cancelButtonBackgroundColor: color,
-              cancelButtonIconColor: "#181615",
-              editable: true,
-              includeInAutoScale: true,
-              onChange: (event) => onTradingChange(key, event),
-            });
-          } catch {
-            const recovered = chart.getTradingLineById(key);
-            if (recovered) {
-              orderLineAdaptersRef.current.set(key, { line: recovered, price: spec.price });
-            }
-          }
-          if (promise) {
-            const pendingKey = key;
-            orderLinePendingRef.current.add(pendingKey);
-            promise.then((line) => {
-              orderLinePendingRef.current.delete(pendingKey);
-              if (!line) return;
-              if (!desired.has(pendingKey) || !orderLinesRef.current.some((o) => o.id === pendingKey)) {
-                try { line.remove(); } catch { /* ignore */ }
-                return;
-              }
-              orderLineAdaptersRef.current.set(pendingKey, { line, price: spec.price });
-            }).catch(() => {
-              orderLinePendingRef.current.delete(pendingKey);
-              const recovered = chart.getTradingLineById(pendingKey);
-              if (recovered && desired.has(pendingKey)) {
-                orderLineAdaptersRef.current.set(pendingKey, { line: recovered, price: spec.price });
-              }
-            });
-          }
-        }
-      };
-
       // Paint any marks that arrived before the chart was ready.
       paintLinesRef.current();
-      paintOrderLinesRef.current();
     });
 
-    // Skip all custom header buttons in chrome-less mode — the header is hidden.
-    if (!minimal) void tvWidget.headerReady().then(() => {
+    void tvWidget.headerReady().then(() => {
       applyRazeChartChrome(tvWidget);
 
       // ── MarketCap / Price toggle ──────────────────────────────────────────
@@ -1007,8 +767,6 @@ export const TVChart = memo(function TVChart({
     return () => {
       athDispose?.();
       athDispose = null;
-      previewDispose?.();
-      previewDispose = null;
       athRef.current = null;
       widgetRef.current?.remove();
       widgetRef.current = null;
@@ -1018,12 +776,8 @@ export const TVChart = memo(function TVChart({
       // removed chart, so we just ignore them by clearing pending keys too.
       lineEntitiesRef.current.clear();
       pendingLinesRef.current.clear();
-      orderLineAdaptersRef.current.clear();
-      orderLinePendingRef.current.clear();
-      orderDragSettleRef.current.clear();
       prevMarkIdsRef.current = new Set();
       paintLinesRef.current = () => {};
-      paintOrderLinesRef.current = () => {};
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mint, theme, currency, display]);

@@ -1,21 +1,22 @@
 import type { NextConfig } from "next";
 import path from "node:path";
 
-const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH || process.env.NEXT_BASE_PATH || "";
-const basePath = configuredBasePath.replace(/\/$/, "");
-
+// No basePath: server.mjs guards `/api/` at the root, so the app is served at
+// the root of its host (a subdomain behind a proxy, not a subpath).
 const nextConfig: NextConfig = {
-  ...(basePath ? { basePath } : {}),
   // Isolate production output from `next dev` writing into `.next`.
   distDir: process.env.NODE_ENV === "production" ? ".next-prod" : ".next",
+  // A traced, self-contained server for the desktop app and Docker
+  // (scripts/bundle-server.mjs). `npm start` from a checkout runs as before.
+  output: "standalone",
+  outputFileTracingRoot: path.resolve(__dirname),
   reactStrictMode: false, // Prevent double-mount of the chart widget
   transpilePackages: ["@razedotbot/charts"],
-  images: {
-    remotePatterns: [
-      { protocol: "https", hostname: "**.raze.sh" },
-      { protocol: "https", hostname: "ipfs.io" },
-      { protocol: "https", hostname: "**.ipfs.nftstorage.link" },
-    ],
+  // Token images are plain <img> tags from many hosts; no next/image, so no
+  // optimizer (and no native image library in the bundle).
+  images: { unoptimized: true },
+  outputFileTracingExcludes: {
+    "*": ["node_modules/@img/**", "node_modules/sharp/**", "node_modules/typescript/**"],
   },
   webpack(config) {
     config.ignoreWarnings = [
@@ -23,19 +24,6 @@ const nextConfig: NextConfig = {
       { message: /Attempted import error.*@razedotbot\/charts/ },
       { message: /Critical dependency.*@razedotbot\/charts/ },
     ];
-    // @privy-io/react-auth v3 lazily `import("@farcaster/mini-app-solana")` for
-    // Farcaster mini-app embedding. It's an OPTIONAL peerDependency
-    // (peerDependenciesMeta.optional) we deliberately don't install — this is a
-    // Solana trading terminal, never a Farcaster mini-app, so that code path is
-    // unreachable at runtime. Alias it to an empty module so the optional
-    // dynamic import resolves at build time without pulling the dep (and its
-    // supply-chain surface).
-    config.resolve = config.resolve ?? {};
-    config.resolve.alias = {
-      ...(config.resolve.alias ?? {}),
-      "@farcaster/mini-app-solana": false,
-      "@privy-io/react-auth": path.resolve(__dirname, "src/shims/privy.tsx"),
-    };
     return config;
   },
   async headers() {
@@ -51,16 +39,19 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com https://static.cloudflareinsights.com",
+              // Next.js needs inline scripts; eval only for dev's hot reload.
+              `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'"}`,
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com data:",
+              // Token images and metadata live on many hosts (IPFS gateways, CDNs).
               "img-src 'self' data: blob: https:",
               "media-src 'self' blob:",
-              "connect-src 'self' http: https: ws: wss: https://auth.privy.io https://*.privy.io",
-              "frame-src 'self' blob: https://auth.privy.io https://*.privy.io https://challenges.cloudflare.com",
+              "connect-src 'self' https: wss: ws:",
+              "frame-src 'self' blob:",
               "frame-ancestors 'self'",
               "base-uri 'self'",
               "form-action 'self'",
+              "object-src 'none'",
             ].join("; "),
           },
         ],

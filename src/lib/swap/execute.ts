@@ -1,30 +1,25 @@
 /**
- * One swap, end to end: quote on the router, build for the wallet, sign, send,
- * confirm. The router never signs or sends; the key (a local wallet) or the
- * browser wallet does, and the RPC behind `/api/solana/*` broadcasts and
- * confirms.
+ * One swap, end to end: a quote from the router through Trade UI's server,
+ * which keeps it (server/quotes.mjs) and hands out a token for it; the server
+ * then builds exactly that quote for the wallet, signs it with the key in the
+ * vault and sends it (server/solana.mjs); the browser waits for the
+ * confirmation on `/api/solana/ws`. The key never reaches the browser, the
+ * browser cannot alter the quote it trades, and the server signs nothing but
+ * what the router just built for that wallet.
  */
-import {
-  buildSwap,
-  confirmSignature,
-  fetchQuote,
-  sendSigned,
-} from "./client";
+import { confirmSignature, fetchQuote } from "./client";
 import { classifyQuoteError, toQuoteView, type QuoteView, type RouterQuote } from "./quote";
 export { swapErrorText } from "./quote";
-import {
-  chooseTransaction,
-  quoteReserveKeys,
-  signLocal,
-  signWithWallet,
-  walletVersions,
-  type StdWallet,
-} from "./sign";
 import type { SwapPlan } from "./plan";
+import { vault } from "../vault/client";
 
-export type SwapSigner =
-  | { kind: "local"; owner: string; secretKey: Uint8Array }
-  | { kind: "browser"; owner: string; wallet: StdWallet };
+/** A vault wallet: the server holds its key. */
+export interface SwapSigner {
+  kind: "vault";
+  walletId: string;
+  /** its address */
+  owner: string;
+}
 
 export interface SwapRequest extends SwapPlan {
   slippageBps: number;
@@ -33,21 +28,11 @@ export interface SwapRequest extends SwapPlan {
   excludeDexes?: string[];
 }
 
-export type SwapStage = "quote" | "build" | "sign" | "send" | "confirm";
+export type SwapStage = "quote" | "sign" | "confirm";
 
 export interface SwapResult {
   signature: string;
   quote: QuoteView;
-}
-
-/** Whether this signer needs the v0 form (a browser wallet without v1). */
-export function needsV0(signer: SwapSigner): boolean {
-  return signer.kind === "browser" && quoteReserveKeys(walletVersions(signer.wallet)) !== undefined;
-}
-
-/** The `reserveKeys` to quote with for this signer. */
-export function signerReserveKeys(signer: SwapSigner): number | undefined {
-  return signer.kind === "browser" ? quoteReserveKeys(walletVersions(signer.wallet)) : undefined;
 }
 
 export async function executeSwap(
@@ -66,35 +51,15 @@ export async function executeSwap(
       swapMode: req.swapMode,
       slippageBps: req.slippageBps,
       excludeDexes: req.excludeDexes,
-      reserveKeys: signerReserveKeys(signer),
     });
     if (!r.ok) throw new Error(classifyQuoteError(r.status, r.body).message);
     raw = r.quote;
   }
   const quote = toQuoteView(raw);
 
-  stage("build");
-  const v0 = needsV0(signer);
-  const build = await buildSwap(signer.owner, raw, { priorityFeeLamports: req.priorityFeeLamports, v0 });
-
+  if (!raw.quoteToken) throw new Error("This quote cannot be traded: get a new one");
   stage("sign");
-  let signature: string;
-  if (signer.kind === "local") {
-    const { signed, signature: sig } = signLocal(build.transaction, signer.secretKey);
-    stage("send");
-    const sent = await sendSigned(signed);
-    signature = sent || sig;
-  } else {
-    const choice = chooseTransaction(walletVersions(signer.wallet), build);
-    if ("error" in choice) throw new Error(choice.error);
-    const out = await signWithWallet(signer.wallet, signer.owner, choice.b64);
-    if (out.sent) {
-      signature = out.signature;
-    } else {
-      stage("send");
-      signature = await sendSigned(out.signed);
-    }
-  }
+  const { signature } = await vault.swap(signer.walletId, raw.quoteToken, req.priorityFeeLamports);
 
   stage("confirm");
   await confirmSignature(signature, 60_000);

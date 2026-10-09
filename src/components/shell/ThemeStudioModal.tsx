@@ -27,15 +27,11 @@ interface PageDef {
   label: string;
   template: string;
   description: string;
-  editPath?: string;
+  editPath: string;
 }
 
 const CUSTOMIZE_PAGES: PageDef[] = [
-  { id: "monitor",    label: "Monitor",            template: "Default 3-column", description: "Live deploy, migration and mayhem feeds.",     editPath: "/monitor?edit=1" },
-  { id: "tokenTrade", label: "Token Trading",      template: "Chart-first",       description: "Per-token chart, trades, holders, trade panel." },
-  { id: "trending",   label: "Trending",           template: "Lanes",             description: "Hot, X-buzz, volume and volatility lanes." },
-  { id: "portfolio",  label: "Portfolio",          template: "Summary",           description: "Holdings, PnL, history, deployed tokens." },
-  { id: "tracker",    label: "Tracker",            template: "Cards",             description: "Watched wallets and their latest activity." },
+  { id: "monitor", label: "Monitor", template: "Default 3-column", description: "Live deploy, migration and mayhem feeds.", editPath: "/monitor?edit=1" },
 ];
 
 /* ───────────── modal ───────────── */
@@ -65,8 +61,6 @@ function ThemeStudioBody({ onClose }: { onClose: () => void }) {
   const { navigate } = useClientNav();
   const [showExamples, setShowExamples] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
-
-  const activePreset = getThemePreset(presetId);
 
   const selectPreset = (p: ThemePreset) => {
     setPresetId(p.id);
@@ -235,7 +229,7 @@ function ThemeStudioBody({ onClose }: { onClose: () => void }) {
         {/* page templates */}
         <FieldLabel>Page Templates</FieldLabel>
         <span style={{ fontSize: 11.5, color: "var(--paper-3)", lineHeight: 1.5, display: "block", marginBottom: 10 }}>
-          Each page ships with a template you can edit in real time — drag columns,
+          The Monitor ships with a template you can edit in real time — drag columns,
           tune spacing and borders, then save it as your own.
         </span>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -244,7 +238,7 @@ function ThemeStudioBody({ onClose }: { onClose: () => void }) {
               key={p.id}
               index={i + 1}
               page={p}
-              onEdit={() => { if (p.editPath) { onClose(); navigate(p.editPath); } }}
+              onEdit={() => { onClose(); navigate(p.editPath); }}
             />
           ))}
         </div>
@@ -371,7 +365,6 @@ function PrimaryColorField({ value, onChange, onReset }: { value: string; onChan
 }
 
 function PageTemplateRow({ index, page, onEdit }: { index: number; page: PageDef; onEdit: () => void }) {
-  const ready = !!page.editPath;
   const isPhone = useIsPhone();
   return (
     <div style={{
@@ -390,22 +383,21 @@ function PageTemplateRow({ index, page, onEdit }: { index: number; page: PageDef
       </div>
       <button
         type="button"
-        disabled={!ready}
         onClick={onEdit}
         className="mono"
         style={{
           justifySelf: isPhone ? "stretch" : "end",
           display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px",
           fontSize: 10.5, letterSpacing: "0.04em", borderRadius: 6,
-          border: "1px solid " + (ready ? "var(--line)" : "var(--line-soft)"),
-          background: "transparent", color: ready ? "var(--paper-2)" : "var(--paper-4)",
-          cursor: ready ? "pointer" : "not-allowed", opacity: ready ? 1 : 0.6,
+          border: "1px solid var(--line)",
+          background: "transparent", color: "var(--paper-2)",
+          cursor: "pointer",
           transition: "background 120ms, color 120ms",
         }}
-        onMouseEnter={(e) => { if (ready) { e.currentTarget.style.background = "var(--ink-2)"; e.currentTarget.style.color = "var(--paper)"; } }}
-        onMouseLeave={(e) => { if (ready) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--paper-2)"; } }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; e.currentTarget.style.color = "var(--paper)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--paper-2)"; }}
       >
-        {ready ? "Edit" : "Soon"}
+        Edit
       </button>
     </div>
   );

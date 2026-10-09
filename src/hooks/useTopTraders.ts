@@ -50,11 +50,8 @@ function recompute(t: LiveTopTrader, solPrice: number): LiveTopTrader {
   const totalVolume = (t.buySol + t.sellSol) * (solPrice || 0);
   const pnlSol = t.pnlFromApi ? t.pnlSol : t.sellSol - t.buySol;
   const totalPnL = t.pnlFromApi ? t.totalPnL : pnlSol * (solPrice || 0);
-  const avgTradeSize = totalTrades > 0 ? totalVolume / totalTrades : 0;
-  const avgBuyPrice  = t.boughtTokens > 0 ? t.buySol / t.boughtTokens : 0;
-  const avgSellPrice = t.soldTokens   > 0 ? t.sellSol / t.soldTokens : 0;
-  const isHolding    = t.boughtTokens > t.soldTokens;
-  return { ...t, totalTrades, totalVolume, totalPnL, pnlSol, avgTradeSize, avgBuyPrice, avgSellPrice, isHolding };
+  const isHolding = t.boughtTokens > t.soldTokens;
+  return { ...t, totalTrades, totalVolume, totalPnL, pnlSol, isHolding };
 }
 
 function blankTrader(addr: string, tsIso: string): LiveTopTrader {
@@ -62,12 +59,10 @@ function blankTrader(addr: string, tsIso: string): LiveTopTrader {
     trader: addr,
     totalBuys: 0, totalSells: 0, totalTrades: 0,
     totalVolume: 0, totalPnL: 0, pnlSol: 0,
-    avgTradeSize: 0, winRate: 0,
     buySol: 0, sellSol: 0,
     boughtTokens: 0, soldTokens: 0,
-    avgBuyPrice: 0, avgSellPrice: 0,
     isHolding: false,
-    firstTrade: tsIso, lastTrade: tsIso,
+    lastTrade: tsIso,
   };
 }
 
@@ -152,7 +147,6 @@ export function useTopTraders(mint: string | null, solPriceUsd: number = 0) {
               boughtTokens: cur.boughtTokens + (isBuy ? t.tokens : 0),
               soldTokens:   cur.soldTokens   + (isBuy ? 0        : t.tokens),
               lastTrade:    t.tsIso,
-              largestTrade: Math.max(cur.largestTrade ?? 0, t.sol * (px || 0)),
             };
             next[idx] = recompute(merged, px);
             continue;
@@ -168,7 +162,6 @@ export function useTopTraders(mint: string | null, solPriceUsd: number = 0) {
             boughtTokens: pend.boughtTokens + (isBuy ? t.tokens : 0),
             soldTokens:   pend.soldTokens   + (isBuy ? 0        : t.tokens),
             lastTrade:    t.tsIso,
-            largestTrade: Math.max(pend.largestTrade ?? 0, t.sol * (px || 0)),
           }, px);
           pendingRef.current.set(t.signer, updated);
 
@@ -209,10 +202,8 @@ export function useTopTraders(mint: string | null, solPriceUsd: number = 0) {
     };
 
     const offTrade       = ws.on("trade",       apply);
-    const offTransaction = ws.on("transaction", apply);
     return () => {
       offTrade();
-      offTransaction();
       ws.unsubscribeToken(mint);
       if (flushTimerRef.current !== null) {
         clearTimeout(flushTimerRef.current);

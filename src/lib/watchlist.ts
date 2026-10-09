@@ -172,8 +172,3 @@ export function useWatchlist(): UseWatchlist {
     clear,
   };
 }
-
-/** Light-weight helper for components that only need the Set. */
-export function useWatchedMints(): Set<string> {
-  return useWatchlist().watchedMints;
-}

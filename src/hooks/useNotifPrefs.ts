@@ -3,13 +3,11 @@ import type React from "react";
 import { useUserPreference } from "./useUserPreference";
 
 // Notification preferences — shared by the Notifications modal (the UI) and the
-// toast/alert plumbing (ToastRail, AlertBell) that actually enforces them.
+// toast plumbing (ToastRail) that actually enforces them.
 
 export const NOTIF_KEYS = {
   display:       "spool.notif.display.v1",     // master: render toasts at all
-  alertsEnabled: "spool.notif.alerts.v1",      // bell panel (top-right)
   fillToasts:    "spool.notif.fillToasts.v1",  // buy/sell fill toasts
-  tweetAlerts:   "spool.notif.tweetAlerts.v1", // tracked X-handle tweets (toast + bell)
   position:      "spool.notif.position.v1",    // toast-rail corner
   sound:         "spool.notif.toastSound.v1",  // transaction sounds master
   volume:        "spool.notif.volume.v1",      // 0–100
@@ -31,11 +29,7 @@ export const TOAST_POSITIONS: { id: ToastPosition; label: string }[] = [
 export const DEFAULT_POSITION: ToastPosition = "bottom-right";
 
 export const useNotifDisplay = () => useUserPreference<boolean>(NOTIF_KEYS.display, true);
-export const useNotifAlerts = () => useUserPreference<boolean>(NOTIF_KEYS.alertsEnabled, true);
 export const useNotifFillToasts = () => useUserPreference<boolean>(NOTIF_KEYS.fillToasts, true);
-// One switch for the whole tweet lane: OFF tears down the live subscription,
-// so it silences both the toast and the bell entry.
-export const useNotifTweetAlerts = () => useUserPreference<boolean>(NOTIF_KEYS.tweetAlerts, true);
 export const useNotifPosition = () => useUserPreference<ToastPosition>(NOTIF_KEYS.position, DEFAULT_POSITION);
 export const useNotifSound = () => useUserPreference<boolean>(NOTIF_KEYS.sound, false);
 export const useNotifVolume = () => useUserPreference<number>(NOTIF_KEYS.volume, 50);

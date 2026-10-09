@@ -100,41 +100,6 @@ export function shortAddr(a?: string | null, n = 4): string {
   return `${a.slice(0, n)}…${a.slice(-n)}`;
 }
 
-/**
- * Display label for a DEX/platform — strips `DBC` / `Launchpad` suffixes,
- * leaves anything else intact. Used in token rows and headers so users see
- * `Meteora` / `Raydium` instead of `MeteoraDBC` / `RaydiumLaunchpad`.
- */
-export function dexLabel(dex?: string | null): string {
-  const raw = String(dex || "");
-  if (!raw) return "";
-  const lower = raw.toLowerCase();
-  if (lower.includes("meteora")) return "Meteora";
-  if (lower.includes("raydium")) return "Raydium";
-  const aliases: Record<string, string> = {
-    letsbonk: "LetsBonk",
-    bonkers: "Bonkers",
-    bags: "Bags",
-    believe: "Believe",
-    jupiterstudio: "Jupiter Studio",
-    moonshot: "Moonshot",
-    trendsfun: "Trends.fun",
-    orynth: "Orynth",
-    printr: "Printr",
-    bankr: "Bankr",
-    heaven: "Heaven",
-    zorasolana: "Zora",
-    tokenmillv2: "TokenMill",
-    americafun: "America.fun",
-    dubdub: "DubDub",
-    cookingcity: "Cooking City",
-    sendshot: "Sendshot",
-    timefun: "Time.fun",
-    xymint: "Xymint",
-  };
-  return aliases[lower] ?? raw;
-}
-
 // Launchpads that CPI the Pump.fun program: on-chain their curves/pools decode
 // as PumpFun (pre-migration) or PumpSwap (post-migration), so an enrich / quote
 // / live-trade `platform` of pumpfun/pumpswap is the *trade venue*, NOT the

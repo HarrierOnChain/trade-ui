@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { parseTokenPath, tokenHref } from "../../lib/tokenHref";
+import { swapsOn } from "../../lib/chains";
 import { useClientNav } from "./ClientPages";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useApp } from "../../contexts/AppContext";
@@ -33,32 +34,24 @@ import { useDeployStream } from "../../hooks/useDeployStream";
 import { useMigratingStream } from "../../hooks/useMigratingStream";
 import { useMigrationStream } from "../../hooks/useMigrationStream";
 import {
-  useTrackerStream,
-  type TrackedWallet,
-  type TrackerAlert,
-} from "../../hooks/useTrackerStream";
+  useWalletTradeStream,
+  type StreamWallet,
+  type WalletTradeAlert,
+} from "../../hooks/useWalletTradeStream";
 import { Icon, QuoteAssetIcon, SolAmount, TokenIcon, Tooltip } from "../atoms";
-import { useXTracker, useXTweetFeed } from "../../hooks/useXTracker";
-import { useRegion } from "../../contexts/RegionContext";
 import type { QuoteMint } from "../../lib/quoteMints";
-import { proxiedAvatarUrl } from "../../api/xstream";
-import { TweetRow, authorAvatarFromPayload } from "../XTrackerColumn/TweetRow";
 import { fmtMcap, fmtNum, fmtUsd, shortAddr } from "../../lib/format";
 import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import {
   PORTFOLIO_STORAGE_KEY,
-  WATCHLIST_STORAGE_KEY,
   readUserWallets,
-  readWatchlist,
-} from "../../lib/trackerWallets";
+} from "../../lib/userWalletsMirror";
 import { useHiddenMints } from "../../lib/hiddenTokens";
-import { useActiveTokenMint } from "../../lib/activeToken";
 import { useRowImage } from "../../hooks/useRowImage";
 import type { TokenEvent } from "../../types";
 import {
   useTapeKinds,
   TAPE_KINDS,
-  DEFAULT_TAPE_KINDS,
   TAPE_VIEW_LABEL,
   type TapeKind,
 } from "../../hooks/useTapeKinds";
@@ -78,7 +71,6 @@ type TokenEventKind = "deploy" | "migrating" | "migration" | "trending";
 type TapeItem = TokenEvent & { _kind: TokenEventKind; _ts: number };
 
 const SIDEBAR_PAGE_KEY = "spool.sidebar.page";
-const WALLETS_STORAGE_KEY = PORTFOLIO_STORAGE_KEY;
 const TAPE_LIMIT = 60;
 
 const PAGES: { id: SidebarPage; label: string }[] = [
@@ -92,8 +84,6 @@ const TAPE_EMPTY_COPY: Record<TapeKind, string> = {
   migration: "Waiting for migrations…",
   trending: "Waiting for trending tokens…",
   mine: "Waiting for trades on your wallets…",
-  watch: "Waiting for tracked-wallet trades…",
-  x: "Waiting for new posts…",
 };
 
 interface StoredWallet {
@@ -101,35 +91,9 @@ interface StoredWallet {
   label: string;
   address: string;
   createdAt: string;
-  isPlaceholder?: boolean;
   active?: boolean;
-  /** Wallet kind; used to render the DEMO pill and route reset/quick-trade. */
-  kind?: "PHANTOM" | "PLATFORM" | "DEMO" | "PRIVY";
-}
-
-const WALLETS_CHANGED_EVENT = "terminal:wallets-changed";
-
-function emitWalletsChanged() {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new Event(WALLETS_CHANGED_EVENT));
-}
-
-function writeStoredWallets(wallets: StoredWallet[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(WALLETS_STORAGE_KEY, JSON.stringify(wallets));
-    emitWalletsChanged();
-  } catch {
-    /* quota / private mode — non-fatal */
-  }
-}
-
-function toggleStoredWalletActive(id: string) {
-  const current = readStoredWallets();
-  const next = current.map((w) =>
-    w.id === id ? { ...w, active: !w.active } : w
-  );
-  writeStoredWallets(next);
+  /** Wallet kind; WATCH has no key (no quick trade). */
+  kind?: "PLATFORM" | "WATCH";
 }
 
 function readStoredPage(): SidebarPage {
@@ -326,22 +290,6 @@ function DropdownCheckItem({ option }: { option: DropdownOption }) {
       />
     </button>
   );
-}
-
-function readStoredWallets(): StoredWallet[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(WALLETS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (w): w is StoredWallet =>
-        w && typeof w.id === "string" && typeof w.label === "string" && typeof w.address === "string"
-    );
-  } catch {
-    return [];
-  }
 }
 
 export function Sidebar() {
@@ -575,17 +523,15 @@ function getTapeEmptyCopy(kinds: TapeKind[]) {
 }
 
 // Discriminated feed item — one of these per row in the unified Tape.
-// Token-event kinds carry a TapeItem, wallet trades carry an alert, X
-// tweets carry a tweet. Sorted purely by `ts`.
+// Token-event kinds carry a TapeItem, wallet trades carry an alert. Sorted
+// purely by `ts`.
 type TapeFeedItem =
   | { kind: "token"; ts: number; token: TapeItem }
-  | { kind: "alert"; ts: number; alert: TrackerAlert }
-  | { kind: "tweet"; ts: number; tweet: ReturnType<typeof useXTweetFeed>["tweets"][number] };
+  | { kind: "alert"; ts: number; alert: WalletTradeAlert };
 
 function TapePage({ kinds }: { kinds: TapeKind[] }) {
   const { navigate } = useClientNav();
   const hiddenMints = useHiddenMints();
-  const { region } = useRegion();
 
   // Token-event sources.
   const { tokens: deploys } = useDeployStream();
@@ -593,40 +539,25 @@ function TapePage({ kinds }: { kinds: TapeKind[] }) {
   const { tokens: migs } = useMigrationStream();
   const { tokens: trending } = useAlertStream();
 
-  // Wallet sources for trade alerts. Mirror the prior TrackerPage
-  // hydrate path so we pick up the same Portfolio + watchlist data.
-  const [userWallets, setUserWalletsState] = useState<TrackedWallet[]>([]);
-  const [watchlist, setWatchlist] = useState<TrackedWallet[]>([]);
+  // Wallet source for trade alerts: the user's own wallets.
+  const [userWallets, setUserWalletsState] = useState<StreamWallet[]>([]);
   useEffect(() => {
     setUserWalletsState(readUserWallets());
-    setWatchlist(readWatchlist());
     const onStorage = (e: StorageEvent) => {
       if (e.key === PORTFOLIO_STORAGE_KEY) setUserWalletsState(readUserWallets());
-      if (e.key === WATCHLIST_STORAGE_KEY) setWatchlist(readWatchlist());
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   // Only subscribe upstream signers when the user has actually selected
-  // mine/watch — keeps the WS quiet when the tape is showing only X or
-  // token events.
-  const tracedWallets = useMemo<TrackedWallet[]>(() => {
-    const out: TrackedWallet[] = [];
-    if (kinds.includes("mine")) out.push(...userWallets);
-    if (kinds.includes("watch")) out.push(...watchlist);
-    return out;
-  }, [kinds, userWallets, watchlist]);
-
-  const trackerStream = useTrackerStream(tracedWallets, { maxAlerts: 60, seedLimit: 5 });
-
-  // X tweets — same gating: only subscribe when "x" is checked.
-  const xTracker = useXTracker();
-  const xUsernames = useMemo(
-    () => kinds.includes("x") ? xTracker.handles.map((h) => h.handle.username) : [],
-    [kinds, xTracker.handles],
+  // "mine" — keeps the WS quiet when the tape is showing only token events.
+  const tracedWallets = useMemo<StreamWallet[]>(
+    () => (kinds.includes("mine") ? userWallets : []),
+    [kinds, userWallets],
   );
-  const xFeed = useXTweetFeed(xUsernames);
+
+  const walletStream = useWalletTradeStream(tracedWallets, { maxAlerts: 60, seedLimit: 5 });
 
   const items = useMemo<TapeFeedItem[]>(() => {
     const out: TapeFeedItem[] = [];
@@ -663,20 +594,15 @@ function TapePage({ kinds }: { kinds: TapeKind[] }) {
         out.push({ kind: "token", ts, token: { ...t, _kind: "trending", _ts: ts } });
       }
     }
-    if (selected.has("mine") || selected.has("watch")) {
-      for (const a of trackerStream.alerts) {
+    if (selected.has("mine")) {
+      for (const a of walletStream.alerts) {
         if (hiddenMints.has(a.tokenMint)) continue;
         out.push({ kind: "alert", ts: a.timestamp, alert: a });
       }
     }
-    if (selected.has("x")) {
-      for (const t of xFeed.tweets) {
-        out.push({ kind: "tweet", ts: Date.parse(t.postedAt), tweet: t });
-      }
-    }
 
     return out.sort((x, y) => y.ts - x.ts).slice(0, TAPE_LIMIT);
-  }, [deploys, migrating, migs, trending, trackerStream.alerts, xFeed.tweets, kinds, hiddenMints]);
+  }, [deploys, migrating, migs, trending, walletStream.alerts, kinds, hiddenMints]);
 
   return (
     <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -700,29 +626,11 @@ function TapePage({ kinds }: { kinds: TapeKind[] }) {
             />
           );
         }
-        if (item.kind === "alert") {
-          return (
-            <TrackerAlertRow
-              key={`al:${item.alert.id}`}
-              alert={item.alert}
-              onClick={() => navigate(tokenHref(item.alert.tokenMint))}
-            />
-          );
-        }
-        // tweet
-        const handle = xTracker.handles.find((h) => h.handle.username === item.tweet.username)?.handle;
         return (
-          <TweetRow
-            key={`tw:${item.tweet.username}:${item.tweet.tweetId}`}
-            username={item.tweet.username}
-            tweetId={item.tweet.tweetId}
-            text={item.tweet.text}
-            postedAt={item.tweet.postedAt}
-            verified={handle?.verified ?? false}
-            avatarUrl={proxiedAvatarUrl(
-              handle?.avatarUrl ?? authorAvatarFromPayload(item.tweet.payload) ?? null,
-              region.baseUrl,
-            )}
+          <WalletTradeRow
+            key={`al:${item.alert.id}`}
+            alert={item.alert}
+            onClick={() => navigate(tokenHref(item.alert.tokenMint))}
           />
         );
       })}
@@ -807,18 +715,8 @@ function TapeRow({ t, onClick, rowIndex = 0 }: { t: TapeItem; onClick: () => voi
   // Subline chip set — show whichever fields exist. Cap at 3 chips so the
   // line doesn't wrap on a 264px sidebar.
   const chips: React.ReactNode[] = [];
-  const hasDevBuy = t.creatorBuySol != null && t.creatorBuySol > 0;
-  const hasCreatorCounts =
-    t.creatorDeploys != null || t.creatorMigrations != null;
-  if (hasDevBuy || hasCreatorCounts) {
-    const devValue = [
-      hasDevBuy ? `${t.creatorBuySol!.toFixed(2)}◎` : null,
-      hasCreatorCounts
-        ? `${t.creatorMigrations ?? "–"}/${t.creatorDeploys ?? "–"}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
+  if (t.creatorDeploys != null) {
+    const devValue = String(t.creatorDeploys);
     chips.push(
       <TapeChip
         key="dev"
@@ -975,9 +873,6 @@ function WalletsPage({ view }: { view: WalletsView }) {
   const wallets: StoredWallet[] = useMemo(
     () =>
       userWallets.wallets
-        // Demo (paper) wallets are managed only from the Portfolio Demo view —
-        // keep them out of the left-sidebar wallet list and its balance totals.
-        .filter((w) => !w.isConnected && w.kind !== "DEMO")
         .map((w) => ({
           id: w.id,
           label: w.displayLabel,
@@ -988,22 +883,12 @@ function WalletsPage({ view }: { view: WalletsView }) {
         })),
     [userWallets.wallets, userWallets.activeIds],
   );
-  // Holdings aggregates on-chain platform wallets only — paper/demo balances
-  // are excluded so the view reflects real token positions.
-  const holdingsWallets = useMemo(
-    () => wallets.filter((w) => w.kind !== "DEMO"),
-    [wallets],
-  );
+  const holdingsWallets = wallets;
 
-  // The /deploy page goes live in-place (URL relabelled via replaceState, no
-  // Next navigation), so usePathname() stays "/deploy" there. Fall back to the
-  // shell-level active-token signal the deploy page publishes.
-  const fallbackMint = useActiveTokenMint();
   const activeMint = useMemo(() => {
     const parsed = pathname ? parseTokenPath(pathname) : null;
-    if (parsed?.address) return parsed.address;
-    return fallbackMint;
-  }, [pathname, fallbackMint]);
+    return parsed?.address ?? null;
+  }, [pathname]);
   const { info } = useTokenInfo(activeMint);
   const hasToken = !!activeMint;
   const balances = userWallets.balances;
@@ -1305,7 +1190,6 @@ function WalletRow({
   loading: boolean;
   onClick: () => void;
 }) {
-  const disabled = !!wallet.isPlaceholder;
   const selected = !!wallet.active;
   const hasToken = !!activeMint;
 
@@ -1341,11 +1225,13 @@ function WalletRow({
     .map((s) => String(s).replace(/%/g, ""))
     .filter((s) => isValidPresetValue(s));
 
-  const canSell = hasToken && balanceKnown && tokenBalance > 0;
+  // Quick trades need a key and a chain the router swaps on.
+  const canTrade = hasToken && swapsOn() && wallet.kind !== "WATCH";
+  const canSell = canTrade && balanceKnown && tokenBalance > 0;
 
   return (
     <div
-      onClick={disabled ? undefined : onClick}
+      onClick={onClick}
       style={{
         display: "flex", alignItems: "center",
         gap: 8,
@@ -1353,27 +1239,26 @@ function WalletRow({
         borderBottom: "1px solid var(--line-soft)",
         borderLeft: selected ? "2px solid var(--accent)" : "2px solid transparent",
         background: selected ? "var(--accent-dim)" : "transparent",
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.6 : 1,
+        cursor: "pointer",
         transition: "background 120ms",
       }}
       onMouseEnter={(e) => {
-        if (!disabled && !selected) e.currentTarget.style.background = "var(--ink-2)";
+        if (!selected) e.currentTarget.style.background = "var(--ink-2)";
       }}
       onMouseLeave={(e) => {
         if (!selected) e.currentTarget.style.background = "transparent";
       }}
     >
       {/* Quick Buy ⚡ */}
-      {hasToken && (
+      {canTrade && (
         <BoltButton
           tone="buy"
           busy={buyBusy}
-          disabled={disabled}
+          disabled={false}
           onClick={() => { if (quickBuyAmount > 0) void runBuy(quickBuyAmount, wallet.id); }}
           fan={buyFan.map((raw) => ({
             label: formatBuyPreset(raw),
-            disabled: disabled || buyBusy,
+            disabled: buyBusy,
             onClick: () => {
               const n = Number(resolvePresetValue(raw));
               if (Number.isFinite(n) && n > 0) void runBuy(n, wallet.id);
@@ -1413,25 +1298,8 @@ function WalletRow({
           gap: 6,
         }}
       >
-        {wallet.kind === "DEMO" && (
-          <span
-            className="mono"
-            style={{
-              fontSize: 9,
-              padding: "1px 5px",
-              borderRadius: 3,
-              background: "var(--amber-dim, rgba(255, 176, 32, 0.18))",
-              color: "var(--amber, #ffb020)",
-              border: "1px solid var(--amber, #ffb020)",
-              letterSpacing: 0.5,
-              flexShrink: 0,
-            }}
-          >
-            DEMO
-          </span>
-        )}
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {wallet.label || (disabled ? "PENDING" : shortAddr(wallet.address, 5))}
+          {wallet.label || shortAddr(wallet.address, 5)}
         </span>
       </span>
 
@@ -1451,15 +1319,15 @@ function WalletRow({
       )}
 
       {/* Quick Sell ⚡ */}
-      {hasToken && (
+      {canTrade && (
         <BoltButton
           tone="sell"
           busy={sellBusy}
-          disabled={disabled || !canSell}
+          disabled={!canSell}
           onClick={() => void runSell(100, wallet.id)}
           fan={sellFan.map((raw) => ({
             label: `${formatSellPreset(raw)}%`,
-            disabled: disabled || sellBusy || !canSell,
+            disabled: sellBusy || !canSell,
             onClick: () => {
               const n = Number(resolvePresetValue(raw));
               if (Number.isFinite(n) && n > 0) void runSell(n, wallet.id);
@@ -1643,14 +1511,13 @@ function SortGlyph() {
   );
 }
 
-/* TrackerAlertRow renders a wallet-trade event in the merged Tape feed.
-   Originally lived in the deleted TrackerPage; the row component itself
-   stayed because Tape now uses it for mine/watch sources. */
-function TrackerAlertRow({
+/* WalletTradeRow renders a trade of one of the user's wallets in the
+   merged Tape feed ("My Wallets" lane). */
+function WalletTradeRow({
   alert,
   onClick,
 }: {
-  alert: TrackerAlert;
+  alert: WalletTradeAlert;
   onClick: () => void;
 }) {
   const ageRef = useRef<HTMLSpanElement>(null);
@@ -1701,15 +1568,13 @@ function TrackerAlertRow({
           }}>
             {alert.side}
           </span>
-          <Tooltip content={alert.walletSource === "user" ? "My wallet" : "Watchlist"}>
+          <Tooltip content="My wallet">
             <span
               style={{
                 display: "inline-block",
                 width: 6, height: 6, borderRadius: 999,
                 flexShrink: 0,
-                background: alert.walletSource === "user"
-                  ? "var(--accent)"
-                  : "oklch(0.74 0.13 75)",
+                background: "var(--accent)",
               }}
             />
           </Tooltip>

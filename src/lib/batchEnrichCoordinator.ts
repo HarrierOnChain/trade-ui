@@ -1,46 +1,24 @@
 import { fetchBatchTokenEnrich } from "../api/client";
 
 export interface BatchEnrichEntry {
-  bundle_percentage?: number;
-  sniper_percentage?: number;
-  trade_count?: number;
-  total_sol_volume?: number;
-  volume_24h?: number;
-  fees_total?: number;
-  unique_traders?: number;
-  holders?: number;
-  buy_count?: number;
-  sell_count?: number;
-  bundle_trades?: number;
-  sniper_trades?: number;
-  deploys_by_creator?: number;
-  migrations_by_creator?: number;
-  creator_deploys?: number;
-  creator_migrations?: number;
-  creatorDeploys?: number;
-  creatorMigrations?: number;
-  signer?: string;
-  platform?: string;
-  dex?: string;
-  creator_buy_sol?: number;
-  creator_buy_tokens?: number;
-  creator_buy_price?: number;
-  creatorBuySol?: number;
-  creatorBuyTokens?: number;
-  creatorBuyPrice?: number;
-  last_price?: number;
-  lastPrice?: number;
   name?: string;
   symbol?: string;
-  uri?: string;
-  image?: string;
-  image_uri?: string;
-  sparkline?: number[];
+  /** 24h volume, USD. */
+  volume_24h?: number;
+  /** 24h volume in the chain's native coin. */
+  total_sol_volume?: number;
+  trade_count?: number;
+  buy_count?: number;
+  sell_count?: number;
+  holders?: number;
   /** 24h price change, percent. */
   priceChange?: number;
-  marketCap?: number;
-  liquidity?: number;
-  graduationPercent?: number;
+  bundle_percentage?: number;
+  sniper_percentage?: number;
+  /** Tokens the creator launched. */
+  creatorDeploys?: number;
+  signer?: string;
+  platform?: string;
 }
 
 type PatchCallback = (data: Record<string, BatchEnrichEntry>) => void;

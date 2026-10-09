@@ -6,10 +6,7 @@ import { fmtSol, shortAddr } from "../../lib/format";
 import { getActiveChain } from "../../lib/chains";
 import { useUserWallets, type UserWallet } from "../../hooks/useUserWallets";
 import { WalletAvatar } from "../WalletAvatar";
-import { readWalletAvatars } from "../../app/portfolio/_components/preferences";
-import { BrowserWalletSection } from "./BrowserWalletSection";
-
-const WALLET_PREFS_EVENT = "portfolio:wallet-prefs";
+import { useClientNav } from "../shell/ClientPages";
 
 interface Props {
   anchorRef: React.RefObject<HTMLElement | null>;
@@ -30,15 +27,13 @@ const USD1_MINT = "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB";
 export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer }: Props) {
   const userWallets = useUserWallets();
   const { activeIds, toggleActive } = userWallets;
+  const { navigate } = useClientNav();
+  const manage = () => {
+    onClose();
+    navigate("/wallets");
+  };
   const popupRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
-  const [avatars, setAvatars] = useState<Record<string, string>>(() => readWalletAvatars());
-
-  useEffect(() => {
-    const sync = () => setAvatars(readWalletAvatars());
-    window.addEventListener(WALLET_PREFS_EVENT, sync);
-    return () => window.removeEventListener(WALLET_PREFS_EVENT, sync);
-  }, []);
 
   useEffect(() => {
     if (inline) return;
@@ -68,18 +63,8 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
   }, [anchorRef, onClose]);
 
   const platformWallets = userWallets.wallets.filter((w) => w.kind === "PLATFORM");
-  const demoWallet = userWallets.wallets.find((w) => w.kind === "DEMO") ?? null;
-  const isDemoMode = demoWallet != null && activeIds.has(demoWallet.id);
   const activePlatformCount = platformWallets.filter((w) => activeIds.has(w.id)).length;
   const noPlatforms = platformWallets.length === 0;
-
-  function selectLive() {
-    if (demoWallet && activeIds.has(demoWallet.id)) toggleActive(demoWallet.id);
-  }
-
-  function selectDemo() {
-    if (demoWallet) toggleActive(demoWallet.id);
-  }
 
   if (!inline && !pos) return null;
 
@@ -128,65 +113,24 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
           Wallets
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-          {demoWallet && (
-            <div
-              role="tablist"
-              aria-label="Trading mode"
-              style={{
-                display: "inline-flex", gap: 2, padding: 2, borderRadius: 999,
-                background: "var(--ink-2)", border: "1px solid var(--line-soft)",
-              }}
-            >
-              {(["live", "demo"] as const).map((mode) => {
-                const on = mode === "demo" ? isDemoMode : !isDemoMode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => (mode === "demo" ? selectDemo() : selectLive())}
-                    style={{
-                      padding: "3px 10px", borderRadius: 999, border: "none", cursor: "pointer",
-                      fontSize: 9, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
-                      fontFamily: "var(--font-mono)",
-                      background: on ? (mode === "demo" ? "var(--gold, #ffb020)" : "var(--accent)") : "transparent",
-                      color: on ? "var(--ink-0)" : "var(--paper-4)",
-                      transition: "background 120ms, color 120ms",
-                    }}
-                  >
-                    {mode === "live" ? "Live" : "Demo"}
-                  </button>
-                );
-              })}
-            </div>
-          )}
           <span
             style={{
               fontSize: 9,
               fontWeight: 600,
               padding: "2px 7px",
               borderRadius: 999,
-              background: isDemoMode
-                ? "rgba(255,176,32,0.11)"
-                : activePlatformCount > 0 ? "rgba(242,200,107,0.11)" : "var(--ink-2)",
-              color: isDemoMode
-                ? "var(--gold, #ffb020)"
-                : activePlatformCount > 0 ? "var(--amber, #F2C86B)" : "var(--paper-3)",
-              border: `1px solid ${isDemoMode
-                ? "rgba(255,176,32,0.24)"
-                : activePlatformCount > 0 ? "rgba(242,200,107,0.24)" : "var(--line-soft)"}`,
+              background: activePlatformCount > 0 ? "rgba(242,200,107,0.11)" : "var(--ink-2)",
+              color: activePlatformCount > 0 ? "var(--amber, #F2C86B)" : "var(--paper-3)",
+              border: `1px solid ${activePlatformCount > 0 ? "rgba(242,200,107,0.24)" : "var(--line-soft)"}`,
               fontFamily: "var(--font-mono)",
               letterSpacing: 0.3,
               flexShrink: 0,
             }}
           >
-            {isDemoMode ? "Paper" : `${activePlatformCount} / ${platformWallets.length}`}
+            {`${activePlatformCount} / ${platformWallets.length}`}
           </span>
         </div>
       </div>
-
-      {!isDemoMode && getActiveChain() === "sol" && <BrowserWalletSection />}
 
       {/* Wallet list */}
       <div
@@ -197,26 +141,12 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
           flexDirection: "column",
         }}
       >
-        {isDemoMode && demoWallet ? (
-          <WalletRow
-            wallet={demoWallet}
-            index={0}
-            active
-            customGlyph={avatars[demoWallet.id] ?? null}
-            sol={demoWallet.solBalance ?? userWallets.balances[demoWallet.id]?.sol ?? 0}
-            tokens={userWallets.balances[demoWallet.id]?.tokens ?? {}}
-            usdcBalance={demoWallet.usdcBalance ?? 0}
-            onClick={() => {}}
-          />
-        ) : (
-          <>
-            {platformWallets.map((w, i) => (
+        {platformWallets.map((w, i) => (
               <WalletRow
                 key={w.id}
                 wallet={w}
                 index={i}
                 active={activeIds.has(w.id)}
-                customGlyph={avatars[w.id] ?? null}
                 sol={userWallets.balances[w.id]?.sol ?? 0}
                 tokens={userWallets.balances[w.id]?.tokens ?? {}}
                 onClick={() => toggleActive(w.id)}
@@ -235,26 +165,36 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
                   textAlign: "center",
                 }}
               >
-                {userWallets.loading
-                  ? "Loading wallets…"
-                  : "No local wallets. Add one to trade without a wallet prompt."}
+                {userWallets.loading ? "Loading wallets…" : (
+                  <>
+                    No wallet with a key on {getActiveChain() === "sol" ? "Solana" : "this chain"} yet.
+                    <br />
+                    <button type="button" onClick={manage} style={{
+                      marginTop: 8, padding: "5px 10px", borderRadius: 6, cursor: "pointer",
+                      background: "var(--accent)", color: "var(--ink-0)", border: 0, fontSize: 11, fontWeight: 600,
+                    }}>Add a wallet</button>
+                  </>
+                )}
               </div>
             )}
-          </>
-        )}
       </div>
 
-      {footer && (
-        <div
-          style={{
-            borderTop: "1px solid var(--line-soft)",
-            padding: "6px 10px",
-            flexShrink: 0,
-          }}
-        >
-          {footer}
-        </div>
-      )}
+      <div
+        style={{
+          borderTop: "1px solid var(--line-soft)",
+          padding: "6px 10px",
+          flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+        }}
+      >
+        {footer ?? <span />}
+        <button type="button" onClick={manage} style={{
+          background: "transparent", border: 0, padding: "4px 2px", cursor: "pointer",
+          color: "var(--paper-3)", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 6,
+        }}>
+          {Icon.key(11)} Manage wallets
+        </button>
+      </div>
     </div>
   );
 
@@ -266,38 +206,25 @@ function WalletRow({
   wallet,
   index,
   active,
-  customGlyph,
   sol,
   tokens,
-  usdcBalance,
   onClick,
 }: {
   wallet: UserWallet;
   index: number;
   active: boolean;
-  customGlyph: string | null;
   sol: number;
   tokens: Record<string, number>;
-  usdcBalance?: number;
   onClick: () => void;
 }) {
-  const isDemo = wallet.kind === "DEMO";
-  const accentColor = isDemo ? "#ffb020" : "var(--amber, #F2C86B)";
+  const accentColor = "var(--amber, #F2C86B)";
 
-  const usdcBal = usdcBalance ?? tokens[USDC_MINT] ?? 0;
+  const usdcBal = tokens[USDC_MINT] ?? 0;
   const usd1Bal = tokens[USD1_MINT] ?? 0;
   const stableBal = usdcBal + usd1Bal;
 
-  const baseBg = active
-    ? isDemo
-      ? "rgba(255,176,32,0.07)"
-      : "rgba(242,200,107,0.05)"
-    : "transparent";
-  const hoverBg = active
-    ? isDemo
-      ? "rgba(255,176,32,0.12)"
-      : "rgba(242,200,107,0.09)"
-    : "var(--ink-2)";
+  const baseBg = active ? "rgba(242,200,107,0.05)" : "transparent";
+  const hoverBg = active ? "rgba(242,200,107,0.09)" : "var(--ink-2)";
 
   async function copy(e: React.MouseEvent) {
     e.stopPropagation();
@@ -333,10 +260,8 @@ function WalletRow({
     >
       <WalletAvatar
         label={wallet.displayLabel}
-        kind={wallet.kind}
         index={index}
         size={30}
-        customGlyph={customGlyph}
         selected={active}
       />
 
@@ -370,23 +295,6 @@ function WalletRow({
           >
             {wallet.displayLabel}
           </span>
-          {isDemo && (
-            <span
-              style={{
-                flexShrink: 0,
-                fontSize: 8,
-                letterSpacing: 0.5,
-                padding: "1px 4px",
-                borderRadius: 3,
-                background: "rgba(255,176,32,0.14)",
-                color: "#ffb020",
-                border: "1px solid rgba(255,176,32,0.3)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              DEMO
-            </span>
-          )}
         </div>
         <span
           role="button"

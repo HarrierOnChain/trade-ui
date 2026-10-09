@@ -1,0 +1,27 @@
+# Trade UI on a VPS, behind HTTPS (see deploy/Caddyfile and the README).
+#
+#   cp .env.example .env    # RAZE_API_KEY, TRADE_UI_PUBLIC_URL, ...
+#   docker compose up -d
+#   docker compose logs     # the first-run link with the setup code
+services:
+  trade-ui:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    # Fixed for the container, whatever .env says: listen on its own
+    # interface (the port above stays on 127.0.0.1) and keep the vault on the
+    # volume.
+    environment:
+      HOST: 0.0.0.0
+      TRADE_UI_DATA_DIR: /data
+    # Only the reverse proxy on this machine reaches it.
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - trade-ui-data:/data
+    # The unlocked key lives in the server's memory: no core dumps of it.
+    ulimits:
+      core: 0
+
+volumes:
+  trade-ui-data:

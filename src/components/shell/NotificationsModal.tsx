@@ -7,9 +7,7 @@ import {
   TOAST_POSITIONS,
   type ToastPosition,
   useNotifDisplay,
-  useNotifAlerts,
   useNotifFillToasts,
-  useNotifTweetAlerts,
   useNotifPosition,
   useNotifSound,
   useNotifVolume,
@@ -34,9 +32,7 @@ export function NotificationsModal() {
 
 function NotificationsBody({ onClose }: { onClose: () => void }) {
   const [display, setDisplay] = useNotifDisplay();
-  const [alerts, setAlerts] = useNotifAlerts();
   const [fillToasts, setFillToasts] = useNotifFillToasts();
-  const [tweetAlerts, setTweetAlerts] = useNotifTweetAlerts();
   const [position, setPosition] = useNotifPosition();
   const [sound, setSound] = useNotifSound();
   const [volume, setVolume] = useNotifVolume();
@@ -49,15 +45,9 @@ function NotificationsBody({ onClose }: { onClose: () => void }) {
       <div style={{ flex: 1, overflow: "auto", padding: "16px 20px", background: "var(--ink-1)" }}>
         <ToggleRow
           label="Display notifications"
-          hint="Show wallet-tracker and trade toasts on screen."
+          hint="Show trade toasts on screen."
           on={display}
           onChange={setDisplay}
-        />
-        <ToggleRow
-          label="Live alerts panel"
-          hint="Show streaming alerts in the bell panel at the top right."
-          on={alerts}
-          onChange={setAlerts}
         />
         <ToggleRow
           label="Trade-fill toasts"
@@ -65,12 +55,6 @@ function NotificationsBody({ onClose }: { onClose: () => void }) {
           on={fillToasts}
           onChange={setFillToasts}
           disabled={!display}
-        />
-        <ToggleRow
-          label="Tweet alerts"
-          hint="Toast + bell entry the moment a tracked X handle posts."
-          on={tweetAlerts}
-          onChange={setTweetAlerts}
         />
 
         <FieldLabel>Toast Position</FieldLabel>
@@ -168,16 +152,11 @@ function SoundRow({ label, onPreview }: { label: string; onPreview: () => void }
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12 }}>
       <span style={{ fontSize: 12, color: "var(--paper-2)" }}>{label}</span>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8,
-        background: "var(--ink-0)", border: "1px solid var(--line-soft)", borderRadius: 7,
-        padding: "6px 8px 6px 11px",
-      }}>
-        <span style={{ display: "inline-flex", color: "var(--paper-3)" }}>{Icon.speaker(13)}</span>
-        <span style={{ fontSize: 12, color: "var(--paper)", minWidth: 48 }}>Default</span>
+      <div style={{ display: "flex", alignItems: "center" }}>
         <button
           type="button"
           aria-label={`Preview ${label}`}
+          title="Preview"
           onClick={onPreview}
           style={{
             width: 24, height: 24, display: "inline-flex", alignItems: "center", justifyContent: "center",

@@ -1,9 +1,5 @@
 "use client";
-import {
-  fetchPublicMetadata,
-  fetchMetadataFromUri,
-  metadataUriToHttp,
-} from "../api/metadata";
+import { fetchPublicMetadata } from "../api/metadata";
 import { runPooled } from "../lib/requestPool";
 import type { TokenEvent } from "../types";
 
@@ -51,22 +47,8 @@ function patchTokenMeta(
   );
 }
 
-function stillNeedsHistoryApi(
-  token: TokenEvent,
-  uriMeta: { name?: string; symbol?: string; image?: string },
-): boolean {
-  return (
-    (!token.name && !uriMeta.name) ||
-    (!token.symbol && !uriMeta.symbol) ||
-    (!token.image && !uriMeta.image) ||
-    !token.twitter ||
-    !token.telegram ||
-    !token.website
-  );
-}
-
 /**
- * Fetch off-chain metadata (image, socials) for a token and patch it into
+ * Fetch metadata (image, socials) for a token and patch it into
  * the tokens list. Work is pooled so a 20-row feed cannot spawn 40+ parallel
  * wire calls.
  */
@@ -77,15 +59,6 @@ export function enrichWithMeta(
   if (!needsEnrich(token)) return;
 
   void runPooled(async () => {
-    const rawUri = token.uri?.trim();
-    let uriMeta: Awaited<ReturnType<typeof fetchMetadataFromUri>> = {};
-
-    if (rawUri) {
-      uriMeta = await fetchMetadataFromUri(metadataUriToHttp(rawUri));
-      patchTokenMeta(token, uriMeta, setTokens);
-      if (!stillNeedsHistoryApi(token, uriMeta)) return;
-    }
-
     const meta = await fetchPublicMetadata(token.mint_address);
     patchTokenMeta(token, meta, setTokens);
   });

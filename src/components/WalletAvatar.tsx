@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import type { WalletKind } from "../api/backend";
 import {
   walletAvatarColor,
   walletAvatarFontSize,
@@ -10,10 +9,8 @@ import {
 
 export interface WalletAvatarProps {
   label: string;
-  kind: WalletKind;
   index?: number;
   size?: number;
-  customGlyph?: string | null;
   selected?: boolean;
   title?: string;
   onClick?: (e: React.MouseEvent) => void;
@@ -21,16 +18,14 @@ export interface WalletAvatarProps {
 
 export function WalletAvatar({
   label,
-  kind,
   index = 0,
   size = 30,
-  customGlyph,
   selected = false,
   title,
   onClick,
 }: WalletAvatarProps) {
-  const glyph = walletDisplayGlyph(label, customGlyph);
-  const color = walletAvatarColor(index, kind);
+  const glyph = walletDisplayGlyph(label);
+  const color = walletAvatarColor(index);
   const ring = selected ? "var(--accent)" : color;
   const fontSize = walletAvatarFontSize(glyph, size);
 

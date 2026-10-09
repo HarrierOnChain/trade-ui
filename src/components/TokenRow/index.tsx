@@ -1,14 +1,13 @@
 "use client";
 import React, { memo, useEffect, useRef, useState } from "react";
 import { TokenAvatarFrame, Sparkline, Change, TokenSocialLinks, Icon, SolAmount, QuoteAmount, Tooltip, MayhemCountdown, ChainIcon } from "../atoms";
-import { useCloneToken } from "../../hooks/useCloneToken";
 import { fmtMcap, fmtNum, fmtPrice, fmtSol, fmtUsd, shortAddr, tokenVolumeUsd } from "../../lib/format";
 import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { useLastSeen } from "../../contexts/LastSeenContext";
 import { useApp } from "../../contexts/AppContext";
 import { useHiddenTokens } from "../../lib/hiddenTokens";
 import { fetchPublicMetadata } from "../../api/metadata";
-import { streamSettledDelay } from "../../lib/wire/events";
+import { streamSettledDelay } from "../../lib/streamSettle";
 import { useQuickBuy } from "../../hooks/useQuickBuy";
 import { useQuickBuyAmount } from "../../hooks/useQuickBuyAmount";
 import { useBuyQuoteMint } from "../../hooks/useBuyQuoteMint";
@@ -16,10 +15,9 @@ import { useRowImage } from "../../hooks/useRowImage";
 import { useHiddenDevs } from "../../lib/hiddenDevs";
 import { useCardStyle } from "../../contexts/CardStyleContext";
 import { useIsPhone } from "../../hooks/useMediaQuery";
-import { getActiveChain, isChainId } from "../../lib/chains";
+import { getActiveChain, isChainId, swapsOn } from "../../lib/chains";
 import type { TokenEvent } from "../../types";
 import type { LivePrice } from "../../hooks/useLiveTradePrices";
-import type { TokenXSignal } from "../../lib/xTrending";
 
 export type TokenRowVariant = "deploy" | "migration" | "trending";
 
@@ -28,20 +26,15 @@ interface Props {
   variant?: TokenRowVariant;
   live?: LivePrice;
   solPrice?: number;
-  /** On-chain total supply. Rows omit it and keep the pump.fun 1e9 default;
-   *  when passed, mcap = price × supply × nativeUSD uses it. */
-  supply?: number;
   active?: boolean;
+  /** Time the row by its migration (the Migrated column) instead of its creation. */
   showMigrated?: boolean;
-  rank?: number;
   /** Monitor row index — staggers metadata fetches after stream subs. */
   rowIndex?: number;
-  xSignal?: TokenXSignal;
   /** Per-column quick-buy scope — routes the hover ⚡ overlay to this column's
    *  own amount (see useQuickBuyAmount). Undefined = legacy global amount. */
   quickBuyScope?: string;
   onClick?: (mint: string) => void;
-  onXSignalClick?: (token: TokenEvent) => void;
 }
 
 export const TokenRow = memo(function TokenRow({
@@ -49,46 +42,31 @@ export const TokenRow = memo(function TokenRow({
   variant = "trending",
   live,
   solPrice,
-  supply,
   active,
   showMigrated,
-  rank,
   rowIndex = 0,
-  xSignal,
   quickBuyScope,
   onClick,
-  onXSignalClick,
 }: Props) {
   const { openWalletModal } = useApp();
   const { showSparkline } = useCardStyle();
   const isPhone = useIsPhone();
-  // On phones the row is in a single full-width column: drop the rank gutter
-  // and the sparkline cell, and let the metric track shrink so the avatar +
-  // identity keep room. Desktop is byte-identical.
-  const showRank = rank != null && !isPhone;
+  // On phones the row is in a single full-width column: drop the sparkline
+  // cell, and let the metric track shrink so the avatar + identity keep room.
   const sparklineCol = showSparkline && !isPhone;
-  const fmtSolChip = (v: number, d = 2) => fmtSol(v, d);
   const rowImage = useRowImage(t.mint_address, t.image, rowIndex);
-  const devBuyValue = t.creatorBuySol != null ? fmtSolChip(t.creatorBuySol) : null;
-  // Graduations / launches by the creator. Unknown shows "–", not a made-up
-  // 0 or 1: the API reports launches (safety.creatorLaunches) but not how
-  // many graduated.
-  const creatorRatio = `${t.creatorMigrations ?? "–"}/${t.creatorDeploys ?? "–"}`;
   const rowTs = new Date(
     (showMigrated ? t.migrated_at : undefined) ?? t.created_at ?? 0
   ).getTime();
   const hasSocials = Boolean(t.twitter || t.telegram || t.website);
-  const hasXSignal = Boolean(xSignal && (xSignal.mentionCount24h > 0 || xSignal.kolCount24h > 0));
-  // The creator ratio is always populated, so the dev row always renders
-  // when this branch is reached. Keep the flag for symmetry with sibling
-  // row guards.
-  const hasDevRow = Boolean(devBuyValue) || Boolean(creatorRatio);
+  // Tokens the creator launched (the API reports launches, not graduations).
+  const hasDevRow = t.creatorDeploys != null;
 
   // Bundle/sniper — merge REST baseline with the live WS delta and clamp to [0,100],
   // matching solana-frame's monitor behavior.
   const liveBundleAdd = live?.bundleAdd ?? 0;
   const liveSniperAdd = live?.sniperAdd ?? 0;
-  const livePriceSol = live?.price ?? t.lastPrice ?? t.creatorBuyPrice;
+  const livePriceSol = live?.price ?? t.lastPrice;
   const bundle = Math.max(
     0,
     Math.min(100, Number(t.bundlePercentage ?? 0) + liveBundleAdd)
@@ -107,20 +85,14 @@ export const TokenRow = memo(function TokenRow({
   // Activity tiles — merge the 24h REST baseline with live WS deltas so the
   // numbers tick up as new trades stream in.
   const liveVolumeSol  = live?.volumeSol ?? 0;
-  const liveFeesSol    = live?.feesSol ?? 0;
   const liveTradeCount = live?.tradeCount ?? 0;
   const liveTraders    = live?.uniqueTraders ?? 0;
 
   const effectiveVolumeUsd = tokenVolumeUsd(t, solPrice, liveVolumeSol);
-  const effectiveFees    = (t.feesTotal      ?? 0) + liveFeesSol;
   const effectiveTrades  = (t.tradeCount     ?? 0) + liveTradeCount;
   // Holders: take max of known holder count vs live unique-signer count (live
   // signers may already be in the REST total; summing would double-count).
-  const effectiveHolders = Math.max(
-    t.holders ?? 0,
-    t.uniqueTraders ?? 0,
-    liveTraders,
-  );
+  const effectiveHolders = Math.max(t.holders ?? 0, liveTraders);
 
   const metricTiles: Array<{ label: string; value: string; live?: boolean; accent?: string; tone?: "warn" | "green" }> = [];
   if (effectiveVolumeUsd != null && effectiveVolumeUsd > 0) {
@@ -129,14 +101,6 @@ export const TokenRow = memo(function TokenRow({
       value: fmtUsd(effectiveVolumeUsd),
       live: liveVolumeSol > 0,
       accent: "var(--info)",
-    });
-  }
-  if (effectiveFees > 0) {
-    metricTiles.push({
-      label: "F",
-      value: fmtSolChip(effectiveFees, effectiveFees >= 1 ? 2 : 3),
-      live: liveFeesSol > 0,
-      accent: "var(--paper-4)",
     });
   }
   if (effectiveTrades > 0) {
@@ -151,7 +115,7 @@ export const TokenRow = memo(function TokenRow({
     metricTiles.push({
       label: "H",
       value: fmtNum(effectiveHolders),
-      live: liveTraders > 0 && liveTraders > (t.holders ?? 0) && liveTraders > (t.uniqueTraders ?? 0),
+      live: liveTraders > 0 && liveTraders > (t.holders ?? 0),
       accent: "var(--accent)",
     });
   }
@@ -174,9 +138,9 @@ export const TokenRow = memo(function TokenRow({
     });
   }
 
-  const priceDerivation = usePriceDerivation({ t, variant, live, solPrice, supply, change });
+  const priceDerivation = usePriceDerivation({ t, live, solPrice, change });
   const isMayhem = t.dex?.toLowerCase().includes("mayhem");
-  const hasMeta = hasDevRow || hasSocials || hasXSignal || Boolean(t.hasCashback);
+  const hasMeta = hasDevRow || hasSocials;
   const hasTimeRow =
     (Number.isFinite(rowTs) && rowTs > 0) || isMayhem;
 
@@ -189,12 +153,9 @@ export const TokenRow = memo(function TokenRow({
         display: "grid",
         // Metric track is a fixed 150px on desktop; on phones it becomes a
         // fluid minmax(80,150) so it can give space back to identity.
-        gridTemplateColumns:
-          showRank
-            ? `22px auto minmax(0,1fr) 150px${sparklineCol ? " 68px" : ""}`
-            : isPhone
-              ? `auto minmax(0,1fr) minmax(80px,150px)`
-              : `auto minmax(0,1fr) 150px${sparklineCol ? " 68px" : ""}`,
+        gridTemplateColumns: isPhone
+          ? `auto minmax(0,1fr) minmax(80px,150px)`
+          : `auto minmax(0,1fr) 150px${sparklineCol ? " 68px" : ""}`,
         alignItems: "stretch",
         gap: 12,
         padding: "7px 14px 8px 14px",
@@ -218,21 +179,6 @@ export const TokenRow = memo(function TokenRow({
           <SeenBadge tsMs={seenAt} />
         </span>
       )}
-      {showRank && rank != null && (
-        <div
-          className="mono"
-          style={{
-            fontSize: 10, fontWeight: 600,
-            color: rank <= 3 ? "var(--accent)" : "var(--paper-4)",
-            letterSpacing: "0.08em",
-            textAlign: "center",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          {String(rank).padStart(2, "0")}
-        </div>
-      )}
-
       {/* ── Column 1 — avatar + identity + meta strip ────────────────── */}
       <div style={{
         position: "relative", flexShrink: 0,
@@ -251,12 +197,11 @@ export const TokenRow = memo(function TokenRow({
           badgeSize={18}
           badgeInset={-4}
           marketCap={t.marketCap}
-          initialMarketCap={t.initialMarketCap}
           priceSol={livePriceSol}
           solPrice={solPrice}
           progressPercent={t.graduationPercent}
         />
-        <AvatarHideOverlay token={t} rowImage={rowImage} />
+        <AvatarHideOverlay token={t} />
       </div>
 
       <div style={{ minWidth: 0, width: "100%", display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, paddingLeft: 6 }}>
@@ -268,9 +213,7 @@ export const TokenRow = memo(function TokenRow({
             color: "var(--paper-4)", fontSize: 10,
           }}>
             {hasDevRow && (() => {
-              const pill = (
-                <DevCreatorPill devBuyValue={devBuyValue} creatorRatio={creatorRatio} />
-              );
+              const pill = <DevCreatorPill deploys={t.creatorDeploys!} />;
               if (t.signer) {
                 return (
                   <Tooltip content={`Open dev wallet ${t.signer}`} mono>
@@ -288,12 +231,12 @@ export const TokenRow = memo(function TokenRow({
                 );
               }
               return (
-                <Tooltip content="Dev buy · creator migrations / deploys">
+                <Tooltip content="Tokens this dev launched">
                   {pill}
                 </Tooltip>
               );
             })()}
-            {(hasSocials || t.mint_address || t.hasCashback) && (
+            {(hasSocials || t.mint_address) && (
               <TokenSocialLinks
                 twitter={t.twitter}
                 telegram={t.telegram}
@@ -302,29 +245,9 @@ export const TokenRow = memo(function TokenRow({
                 launchpad={t.dex}
                 showLaunchpad
                 showXSearch
-                cashbackSlot={t.hasCashback ? (
-                  <Tooltip content="Cashback enabled — bonding-curve creator fee sharing">
-                    <span
-                      onClick={(e) => e.stopPropagation()}
-                      style={{
-                        display: "inline-flex", alignItems: "center",
-                        color: "#FACC15", cursor: "default", lineHeight: 0,
-                      }}
-                    >{Icon.refund(12)}</span>
-                  </Tooltip>
-                ) : undefined}
                 iconSize={12}
                 gap={5}
                 stopPropagation
-              />
-            )}
-            {hasXSignal && xSignal && (
-              <XSignalChip
-                signal={xSignal}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onXSignalClick?.(t);
-                }}
               />
             )}
           </div>
@@ -359,67 +282,10 @@ export const TokenRow = memo(function TokenRow({
       {/* ── Column 3 — sparkline (dropped on phone; no grid track for it) ─ */}
       {sparklineCol && <ChartCell t={t} live={live} change={change} />}
 
-      {hovered && <QuickBuyOverlay mint={t.mint_address} scope={quickBuyScope} />}
+      {hovered && swapsOn() && <QuickBuyOverlay mint={t.mint_address} scope={quickBuyScope} />}
     </div>
   );
 });
-
-function XSignalChip({
-  signal,
-  onClick,
-}: {
-  signal: TokenXSignal;
-  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
-}) {
-  const count = signal.mentionCount24h;
-  const value = String(count);
-  const tone = signal.hot || signal.kolCount24h > 1;
-
-  return (
-    <Tooltip
-      placement="bottom"
-      maxWidth={300}
-      mono
-      content={
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          <div>
-            X · 15m {signal.mentionCount15m} · 1h {signal.mentionCount1h} · 24h {signal.mentionCount24h}
-          </div>
-          {signal.kolCount24h > 0 && <div>KOL hits · {signal.kolCount24h}</div>}
-          {signal.officialUsername && <div>Official · @{signal.officialUsername}</div>}
-          {signal.topTweet && (
-            <div style={{ color: "var(--paper-2)" }}>
-              @{signal.topTweet.username}: {signal.topTweet.text.slice(0, 120)}
-            </div>
-          )}
-        </div>
-      }
-    >
-      <button
-        type="button"
-        onClick={onClick}
-        className="mono"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 3,
-          padding: "2px 6px",
-          borderRadius: 4,
-          background: tone
-            ? "color-mix(in oklch, var(--accent) 18%, var(--ink-2) 82%)"
-            : "var(--ink-2)",
-          color: tone ? "var(--accent)" : "var(--paper-3)",
-          fontSize: 10,
-          lineHeight: 1,
-        }}
-      >
-        <span style={{ display: "inline-flex", lineHeight: 0 }}>{Icon.x(9)}</span>
-        <span>{value}</span>
-        {signal.kolCount24h > 0 && <span style={{ color: "var(--paper-4)" }}>K{signal.kolCount24h}</span>}
-      </button>
-    </Tooltip>
-  );
-}
 
 function isProbablyShortenedSymbol(symbol?: string | null, name?: string | null) {
   const s = symbol?.trim() ?? "";
@@ -630,15 +496,12 @@ function Chip({
   value,
   tone,
   accent,
-  bare = false,
 }: {
   label: string;
   value: string;
   tone?: "warn" | "green";
   /** Label color override — gives each stat type its own hue. */
   accent?: string;
-  /** Drop the pill background and bump sizing — used in the right metric column. */
-  bare?: boolean;
 }) {
   const labelColor =
     tone === "warn"  ? "var(--warn)"  :
@@ -649,92 +512,47 @@ function Chip({
     tone === "warn"  ? "var(--warn)"  :
     tone === "green" ? "var(--accent)" :
                        "var(--paper)";
-  // Icon size tracks the value text size in both modes so the glyph and
-  // number share an optical baseline weight.
-  const metricIconSize = bare ? 11 : 10;
   const labelNode =
-    label === "V"   ? Icon.volume(metricIconSize)
-    : label === "TX"  ? Icon.trades(metricIconSize)
-    : label === "H"   ? Icon.holders(metricIconSize)
-    : label === "F"   ? Icon.fees(metricIconSize)
-    : label === "B"   ? Icon.bundle(metricIconSize)
-    : label === "S"   ? Icon.sniper(metricIconSize)
-    : label === "DEV" ? Icon.dev(metricIconSize)
-    // Dev-buy native amount: chain mark so the eye picks
-    // up "this is a native-asset number" without reading the label.
-    : label === "DEV_BUY" ? <ChainIcon id={getActiveChain()} size={metricIconSize} />
-    // Creator deploys/migrations ratio: a crown reads as "creator" / "OG"
-    // and visually distinguishes it from the buy amount sitting next to it.
-    : label === "CRT" ? Icon.crown(metricIconSize)
+    label === "V"   ? Icon.volume(11)
+    : label === "TX"  ? Icon.trades(11)
+    : label === "H"   ? Icon.holders(11)
+    : label === "B"   ? Icon.bundle(11)
+    : label === "S"   ? Icon.sniper(11)
     : label;
   return (
     <span
       className="mono"
-      style={{
-        display: "inline-flex", alignItems: "center",
-        gap: 3,
-        padding: bare ? 0 : "2px 6px",
-        borderRadius: bare ? 0 : 4,
-        background: bare
-          ? "transparent"
-          : "color-mix(in oklch, var(--buy) 14%, var(--ink-2) 86%)",
-        fontSize: bare ? 11 : 10,
-        lineHeight: 1,
-      }}
+      style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, lineHeight: 1 }}
     >
       <span style={{
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
-        minWidth: bare ? 11 : 12,
+        minWidth: 11,
         lineHeight: 0,
-        fontSize: bare ? 11 : 9,
+        fontSize: 11,
         letterSpacing: "0.06em",
         color: labelColor, fontWeight: 600,
       }}>{labelNode}</span>
-      <span style={{ color: valueColor, fontWeight: bare ? 600 : 500 }}>{value}</span>
+      <span style={{ color: valueColor, fontWeight: 600 }}>{value}</span>
     </span>
   );
 }
 
-// Combined dev-buy + creator-ratio pill rendered on row 2. Single bordered
-// box so the two metrics read as one cohesive datum (replaces the previous
-// "1.48 · 0/23" string and the briefly-lived two-chip layout).
-function DevCreatorPill({
-  devBuyValue,
-  creatorRatio,
-}: {
-  devBuyValue: string | null;
-  creatorRatio: string;
-}) {
+// Tokens the creator launched, rendered on row 2.
+function DevCreatorPill({ deploys }: { deploys: number }) {
   return (
     <span
       className="mono"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 7,
-        fontSize: 10,
-        lineHeight: 1,
-      }}
+      style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, lineHeight: 1 }}
     >
-      {devBuyValue && (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-          <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 0 }}>
-            <ChainIcon id={getActiveChain()} size={10} />
-          </span>
-          <span style={{ color: "var(--paper-2)", fontWeight: 500 }}>{devBuyValue}</span>
-        </span>
-      )}
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-        <span style={{
-          display: "inline-flex", alignItems: "center", justifyContent: "center",
-          lineHeight: 0, color: "var(--warn, #FFD166)",
-        }}>
-          {Icon.crown(10)}
-        </span>
-        <span style={{ color: "var(--paper-2)", fontWeight: 500 }}>{creatorRatio}</span>
+      <span style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        lineHeight: 0, color: "var(--warn, #FFD166)",
+      }}>
+        {Icon.crown(10)}
       </span>
+      <span style={{ color: "var(--paper-2)", fontWeight: 500 }}>{deploys}</span>
     </span>
   );
 }
@@ -775,7 +593,7 @@ function RightMetrics({
       {activityTiles.length > 0 && (
         <div style={{ display: "flex", gap: 9, alignItems: "baseline" }}>
           {activityTiles.map((m) => (
-            <Chip key={m.label} label={m.label} value={m.value} accent={m.accent} tone={m.tone} bare />
+            <Chip key={m.label} label={m.label} value={m.value} accent={m.accent} tone={m.tone} />
           ))}
         </div>
       )}
@@ -783,7 +601,7 @@ function RightMetrics({
       {riskTiles.length > 0 && (
         <div style={{ display: "flex", gap: 9, alignItems: "baseline" }}>
           {riskTiles.map((m) => (
-            <Chip key={m.label} label={m.label} value={m.value} accent={m.accent} tone={m.tone} bare />
+            <Chip key={m.label} label={m.label} value={m.value} accent={m.accent} tone={m.tone} />
           ))}
         </div>
       )}
@@ -795,17 +613,13 @@ function RightMetrics({
 
 function usePriceDerivation({
   t,
-  variant,
   live,
   solPrice,
-  supply,
   change,
 }: {
   t: TokenEvent;
-  variant: TokenRowVariant;
   live?: LivePrice;
   solPrice?: number;
-  supply?: number;
   change: number | undefined;
 }) {
   const [flashKey, setFlashKey] = useState(0);
@@ -817,27 +631,23 @@ function usePriceDerivation({
     }
   }, [live]);
 
-  const deployFallback = variant === "deploy" ? t.creatorBuyPrice : undefined;
-  const priceSol = live?.price ?? t.lastPrice ?? deployFallback ?? 0;
+  const priceSol = live?.price ?? t.lastPrice ?? 0;
   const priceUsd = priceSol && solPrice ? priceSol * solPrice : undefined;
   const displayPrice: React.ReactNode =
     priceUsd != null && priceUsd > 0 ? fmtPrice(priceUsd) :
     priceSol > 0 ? <SolAmount iconSize={10}>{fmtSol(priceSol, 6)}</SolAmount> :
     null;
 
-  // Solana keeps the pump.fun 1e9 default when no explicit supply is supplied.
-  const effSupply = supply != null && supply > 0 ? supply : 1_000_000_000;
+  // Rows carry no supply: the pump.fun 1e9 default.
   const computedMcap =
-    priceSol > 0 && solPrice && effSupply > 0 ? priceSol * effSupply * solPrice : undefined;
-  const mcap = (t.marketCap && t.marketCap > 0 ? t.marketCap : undefined) ?? computedMcap ?? t.initialMarketCap;
+    priceSol > 0 && solPrice ? priceSol * 1_000_000_000 * solPrice : undefined;
+  const mcap = (t.marketCap && t.marketCap > 0 ? t.marketCap : undefined) ?? computedMcap;
 
   let primary: React.ReactNode;
   if (mcap != null && mcap > 0) {
     primary = fmtMcap(mcap);
   } else if (displayPrice) {
     primary = displayPrice;
-  } else if (variant === "deploy" && t.firstHourVolume != null && t.firstHourVolume > 0) {
-    primary = <SolAmount>{fmtSol(t.firstHourVolume)}</SolAmount>;
   } else {
     primary = "—";
   }
@@ -847,15 +657,7 @@ function usePriceDerivation({
     live?.flash === "down" ? "var(--sell)" :
     undefined;
 
-  let livePoints: number[] | undefined;
-  if (live && live.prices.length >= 2) {
-    livePoints =
-      variant === "deploy" && deployFallback != null
-        ? [deployFallback, ...live.prices]
-        : live.prices;
-  } else if (live && live.prices.length === 1 && variant === "deploy" && deployFallback != null) {
-    livePoints = [deployFallback, live.prices[0]];
-  }
+  const livePoints = live && live.prices.length >= 2 ? live.prices : undefined;
   const bufferDelta =
     livePoints && livePoints.length >= 2
       ? livePoints[0] > 0
@@ -884,15 +686,7 @@ function ChartCell({
 }) {
   const { showSparkline } = useCardStyle();
   if (!showSparkline) return null;
-  // Build sparkline buffer — prepend creator buy price for deploys as an initial seed
-  const deployFallback = t.creatorBuyPrice;
-  let livePoints: number[] | undefined;
-  if (live && live.prices.length >= 2) {
-    livePoints =
-      deployFallback != null ? [deployFallback, ...live.prices] : live.prices;
-  } else if (live && live.prices.length === 1 && deployFallback != null) {
-    livePoints = [deployFallback, live.prices[0]];
-  }
+  const livePoints = live && live.prices.length >= 2 ? live.prices : undefined;
 
   const bufferDelta =
     livePoints && livePoints.length >= 2 && livePoints[0] > 0
@@ -915,10 +709,9 @@ function ChartCell({
   );
 }
 
-function AvatarHideOverlay({ token, rowImage }: { token: TokenEvent; rowImage?: string | null }) {
+function AvatarHideOverlay({ token }: { token: TokenEvent }) {
   const { hide: hideToken } = useHiddenTokens();
   const { hide: hideDev } = useHiddenDevs();
-  const cloneToken = useCloneToken();
   const [hovered, setHovered] = useState(false);
 
   const onHideToken = (e: React.MouseEvent) => {
@@ -951,24 +744,6 @@ function AvatarHideOverlay({ token, rowImage }: { token: TokenEvent; rowImage?: 
         cursor: "default",
       }}
     >
-      <Tooltip content="Clone — relaunch this token">
-        <button
-          type="button"
-          aria-label="Clone token"
-          onClick={(e) => {
-            e.stopPropagation();
-            cloneToken({
-              name: token.name, symbol: token.symbol, image: rowImage || token.image,
-              twitter: token.twitter, telegram: token.telegram, website: token.website,
-            });
-          }}
-          style={{ ...hideBtnStyle, color: "#2f9bff" }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "color-mix(in oklch, #2f9bff 18%, transparent)"; e.currentTarget.style.borderColor = "#2f9bff"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--ink-1)"; e.currentTarget.style.borderColor = "var(--line-soft)"; }}
-        >
-          {Icon.dna(12)}
-        </button>
-      </Tooltip>
       {token.signer && (
         <Tooltip content="Hide dev from lists">
           <button

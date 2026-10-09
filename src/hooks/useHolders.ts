@@ -1,9 +1,8 @@
 "use client";
-import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { fetchHolders } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { toArray } from "../api/normalize";
-import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
 import type { Holder } from "../types";
 
 /** Hard cap on the holders list to keep the UI responsive. Matches the REST limit. */
@@ -105,14 +104,6 @@ export function useHolders(mint: string | null) {
     }
   }, [mint]);
 
-  // Preview-mode short-circuit: synthetic holders sourced from the deploy
-  // form's wallet allocations. Subscribes so form edits re-render.
-  const previewSnapshot = useSyncExternalStore(
-    (cb) => (mint ? subscribePreview(mint, cb) : () => {}),
-    () => (mint ? getPreviewData(mint) : null),
-    () => null,
-  );
-
   useEffect(() => {
     if (!mint) {
       setHolders([]);
@@ -121,33 +112,11 @@ export function useHolders(mint: string | null) {
       setNewHoldersCount(0);
       return;
     }
-    if (isPreviewMint(mint)) {
-      const list = (previewSnapshot?.holders ?? []) as LiveHolder[];
-      setHolders(list);
-      setSupply(previewSnapshot?.supply ?? 1_000_000_000);
-      setCurrentPriceSol(previewSnapshot?.livePrice?.price ?? 0);
-      setLoading(false);
-      setNewHoldersCount(0);
-      setError(null);
-      return;
-    }
-    // Stream-only (freshly-deployed) mint: no REST holders snapshot — start
-    // empty with pump.fun's 1B supply; the WS feed (below) folds live trades
-    // into the holder list.
-    if (isStreamOnly(mint)) {
-      setHolders([]);
-      setSupply(1_000_000_000);
-      setCurrentPriceSol(0);
-      setLoading(false);
-      setNewHoldersCount(0);
-      setError(null);
-      return;
-    }
     setLoading(true);
     setHolders([]);
     setNewHoldersCount(0);
     load();
-  }, [load, mint, previewSnapshot]);
+  }, [load, mint]);
 
   // supply is set async after first load; keep a ref so the WS handler below
   // always sees the latest value without re-subscribing on every update.
@@ -161,10 +130,10 @@ export function useHolders(mint: string | null) {
   //    promote it into `holders` with `isNew: true` so the table can highlight.
   // Net-zero / sell-only signers never enter the list.
   const pendingNewRef = useRef<Map<string, {
-    amount: number; bought: number; sold: number;
+    amount: number;
     buySol: number; sellSol: number;
     trades: number; buyCount: number; sellCount: number;
-    firstTrade: string; lastTrade: string;
+    lastTrade: string;
   }>>(new Map());
 
   useEffect(() => {
@@ -179,9 +148,7 @@ export function useHolders(mint: string | null) {
   const promotedCountRef = useRef(0);
 
   useEffect(() => {
-    // Preview mints have no on-chain WS — synthetic holders are pushed from
-    // the registry above. Skip the subscribe entirely.
-    if (!mint || isPreviewMint(mint)) return;
+    if (!mint) return;
     const ws = RazeWebSocket.getInstance();
     ws.connect();
     ws.subscribeToken(mint);
@@ -193,7 +160,7 @@ export function useHolders(mint: string | null) {
       pendingTradesRef.current = [];
       const supplyNow = supplyRef.current || 1_000_000_000;
 
-      // Same swap can arrive on both `trade` and `transaction` WS channels.
+      // A swap can arrive twice (a snapshot replay after a reconnect).
       const seen = new Set<string>();
       const pending: WsTrade[] = [];
       for (const t of pendingRaw) {
@@ -228,8 +195,6 @@ export function useHolders(mint: string | null) {
             next[idx] = {
               ...h,
               amount:     newAmount,
-              bought:     (h.bought    ?? 0) + (isBuy ? t.tokens : 0),
-              sold:       (h.sold      ?? 0) + (isBuy ? 0 : t.tokens),
               buySol:     (h.buySol    ?? 0) + (isBuy ? t.sol : 0),
               sellSol:    (h.sellSol   ?? 0) + (isBuy ? 0 : t.sol),
               trades:     (h.trades    ?? 0) + 1,
@@ -243,13 +208,11 @@ export function useHolders(mint: string | null) {
 
           // Path B: unknown signer — accumulate, maybe promote.
           const pend = pendingNewRef.current.get(t.signer) ?? {
-            amount: 0, bought: 0, sold: 0, buySol: 0, sellSol: 0,
+            amount: 0, buySol: 0, sellSol: 0,
             trades: 0, buyCount: 0, sellCount: 0,
-            firstTrade: t.tsIso, lastTrade: t.tsIso,
+            lastTrade: t.tsIso,
           };
           pend.amount    = Math.max(0, pend.amount + (isBuy ? t.tokens : -t.tokens));
-          pend.bought   += isBuy ? t.tokens : 0;
-          pend.sold     += isBuy ? 0 : t.tokens;
           pend.buySol   += isBuy ? t.sol : 0;
           pend.sellSol  += isBuy ? 0 : t.sol;
           pend.trades   += 1;
@@ -268,14 +231,11 @@ export function useHolders(mint: string | null) {
             amount:     pend.amount,
             percentage: holderPct(pend.amount, supplyNow),
             rank:       0,
-            bought:     pend.bought,
-            sold:       pend.sold,
             buySol:     pend.buySol,
             sellSol:    pend.sellSol,
             trades:     pend.trades,
             buyCount:   pend.buyCount,
             sellCount:  pend.sellCount,
-            firstTrade: pend.firstTrade,
             lastTrade:  pend.lastTrade,
             isNew:      true,
           };
@@ -321,10 +281,8 @@ export function useHolders(mint: string | null) {
     };
 
     const offTrade       = ws.on("trade",       apply);
-    const offTransaction = ws.on("transaction", apply);
     return () => {
       offTrade();
-      offTransaction();
       ws.unsubscribeToken(mint);
       if (flushTimerRef.current !== null) {
         clearTimeout(flushTimerRef.current);

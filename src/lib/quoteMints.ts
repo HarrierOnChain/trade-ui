@@ -63,13 +63,6 @@ export function findQuoteMint(label: string, chain: ChainId = getActiveChain()):
   return list.find((m) => m.label === label) ?? list[0];
 }
 
-/** Cycle to the next quote in the active chain's registry. */
-export function nextQuoteMint(current: QuoteMint, chain: ChainId = getActiveChain()): QuoteMint {
-  const list = quoteMints(chain);
-  const i = list.findIndex((m) => m.label === current.label);
-  return list[(i + 1) % list.length];
-}
-
 /** USDC / USD1 mints — cash quotes, not spot bags in holdings or unrealized PnL. */
 export function stableQuoteMintAddresses(chain: ChainId = getActiveChain()): string[] {
   return quoteMints(chain)

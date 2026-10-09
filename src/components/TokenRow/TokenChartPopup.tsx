@@ -13,6 +13,8 @@ import { TokenIcon } from "../atoms/TokenIcon";
 import { fmtMcap, fmtNum, fmtUsd } from "../../lib/format";
 import { useQuickBuy } from "../../hooks/useQuickBuy";
 import { useQuickSell } from "../../hooks/useQuickSell";
+import { useBuyQuoteMint } from "../../hooks/useBuyQuoteMint";
+import { swapsOn } from "../../lib/chains";
 import type { TokenEvent } from "../../types";
 import type { LivePrice } from "../../hooks/useLiveTradePrices";
 
@@ -149,7 +151,9 @@ function TokenChartPopupContent({ token, live, solPrice, holdingAmount, holdingU
   const [tf, setTf] = useState<ResolutionString>("1" as ResolutionString);
   const { run: buy, busy } = useQuickBuy(token.mint_address);
   const { run: sell, busy: sellBusy } = useQuickSell(token.mint_address);
-  const priceSol = live?.price ?? token.lastPrice ?? token.creatorBuyPrice ?? 0;
+  const [quote] = useBuyQuoteMint();
+  const canTrade = swapsOn();
+  const priceSol = live?.price ?? token.lastPrice ?? 0;
   const mcap = token.marketCap ?? (priceSol && solPrice ? priceSol * 1_000_000_000 * solPrice : null);
   const pct = token.priceChange ?? 0;
   const pctColor = pct > 0 ? "#66d89e" : pct < 0 ? "#e57359" : "#7a776e";
@@ -241,7 +245,7 @@ function TokenChartPopupContent({ token, live, solPrice, holdingAmount, holdingU
       {/* Chart + buy overlay */}
       <div style={{ position: "relative" }}>
         <TVChartMini mint={token.mint_address} interval={tf} />
-        <div style={{
+        {canTrade && <div style={{
           position: "absolute",
           bottom: 6,
           left: PAD_X,
@@ -269,10 +273,10 @@ function TokenChartPopupContent({ token, live, solPrice, holdingAmount, holdingU
                 cursor: busy ? "not-allowed" : "pointer",
               }}
             >
-              {amt} SOL
+              {amt} {quote.label}
             </button>
           ))}
-        </div>
+        </div>}
 
         {/* Timeframe selector – vertical stack, right edge */}
         <div style={{
@@ -310,7 +314,7 @@ function TokenChartPopupContent({ token, live, solPrice, holdingAmount, holdingU
       </div>
 
       {/* Sell presets — only when holding */}
-      {holdingAmount != null && holdingAmount > 0 && (
+      {canTrade && holdingAmount != null && holdingAmount > 0 && (
         <div style={{
           display: "flex",
           gap: 4,

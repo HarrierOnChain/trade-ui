@@ -92,9 +92,10 @@ function SpotView({
   onTabChange: (t: SpotTab) => void;
   onTokenClick: (mint: string) => void;
 }) {
+  // fetchWalletSummary takes unix seconds (it picks the API's 30d period).
   const window = useMemo(() => {
-    const now = Date.now();
-    return { from: now - WINDOW_DAYS * 86_400_000, to: now };
+    const now = Math.floor(Date.now() / 1000);
+    return { from: now - WINDOW_DAYS * 86_400, to: now };
   }, []);
 
   const addressList = useMemo(() => (address ? [address] : []), [address]);
@@ -115,7 +116,6 @@ function SpotView({
   const nativeUsd = solPrice > 0 ? nativeSol * solPrice : 0;
   const totalValueUsd = nativeUsd + tokensUsd;
 
-  const firstTradeAt = stats?.firstTradeAt ? Date.parse(stats.firstTradeAt) : 0;
   const lastTradeAt = stats?.lastTradeAt ? Date.parse(stats.lastTradeAt) : 0;
 
   return (
@@ -134,18 +134,11 @@ function SpotView({
         buys={stats?.totalBuys ?? 0}
         sells={stats?.totalSells ?? 0}
         winRate={stats?.winRate ?? 0}
-        winningTokens={stats?.winningTokens ?? 0}
         uniqueTokens={stats?.uniqueTokensTraded ?? 0}
       />
 
       <MetaStrip
         avgSol={stats?.avgTradeSizeSol ?? 0}
-        largestSol={stats?.largestTradeSol ?? 0}
-        feesSol={stats?.totalFees ?? 0}
-        pro={stats?.proTradeCount ?? 0}
-        sniper={stats?.sniperCount ?? 0}
-        bundle={stats?.bundleCount ?? 0}
-        firstMs={firstTradeAt}
         lastMs={lastTradeAt}
       />
 
@@ -341,9 +334,7 @@ function Header({
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
         <span className="eyebrow">
-          {labelInfo
-            ? labelInfo.source === "watchlist" ? "Wallet · Watchlist" : "Wallet · Yours"
-            : "Wallet"}
+          {labelInfo ? "Wallet · Yours" : "Wallet"}
         </span>
         {labelInfo && (
           <span
@@ -361,7 +352,7 @@ function Header({
               aria-hidden
               style={{
                 width: 6, height: 6, borderRadius: "50%",
-                background: labelInfo.source === "watchlist" ? "var(--amber)" : "var(--accent)",
+                background: "var(--accent)",
                 flexShrink: 0,
               }}
             />
@@ -475,7 +466,6 @@ function StatsRow({
   buys,
   sells,
   winRate,
-  winningTokens,
   uniqueTokens,
 }: {
   loading: boolean;
@@ -491,7 +481,6 @@ function StatsRow({
   buys: number;
   sells: number;
   winRate: number;
-  winningTokens: number;
   uniqueTokens: number;
 }) {
   const isPhone = useIsPhone();
@@ -545,7 +534,7 @@ function StatsRow({
         primary={`${Math.round(winRate * 100)}%`}
         // The API reports tokens traded but not how many won, and buy/sell
         // counts only for some periods: show what is known, no made-up 0s.
-        sub={winningTokens > 0 ? `${winningTokens}/${uniqueTokens} tokens` : `${uniqueTokens} tokens`}
+        sub={`${uniqueTokens} tokens`}
         hint={buys + sells > 0 ? (
           <span>
             <span style={{ color: "var(--accent)" }}>{fmtNum(buys)}B</span>
@@ -616,28 +605,13 @@ function StatCard({
 
 function MetaStrip({
   avgSol,
-  largestSol,
-  feesSol,
-  pro,
-  sniper,
-  bundle,
-  firstMs,
   lastMs,
 }: {
   avgSol: number;
-  largestSol: number;
-  feesSol: number;
-  pro: number;
-  sniper: number;
-  bundle: number;
-  firstMs: number;
   lastMs: number;
 }) {
   const items: { k: string; v: React.ReactNode }[] = [];
   if (avgSol > 0) items.push({ k: "Avg", v: <SolAmount>{fmtSol(avgSol, 3)}</SolAmount> });
-  if (largestSol > 0) items.push({ k: "Largest", v: <SolAmount>{fmtSol(largestSol, 2)}</SolAmount> });
-  if (feesSol > 0) items.push({ k: "Fees", v: <SolAmount>{fmtSol(feesSol, 3)}</SolAmount> });
-  if (firstMs > 0) items.push({ k: "First", v: formatAge(firstMs) + " ago" });
   if (lastMs > 0) items.push({ k: "Last", v: formatAge(lastMs) + " ago" });
 
   return (
@@ -650,10 +624,6 @@ function MetaStrip({
       {items.map((it) => (
         <MetaPair key={it.k} k={it.k} v={it.v} />
       ))}
-      <div style={{ flex: 1 }} />
-      {pro > 0 && <Flag label="Pro" count={pro} color="var(--paper)" />}
-      {sniper > 0 && <Flag label="Sniper" count={sniper} color="var(--sell)" />}
-      {bundle > 0 && <Flag label="Bundle" count={bundle} color="var(--warn)" />}
     </div>
   );
 }
@@ -666,25 +636,6 @@ function MetaPair({ k, v }: { k: string; v: React.ReactNode }) {
     }}>
       <span style={{ color: "var(--paper-4)", textTransform: "uppercase" }}>{k}</span>
       <span>{v}</span>
-    </span>
-  );
-}
-
-function Flag({ label, count, color }: { label: string; count: number; color: string }) {
-  return (
-    <span className="mono" style={{
-      display: "inline-flex", alignItems: "center", gap: 4,
-      padding: "2px 6px",
-      fontSize: 9,
-      letterSpacing: "0.08em",
-      textTransform: "uppercase",
-      color,
-      background: "rgba(255,255,255,0.04)",
-      border: "1px solid var(--line-soft)",
-      borderRadius: 3,
-    }}>
-      <span>{label}</span>
-      <span style={{ opacity: 0.7 }}>{count}</span>
     </span>
   );
 }

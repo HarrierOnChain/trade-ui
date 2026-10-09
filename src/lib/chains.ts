@@ -49,6 +49,13 @@ export function isEvmChain(id: ChainId): boolean {
   return chainFamily(id) === "evm";
 }
 
+/** Swaps run on the Solana router only (src/api/localTrade.ts): the EVM
+ *  router does not quote yet, so EVM chains show market data without
+ *  trade buttons. */
+export function swapsOn(id: ChainId = getActiveChain()): boolean {
+  return id === "sol";
+}
+
 export function coerceChainId(v: unknown): ChainId {
   if (typeof v === "string" && isChainId(v)) return v;
   if (typeof v === "number") {
@@ -85,10 +92,6 @@ export function explorerUrl(kind: ExplorerKind, value: string, id: ChainId = get
   return `https://${spec.host}/${path}/${encodeURIComponent(value)}`;
 }
 
-export function explorerTokenUrl(address: string, id?: ChainId): string {
-  return explorerUrl("token", address, id);
-}
-
 export function explorerAccountUrl(address: string, id?: ChainId): string {
   return explorerUrl("account", address, id);
 }
@@ -107,37 +110,8 @@ export function explorerName(id: ChainId = getActiveChain()): string {
   }
 }
 
-/** Kept for call-site compatibility. Paths now go through evmapi helpers. */
-export function apiBase(_id: ChainId): string {
-  return "";
-}
-
 export const CHAIN_STORAGE_KEY = "raze.chain";
 export const CHAIN_CHANGED_EVENT = "raze:chain-changed";
-export const CHAIN_AVAILABILITY_EVENT = "raze:chain-availability";
-
-let disabledChains: ReadonlySet<ChainId> = new Set();
-
-export function isChainEnabled(id: ChainId): boolean {
-  return !disabledChains.has(id);
-}
-
-export function enabledChainIds(): ChainId[] {
-  return CHAIN_IDS.filter(isChainEnabled);
-}
-
-export function applyChainAvailability(ids: readonly string[]): void {
-  const fromAdmin = ids.filter((id): id is ChainId =>
-    (CHAIN_IDS as readonly string[]).includes(id) && id !== "sol");
-  disabledChains = new Set<ChainId>(fromAdmin);
-  if (!isChainEnabled(getActiveChain())) {
-    setActiveChain("sol");
-    writeStoredChain("sol");
-  }
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent(CHAIN_AVAILABILITY_EVENT));
-  }
-}
 
 let activeChain: ChainId | null = null;
 

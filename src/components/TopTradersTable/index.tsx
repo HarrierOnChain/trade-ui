@@ -1,31 +1,26 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useTopTraders } from "../../hooks/useTopTraders";
 import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { useSelectedToken } from "../../contexts/SelectedTokenContext";
 import { useApp } from "../../contexts/AppContext";
-import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
-import { fmtMcap, fmtNum, fmtUsd } from "../../lib/format";
+import { fmtNum } from "../../lib/format";
 import { Icon, SolSymbol, Tooltip } from "../atoms";
 import { WalletLabel } from "../../hooks/useWalletLabels";
-import { FundingBadge } from "../FundingBadge";
-import { useFunding } from "../../hooks/useFunding";
 import type { TopTrader } from "../../types";
 import styles from "./styles.module.css";
 
 const CHUNK = 30;
-const COL_COUNT = 8;
+const COL_COUNT = 6;
 
 interface Props {
   mint?: string | null;
-  solPrice?: number;
   supply?: number;
   onAddressClick?: (address: string) => void;
 }
 
 export function TopTradersTable({
   mint: mintProp,
-  solPrice = 0,
   supply = 1_000_000_000,
   onAddressClick,
 }: Props) {
@@ -39,9 +34,6 @@ export function TopTradersTable({
   const sliced = useMemo(() => traders.slice(0, visible), [traders, visible]);
   const hasMore = visible < traders.length;
 
-  const visibleAddrs = useMemo(() => sliced.map((t) => t.trader), [sliced]);
-  useFunding(visibleAddrs);
-
   const { sentinelRef, rootRef } = useInfiniteScroll<HTMLTableRowElement, HTMLDivElement>(
     () => setVisible((v) => Math.min(v + CHUNK, traders.length)),
     hasMore && !loading
@@ -54,23 +46,19 @@ export function TopTradersTable({
           <colgroup>
             <col className={styles.cRank} />
             <col className={styles.cWallet} />
-            <col className={styles.cFunding} />
             <col className={styles.cNum} />
             <col className={styles.cNum} />
             <col className={styles.cPnl} />
             <col className={styles.cHeld} />
-            <col className={styles.cAge} />
           </colgroup>
           <thead>
             <tr>
               <th className={styles.thLeft}>#</th>
               <th className={styles.thLeft}>Wallet</th>
-              <th className={styles.thLeft}>Funding</th>
               <th className={styles.thRight}>Bought</th>
               <th className={styles.thRight}>Sold</th>
               <th className={styles.thRight}>R. PnL</th>
               <th className={styles.thRight}>Held</th>
-              <th className={styles.thRight}>Age</th>
             </tr>
           </thead>
           <tbody>
@@ -95,7 +83,6 @@ export function TopTradersTable({
                 key={t.trader}
                 rank={i + 1}
                 trader={t}
-                solPrice={solPrice}
                 supply={supply}
                 onAddressClick={onAddressClick}
               />
@@ -115,13 +102,11 @@ export function TopTradersTable({
 const TraderRow = React.memo(function TraderRow({
   rank,
   trader,
-  solPrice,
   supply,
   onAddressClick,
 }: {
   rank: number;
   trader: TopTrader;
-  solPrice: number;
   supply: number;
   onAddressClick?: (a: string) => void;
 }) {
@@ -150,15 +135,7 @@ const TraderRow = React.memo(function TraderRow({
   const remainingPct    = supply > 0 && hasTokenData ? (remainingTokens / supply) * 100 : 0;
   const barColor        = remainingPct > 10 ? "var(--sell)" : remainingPct > 5 ? "var(--warn)" : "var(--accent)";
 
-  const resolvedSupply = supply > 0 ? supply : 1_000_000_000;
-  const avgBuyMcap  = trader.avgBuyPrice  > 0 && solPrice > 0 ? trader.avgBuyPrice  * resolvedSupply * solPrice : 0;
-  const avgSellMcap = trader.avgSellPrice > 0 && solPrice > 0 ? trader.avgSellPrice * resolvedSupply * solPrice : 0;
-
   const isProfit = pnlSol >= 0;
-
-  const entryDelay = trader.entryDelaySeconds;
-  const showEntry  = entryDelay != null && entryDelay >= 0 && entryDelay <= 60;
-  const entryDelayLabel = showEntry ? `${entryDelay}s` : "";
 
   const rankClass =
     rank === 1 ? styles.rankTop :
@@ -182,25 +159,13 @@ const TraderRow = React.memo(function TraderRow({
           </Tooltip>
           <span className={styles.walletFlags}>
             {(trader.bundleTrades ?? 0) > 0 && (
-              <Tooltip content={`${trader.bundleTrades} bundle trades`}>
+              <Tooltip content="Bundler">
                 <span className={styles.flag}>{Icon.bundle(11)}</span>
               </Tooltip>
             )}
-            {showEntry ? (
-              <Tooltip content={`Entered ${entryDelayLabel} after deploy`}>
-                <span className={`${styles.flag} ${styles.flagSniper}`}>
-                  {Icon.sniper(11)}
-                  {entryDelayLabel}
-                </span>
-              </Tooltip>
-            ) : (trader.sniperTrades ?? 0) > 0 && (
-              <Tooltip content={`${trader.sniperTrades} sniper trades`}>
+            {(trader.sniperTrades ?? 0) > 0 && (
+              <Tooltip content="Sniper">
                 <span className={`${styles.flag} ${styles.flagSniper}`}>{Icon.sniper(11)}</span>
-              </Tooltip>
-            )}
-            {(trader.proTrades ?? 0) > 0 && (
-              <Tooltip content={`${trader.proTrades} pro trades`}>
-                <span className={`${styles.flag} ${styles.flagPro}`}>{Icon.pro(11)}</span>
               </Tooltip>
             )}
           </span>
@@ -230,30 +195,18 @@ const TraderRow = React.memo(function TraderRow({
         </div>
       </td>
 
-      <td data-label="Funding" className={styles.tdLeft}>
-        <div className={styles.fundingCell}>
-          <FundingBadge address={trader.trader} size="xs" />
-        </div>
-      </td>
-
       <td data-label="Bought" className={styles.tdRight}>
         <div className={styles.stack}>
           <span className={styles.primary}>
-            {boughtTokens > 0 && buySol > 0 ? (
-              <>{fmtNum(boughtTokens)} / <span className={styles.sol}><SolSymbol size={10} /></span>{buySol.toFixed(2)}</>
-            ) : boughtTokens > 0 ? (
-              fmtNum(boughtTokens)
-            ) : buySol > 0 ? (
+            {buySol > 0 ? (
               <><span className={styles.sol}><SolSymbol size={10} /></span>{buySol.toFixed(2)}</>
             ) : (
               <span className={styles.dim}>–</span>
             )}
           </span>
-          {(trader.totalBuys > 0 || avgBuyMcap > 0) && (
+          {trader.totalBuys > 0 && (
             <span className={styles.sub}>
-              {trader.totalBuys > 0 && <><span className={styles.buyCount}>{trader.totalBuys}</span> buys</>}
-              {trader.totalBuys > 0 && avgBuyMcap > 0 && <> · </>}
-              {avgBuyMcap > 0 && <>{fmtMcap(avgBuyMcap)}</>}
+              <span className={styles.buyCount}>{trader.totalBuys}</span> buys
             </span>
           )}
         </div>
@@ -262,21 +215,15 @@ const TraderRow = React.memo(function TraderRow({
       <td data-label="Sold" className={styles.tdRight}>
         <div className={styles.stack}>
           <span className={styles.primary}>
-            {soldTokens > 0 && sellSol > 0 ? (
-              <>{fmtNum(soldTokens)} / <span className={styles.sol}><SolSymbol size={10} /></span>{sellSol.toFixed(2)}</>
-            ) : soldTokens > 0 ? (
-              fmtNum(soldTokens)
-            ) : sellSol > 0 ? (
+            {sellSol > 0 ? (
               <><span className={styles.sol}><SolSymbol size={10} /></span>{sellSol.toFixed(2)}</>
             ) : (
               <span className={styles.dim}>–</span>
             )}
           </span>
-          {(trader.totalSells > 0 || avgSellMcap > 0) && (
+          {trader.totalSells > 0 && (
             <span className={styles.sub}>
-              {trader.totalSells > 0 && <><span className={styles.sellCount}>{trader.totalSells}</span> sells</>}
-              {trader.totalSells > 0 && avgSellMcap > 0 && <> · </>}
-              {avgSellMcap > 0 && <>{fmtMcap(avgSellMcap)}</>}
+              <span className={styles.sellCount}>{trader.totalSells}</span> sells
             </span>
           )}
         </div>
@@ -308,27 +255,6 @@ const TraderRow = React.memo(function TraderRow({
           )}
         </div>
       </td>
-
-      <td data-label="Age" className={`${styles.tdRight} ${styles.mono}`}>
-        {trader.firstTrade ? <AgeInline ts={trader.firstTrade} /> : <span className={styles.dim}>–</span>}
-      </td>
     </tr>
   );
 });
-
-function AgeInline({ ts, className }: { ts: string | number; className?: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const tsMs = typeof ts === "number" ? ts : new Date(ts).getTime();
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !isFinite(tsMs)) return;
-    el.textContent = formatAge(tsMs);
-    registerAge(el, tsMs);
-    return () => unregisterAge(el);
-  }, [tsMs]);
-  return (
-    <span ref={ref} className={className}>
-      {isFinite(tsMs) ? formatAge(tsMs) : "–"}
-    </span>
-  );
-}

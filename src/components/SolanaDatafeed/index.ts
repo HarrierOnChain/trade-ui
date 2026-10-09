@@ -34,9 +34,7 @@ import { fetchCandles, type ApiCandle, type OhlcTimeframe } from "../../api/clie
 import { nativeUsd } from "../../api/native";
 import { RazeWebSocket } from "../../api/websocket";
 import { fetchPublicMetadata, getCachedPublicMetadata } from "../../api/metadata";
-import { REGION_CHANGED_EVENT } from "../../lib/regions";
 import { CHAIN_CHANGED_EVENT } from "../../lib/chains";
-import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../../lib/previewData";
 import { despikeBars } from "../../lib/candleDespike";
 
 // ── resolution helpers ────────────────────────────────────────────────────────
@@ -79,11 +77,6 @@ function timeframeToMs(timeframe: string): number {
     case "1d":  return 86_400_000;
     default:    return 60_000;
   }
-}
-
-function alignTime(timeMs: number, resolution: string): number {
-  const ms = timeframeToMs(getApiTimeframe(resolution));
-  return Math.floor(timeMs / ms) * ms;
 }
 
 // ── SolanaDatafeed ────────────────────────────────────────────────────────────
@@ -145,19 +138,11 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   private _wireSub: { cancel(): void } | null = null;
   private _wireSubKey = "";
 
-  // Preview-mint reactivity: TV reset-cache callbacks (one per subscribeBars
-  // listener) fired whenever the deploy form re-publishes its snapshot, so the
-  // chart re-pulls the synthetic candles instead of keeping a stale series.
-  private _resetCacheCbs = new Map<string, () => void>();
-  private _previewDispose: (() => void) | null = null;
-  private _previewMint = "";
-
   constructor() {
     if (typeof window !== "undefined") {
-      window.addEventListener(REGION_CHANGED_EVENT, this._handleRegionChanged);
       // Switching chains changes which upstream OHLC/price/supply come from;
       // wipe caches so the chart refetches against the newly-active chain.
-      window.addEventListener(CHAIN_CHANGED_EVENT, this._handleRegionChanged);
+      window.addEventListener(CHAIN_CHANGED_EVENT, this._handleChainChanged);
     }
   }
 
@@ -345,17 +330,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     onDataCallback(marks);
   }
 
-  /** Returns the multiplier to convert a raw SOL token price into the display value */
-  private _multiplier(solPrice: number, supply: number): number {
-    // usd+mcap → price × solPrice × supply  (USD market cap)
-    // usd+price → price × solPrice           (USD per token)
-    // sol+mcap → price × supply              (SOL market cap)
-    // sol+price → price                      (raw SOL price, ×1)
-    const sp = this._currency === "usd" ? solPrice : 1;
-    const su = this._display  === "mcap" ? supply   : 1;
-    return sp * su;
-  }
-
   // ── IExternalDatafeed ────────────────────────────────────────────────────────
 
   onReady(cb: OnReadyCallback): void {
@@ -387,18 +361,13 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       void this._getTokenLabel(mint);
       // The native price in parallel with the candles (SOL display needs it).
       void this._getSolPrice();
-      if (!isPreviewMint(mint) && !isStreamOnly(mint)) {
-        await this._loadBars(mint, "1m", `${mint}-1m`);
-      }
+      await this._loadBars(mint, "1m", `${mint}-1m`);
 
       const cached     = this._cache.get(`${mint}-1m`);
       const pricescale = this._computePricescale(cached?.data ?? [], this._display);
-      // Deploy preview: use the seeded metadata (the symbol/name the user typed
-      // in the wizard) so the legend shows the real ticker; fall back to "-"
-      // only until it's seeded. Live mints use the seeded/cached label (sync),
-      // then the background-fetched one, then the mint.
-      const label      = this._labelFromCache(mint)
-        ?? (isPreviewMint(mint) ? "-" : (this._tokenLabel.get(mint) ?? mint));
+      // The seeded/cached label (sync), then the background-fetched one, then
+      // the mint.
+      const label      = this._labelFromCache(mint) ?? this._tokenLabel.get(mint) ?? mint;
 
       onResolve({
         ticker:               mint,
@@ -487,21 +456,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     onError: DatafeedErrorCallback,
   ): Promise<void> {
     try {
-      // Preview-mint short-circuit: real candles synthesised from the deploy
-      // form's planned trades (bundle buys + queued market-making fires),
-      // bucketed at the requested resolution and scaled like live bars.
-      if (isPreviewMint(mint)) {
-        const bars = await this._synthesisePreviewBars(mint, resolution, periodParams);
-        onResult(bars, { noData: bars.length === 0 });
-        return;
-      }
-      // Stream-only (freshly-deployed) mint: no OHLCV history fetch — return an
-      // empty series; live bars build from the WS trade feed (subscribeBars →
-      // _connectWs → _handleWs). Avoids the post-deploy chart reload.
-      if (isStreamOnly(mint)) {
-        onResult([], { noData: true });
-        return;
-      }
       const timeframe = getApiTimeframe(resolution);
       const baseKey   = `${mint}-${timeframe}`;
       const fromMs    = periodParams.from * 1000;
@@ -548,83 +502,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     } catch (e) {
       onError(String(e));
     }
-  }
-
-  // ── Preview-mint bar synthesiser ────────────────────────────────────────
-  // Drives the `/deploy` page's chart from the form's planned trades (bundle
-  // buys + queued market-making fires, fill prices walked along the pump.fun
-  // curve by the deploy page). Trades are bucketed into REAL candles at the
-  // requested resolution and scaled with the same multiplier as live bars
-  // (mcap/price × usd/sol), so the preview chart reads exactly like the live
-  // chart will the moment the token launches.
-  private async _synthesisePreviewBars(
-    mint: string,
-    resolution: ResolutionString,
-    periodParams: PeriodParams,
-  ): Promise<Bar[]> {
-    const snap = getPreviewData(mint);
-    if (!snap) return [];
-
-    const supply   = snap.supply || 1_000_000_000;
-    const solPrice = this._currency === "usd" ? (await this._getSolPrice()) || 1 : 1;
-    const m        = this._multiplier(solPrice, supply);
-
-    // Pump.fun curve starting price (virt SOL 30 / virt tokens 1.073B) — the
-    // first candle opens here, exactly where the live chart will start.
-    const basePrice = (30 / 1_073_000_000) * m;
-
-    const fromMs  = periodParams.from * 1000;
-    const toMs    = periodParams.to   * 1000;
-    const frameMs = timeframeToMs(getApiTimeframe(resolution));
-
-    const tsOf = (t: { timestamp: string | number }): number => {
-      const raw = t.timestamp;
-      if (typeof raw === "number") return raw > 1e12 ? raw : raw * 1000;
-      const n = Date.parse(raw);
-      return Number.isFinite(n) ? n : 0;
-    };
-    const trades = [...(snap.trades ?? [])]
-      .filter((t): t is typeof t & { avgPrice: number } =>
-        typeof t.avgPrice === "number" && Number.isFinite(t.avgPrice) && t.avgPrice > 0)
-      .sort((a, b) => tsOf(a) - tsOf(b));
-
-    if (trades.length === 0) {
-      // Flat seed candle at the curve's starting price so TV doesn't paint
-      // "No data" before any wallet is allocated.
-      const time = Math.floor(Date.now() / frameMs) * frameMs;
-      if (toMs < time) return [];
-      return [{ time, open: basePrice, high: basePrice, low: basePrice, close: basePrice, volume: 0 }];
-    }
-
-    // Aggregate fills into OHLC buckets with open/close continuity.
-    const bars: Bar[] = [];
-    let prevClose = basePrice;
-    for (const t of trades) {
-      const time  = Math.floor(tsOf(t) / frameMs) * frameMs;
-      const price = t.avgPrice * m;
-      const vol   = Math.max(0, t.solAmount ?? 0);
-      const last  = bars[bars.length - 1];
-      if (last && last.time === time) {
-        last.high   = Math.max(last.high, price);
-        last.low    = Math.min(last.low, price);
-        last.close  = price;
-        last.volume = (last.volume || 0) + vol;
-      } else {
-        bars.push({
-          time,
-          open: prevClose,
-          high: Math.max(prevClose, price),
-          low:  Math.min(prevClose, price),
-          close: price,
-          volume: vol,
-        });
-      }
-      prevClose = price;
-    }
-
-    // Terminate TV's scroll-back once it asks for a window before our series.
-    if (toMs < bars[0]!.time) return [];
-    return bars;
   }
 
   private _getCachedBarsForRange(baseKey: string, fromMs: number, toMs: number): Bar[] | null {
@@ -860,9 +737,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   ): void {
     const mint = symbolInfo.ticker ?? symbolInfo.name;
     this._subscribers.set(listenerGuid, onTick);
-    if (onResetCacheNeededCallback) {
-      this._resetCacheCbs.set(listenerGuid, onResetCacheNeededCallback);
-    }
     this._currentSymbol     = mint;
     this._currentResolution = resolution;
 
@@ -875,38 +749,15 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       if (last) this._lastBar.set(`${mint}-${resolution}`, last);
     }
 
-    // Preview mints have no live feed — skip the WS; instead invalidate TV's
-    // bar cache whenever the deploy form re-publishes its snapshot.
-    if (isPreviewMint(mint)) {
-      this._watchPreview(mint);
-      return;
-    }
-    this._unwatchPreview();
     this._connectWs(mint, resolution);
   }
 
   unsubscribeBars(listenerGuid: string): void {
     this._subscribers.delete(listenerGuid);
-    this._resetCacheCbs.delete(listenerGuid);
     if (!this._subscribers.size) {
       this._currentSymbol = null;
       this._closeWs();
     }
-  }
-
-  private _watchPreview(mint: string): void {
-    if (this._previewDispose && this._previewMint === mint) return;
-    this._previewDispose?.();
-    this._previewMint = mint;
-    this._previewDispose = subscribePreview(mint, () => {
-      for (const cb of this._resetCacheCbs.values()) cb();
-    });
-  }
-
-  private _unwatchPreview(): void {
-    this._previewDispose?.();
-    this._previewDispose = null;
-    this._previewMint = "";
   }
 
   // ── WebSocket ─────────────────────────────────────────────────────────────
@@ -930,7 +781,7 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     };
   }
 
-  private _handleRegionChanged = (): void => {
+  private _handleChainChanged = (): void => {
     this._cache.clear();
     this._hasMore.clear();
     this._oldestCursor.clear();
@@ -1006,17 +857,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
    *  so the chart is ready when TradingView resolves the symbol. */
   prefetchMint(mint: string): void {
     if (!mint) return;
-    // Preview mint: warm only the SOL price so the synthetic candles can be
-    // scaled to USD mcap on the chart's first paint.
-    if (isPreviewMint(mint)) {
-      void this._getSolPrice();
-      return;
-    }
-    // Stream-only mint: no OHLC warm; live bars come from the candles channel.
-    if (isStreamOnly(mint)) {
-      void this._getSolPrice();
-      return;
-    }
     void this._getSolPrice();
     void this._loadBars(mint, "1m", `${mint}-1m`);
   }
@@ -1042,12 +882,9 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
 
   destroy(): void {
     if (typeof window !== "undefined") {
-      window.removeEventListener(REGION_CHANGED_EVENT, this._handleRegionChanged);
-      window.removeEventListener(CHAIN_CHANGED_EVENT, this._handleRegionChanged);
+      window.removeEventListener(CHAIN_CHANGED_EVENT, this._handleChainChanged);
     }
     this._closeWs();
-    this._unwatchPreview();
-    this._resetCacheCbs.clear();
     this._subscribers.clear();
     this._cache.clear();
     this._hasMore.clear();

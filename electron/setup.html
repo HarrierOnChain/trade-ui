@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'" />
+  <title>Raze Trade UI — Settings</title>
+  <link rel="stylesheet" href="setup.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <img src="icon.svg" alt="" width="34" height="34" />
+      <div>
+        <span class="eyebrow" id="eyebrow">Settings</span>
+        <h1 id="title">Raze Trade UI</h1>
+      </div>
+    </header>
+    <p class="lead" id="lead">
+      Trade UI reads market data and builds swaps with your Raze API key. It stays on this computer, in the
+      app's settings file, and is never shown to the page.
+    </p>
+    <form id="form" autocomplete="off">
+      <label for="apiKey">Raze API key</label>
+      <input id="apiKey" type="password" spellcheck="false" placeholder="Paste your key" />
+      <p class="hint" id="keyHint">No key yet? <a href="#" data-href="https://raze.bot/pricing">Get one at raze.bot</a>.</p>
+
+      <label for="rpcUrl">Solana RPC <span class="optional">optional</span></label>
+      <input id="rpcUrl" type="url" spellcheck="false" placeholder="https://api.mainnet-beta.solana.com" />
+      <p class="hint">Sends and confirms your swaps. The public endpoint is rate-limited: use your own for real volume.</p>
+
+      <p class="error" id="error" role="alert"></p>
+      <div class="actions">
+        <button type="button" class="ghost" id="cancel">Cancel</button>
+        <button type="submit" id="save">Save and start</button>
+      </div>
+    </form>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

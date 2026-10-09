@@ -8,176 +8,10 @@
  * inline-CSS + OKLCH design tokens — NOT Tailwind, and the green `--accent`
  * rather than Caesar's blue. Shape/structure matches Caesar; palette stays Raze.
  *
- * Consumed by WalletsTab, tabs.tsx, SpotSummary, PnlAreaChart, PnlCalendarModal.
+ * Consumed by tabs.tsx, PnlAreaChart, PnlCalendarModal.
  */
 
 import React from "react";
-
-/* ── PanelCard — bordered card + muted header strip ──────────────────── */
-
-export function PanelCard({
-  title, right, header, pad = false, children, style, bodyStyle,
-}: {
-  title?: React.ReactNode;
-  right?: React.ReactNode;
-  /** Full custom header node — overrides title/right. */
-  header?: React.ReactNode;
-  /** Body padding: false = flush (tables), true = 14px, or a number. */
-  pad?: boolean | number;
-  children: React.ReactNode;
-  style?: React.CSSProperties;
-  bodyStyle?: React.CSSProperties;
-}) {
-  const bodyPad = pad === true ? 14 : pad === false ? 0 : pad;
-  const showHeader = header != null || title != null || right != null;
-  return (
-    <div style={{
-      background: "var(--ink-1)",
-      border: "1px solid var(--line-soft)",
-      borderRadius: 12,
-      overflow: "hidden",
-      boxShadow: "var(--shadow-sm)",
-      display: "flex", flexDirection: "column", minWidth: 0,
-      ...style,
-    }}>
-      {showHeader && (header != null ? (
-        <div style={{
-          padding: "10px 14px",
-          borderBottom: "1px solid var(--line-soft)",
-          background: "var(--ink-2)",
-        }}>{header}</div>
-      ) : (
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          gap: 10, padding: "10px 14px",
-          borderBottom: "1px solid var(--line-soft)",
-          background: "var(--ink-2)",
-        }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--paper)" }}>{title}</span>
-          {right && <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
-        </div>
-      ))}
-      <div style={{ padding: bodyPad, minWidth: 0, ...bodyStyle }}>{children}</div>
-    </div>
-  );
-}
-
-/* ── PremiumButton — Caesar's glassy action button, in Raze green ────── */
-
-export function PremiumButton({
-  children, icon, onClick, disabled, variant = "glass", size = "md", full, title, style, type = "button",
-}: {
-  children?: React.ReactNode;
-  icon?: React.ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-  variant?: "glass" | "solid";
-  size?: "sm" | "md";
-  full?: boolean;
-  title?: string;
-  style?: React.CSSProperties;
-  type?: "button" | "submit";
-}) {
-  const h = size === "sm" ? 30 : 36;
-  const fs = size === "sm" ? 11 : 12;
-  const solid = variant === "solid";
-
-  const restingShadow = solid
-    ? "inset 0 1px 0 rgba(255,255,255,0.25), 0 2px 10px -3px color-mix(in oklch, var(--accent) 55%, transparent)"
-    : "inset 0 1px 0 color-mix(in oklch, var(--accent) 16%, transparent), 0 2px 8px -3px color-mix(in oklch, var(--accent) 30%, transparent)";
-  const hoverShadow = solid
-    ? "inset 0 1px 0 rgba(255,255,255,0.32), 0 4px 16px -3px color-mix(in oklch, var(--accent) 66%, transparent)"
-    : "inset 0 1px 0 color-mix(in oklch, var(--accent) 24%, transparent), 0 4px 14px -3px color-mix(in oklch, var(--accent) 44%, transparent)";
-
-  const base: React.CSSProperties = {
-    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
-    height: h, padding: "0 14px", borderRadius: 8,
-    width: full ? "100%" : undefined,
-    fontSize: fs, fontWeight: 600, fontFamily: "var(--font-ui)",
-    letterSpacing: "-0.005em", whiteSpace: "nowrap",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.5 : 1,
-    color: solid ? "var(--ink-0)" : "var(--paper)",
-    border: `1px solid color-mix(in oklch, var(--accent) ${solid ? 90 : 46}%, transparent)`,
-    background: solid
-      ? "linear-gradient(180deg, color-mix(in oklch, var(--accent) 96%, white), var(--accent))"
-      : "radial-gradient(120% 130% at 50% -12%, var(--accent-w), color-mix(in oklch, var(--accent) 7%, transparent) 55%, transparent), var(--ink-2)",
-    boxShadow: restingShadow,
-    transition: "transform 90ms ease-out, box-shadow 140ms, filter 140ms, background 140ms",
-    ...style,
-  };
-
-  return (
-    <button
-      type={type}
-      onClick={disabled ? undefined : onClick}
-      disabled={disabled}
-      title={title}
-      style={base}
-      onMouseEnter={(e) => {
-        if (disabled) return;
-        e.currentTarget.style.transform = "scale(1.02)";
-        e.currentTarget.style.filter = "brightness(1.08)";
-        e.currentTarget.style.boxShadow = hoverShadow;
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = "none";
-        e.currentTarget.style.filter = "none";
-        e.currentTarget.style.boxShadow = restingShadow;
-      }}
-      onMouseDown={(e) => { if (!disabled) e.currentTarget.style.transform = "scale(0.97)"; }}
-      onMouseUp={(e) => { if (!disabled) e.currentTarget.style.transform = "scale(1.02)"; }}
-    >
-      {icon && <span style={{ display: "inline-flex" }}>{icon}</span>}
-      {children}
-    </button>
-  );
-}
-
-/* ── SubTabs — Caesar's full-underline sub-tab row ───────────────────── */
-
-export function SubTabs<T extends string>({
-  tabs, value, onChange,
-}: {
-  tabs: Array<{ value: T; label: string; count?: number }>;
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 24, borderBottom: "1px solid var(--line-soft)" }}>
-      {tabs.map((t) => {
-        const on = t.value === value;
-        return (
-          <button
-            key={t.value}
-            onClick={() => onChange(t.value)}
-            style={{
-              position: "relative", padding: "0 0 11px", marginBottom: -1,
-              background: "transparent", border: "none",
-              borderBottom: `2px solid ${on ? "var(--accent)" : "transparent"}`,
-              color: on ? "var(--accent)" : "var(--paper-3)",
-              fontSize: 13, fontWeight: on ? 600 : 500, fontFamily: "var(--font-ui)",
-              cursor: "pointer", transition: "color 140ms, border-color 140ms",
-              display: "inline-flex", alignItems: "center", gap: 7,
-            }}
-            onMouseEnter={(e) => { if (!on) e.currentTarget.style.color = "var(--paper)"; }}
-            onMouseLeave={(e) => { if (!on) e.currentTarget.style.color = "var(--paper-3)"; }}
-          >
-            {t.label}
-            {t.count != null && (
-              <span style={{
-                fontSize: 10, fontFamily: "var(--font-mono)", fontWeight: 600,
-                color: on ? "var(--accent)" : "var(--paper-4)",
-                background: on ? "var(--accent-w)" : "var(--ink-2)",
-                padding: "1px 6px", borderRadius: 999,
-              }}>{t.count}</span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /* ── PillSearch — rounded search with leading glyph ──────────────────── */
 
@@ -254,35 +88,6 @@ export function MiniToggle<T extends string>({
   );
 }
 
-/* ── ShowToggle — Caesar's eye / switch "show hidden" control ─────────── */
-
-export function ShowToggle({
-  on, onToggle, label, icon,
-}: {
-  on: boolean;
-  onToggle: () => void;
-  label: string;
-  icon?: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        padding: "5px 9px", borderRadius: 7,
-        background: on ? "var(--accent-w)" : "transparent",
-        border: `1px solid ${on ? "color-mix(in oklch, var(--accent) 36%, transparent)" : "var(--line-soft)"}`,
-        color: on ? "var(--accent)" : "var(--paper-3)",
-        fontSize: 11, fontWeight: 500, fontFamily: "var(--font-ui)", cursor: "pointer",
-        transition: "background 120ms, border-color 120ms, color 120ms", whiteSpace: "nowrap",
-      }}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
 /* ── Data table chrome — Caesar muted-header tables ──────────────────── */
 
 export const dataCell: React.CSSProperties = {
@@ -334,24 +139,6 @@ export function DataTable({
         <tbody>{children}</tbody>
       </table>
     </div>
-  );
-}
-
-export function HoverRow({
-  onClick, highlight, children,
-}: {
-  onClick?: () => void;
-  highlight?: boolean;
-  children: React.ReactNode;
-}) {
-  const base = highlight ? "color-mix(in oklch, var(--accent) 7%, transparent)" : "transparent";
-  return (
-    <tr
-      onClick={onClick}
-      style={{ background: base, transition: "background 100ms", cursor: onClick ? "pointer" : "default" }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = base; }}
-    >{children}</tr>
   );
 }
 

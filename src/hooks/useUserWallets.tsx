@@ -1,32 +1,21 @@
 "use client";
 /**
- * Single source of truth for the logged-in user's wallets AND the
- * "active" selection that's shared between the shell sidebar, the
- * portfolio, and the trading panel.
+ * The wallets of this Trade UI and the "active" selection shared by the top
+ * bar, the sidebar, the portfolio and the trading panels.
  *
- * Source: Raze Terminal backend `/wallets` for the current region.
+ * Source: the vault on this Trade UI's server (src/lib/vault/client.ts). The
+ * provider re-reads whenever the vault's list changes (WALLETS_EVENT, fired by
+ * every create / import / rename / delete), so the wallet page and the
+ * panels never disagree. A Solana wallet shows on Solana, an EVM wallet on
+ * every EVM chain.
  *
- * Architecture: a Provider fetches once per region/auth change and
- * broadcasts the result through context, so that consumers like the
- * portfolio page, the trading panel, and the shell bootstrap share a
- * single HTTP request per state change instead of each mounting its own
- * fetch loop.
+ * Active selection: the wallets the next trade signs with, kept per chain in
+ * localStorage. Several can be active at once (one trade each, all at once).
+ * Only wallets with a key can be active: watch-only wallets never trade.
  *
- * Active selection rules:
- *   - Connected (PHANTOM) and Platform (PLATFORM) wallets are mutually
- *     exclusive. Activating one kind clears the other. You can trade
- *     with your connected wallet OR one/more platform wallets, never a
- *     mix (different signing paths + UX).
- *   - Multiple PLATFORM wallets can be active at once (fan-out trades).
- *   - Only one PHANTOM wallet exists per user, so "connected mode" is
- *     effectively a single-select.
- *
- * Side-effect: mirrors PLATFORM wallets into localStorage under
- * PORTFOLIO_STORAGE_KEY so the existing shell sidebar / tracker code
- * (which reads that key synchronously during render) sees a fresh list.
- * The Phantom wallet is intentionally excluded from the mirror: it is the
- * login identity shown in the TopBar, not an entry in the "my wallets"
- * list.
+ * Side-effect: mirrors the wallets into localStorage under
+ * PORTFOLIO_STORAGE_KEY for the code that reads it synchronously
+ * during render.
  */
 
 import React, {
@@ -38,49 +27,36 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useApp } from "../contexts/AppContext";
-import { useRegion } from "../contexts/RegionContext";
 import { useChain } from "../contexts/ChainContext";
-import { nativeSymbol, type ChainId } from "../lib/chains";
-import { BackendClient, readSession, type BackendWallet, type WalletKind } from "../api/backend";
-import { PORTFOLIO_STORAGE_KEY } from "../lib/trackerWallets";
-import { BROWSER_WALLET_ID, useBrowserWallet } from "../lib/swap/browserWallet";
+import type { ChainId } from "../lib/chains";
+import { fetchBalances, familyOf, toChainWallet, type ChainWallet } from "../api/vaultWallets";
+import { PORTFOLIO_STORAGE_KEY } from "../lib/userWalletsMirror";
+import { WALLETS_EVENT, cachedWallets, vault, type VaultWallet } from "../lib/vault/client";
 
 const WALLETS_CHANGED_EVENT = "terminal:wallets-changed";
 const ACTIVE_WALLETS_STORAGE_KEY = "trade.active-wallets.v2";
-const ACTIVE_WALLETS_LEGACY_KEY = "trade.active-wallets.v1";
 
-function defaultLabel(w: { kind: WalletKind; label: string | null; pubkey: string }): string {
+function defaultLabel(w: { label: string | null; pubkey: string; kind: ChainWallet["kind"] }): string {
   if (w.label) return w.label;
-  if (w.kind === "PHANTOM") return "Phantom";
-  if (w.kind === "DEMO") return "Demo";
-  return `Platform ${w.pubkey.slice(0, 4)}`;
+  return `${w.kind === "WATCH" ? "Watch" : "Wallet"} ${w.pubkey.slice(0, 4)}`;
 }
 
 let lastMirrorPayload = "";
 
-function mirrorToLocalStorage(wallets: BackendWallet[]) {
+function mirrorToLocalStorage(wallets: ChainWallet[]) {
   if (typeof window === "undefined") return;
   try {
-    // Exclude PHANTOM (login identity, not a tradeable wallet here) and
-    // DEMO (synthetic pubkey isn't an on-chain address — feeds the
-    // legacy tracker/x-handle paths that subscribeSigners on the WS,
-    // which would 4xx on "demo:<cuid>").
-    const mapped = wallets
-      .filter((w) => w.kind !== "PHANTOM" && w.kind !== "DEMO")
-      .map((w) => ({
-        id: w.id,
-        label: defaultLabel(w),
-        address: w.pubkey,
-        createdAt: w.createdAt,
-      }));
+    const mapped = wallets.map((w) => ({
+      id: w.id,
+      label: defaultLabel(w),
+      address: w.pubkey,
+      createdAt: w.createdAt,
+    }));
     const payload = JSON.stringify(mapped);
     if (payload === lastMirrorPayload) return;
     lastMirrorPayload = payload;
     window.localStorage.setItem(PORTFOLIO_STORAGE_KEY, payload);
-    // Fires a same-tab event so the shell sidebar & tracker re-read the
-    // mirror. This hook itself must NOT listen — otherwise every write
-    // recursively re-fetches and /wallets render-loops.
+    // Same-tab signal for the sidebar to re-read the mirror.
     window.dispatchEvent(new Event(WALLETS_CHANGED_EVENT));
   } catch {
     /* ignore quota / private mode */
@@ -91,32 +67,12 @@ function activeStorageKey(chainId: ChainId): string {
   return `${ACTIVE_WALLETS_STORAGE_KEY}.${chainId}`;
 }
 
-function parseIdList(raw: string | null): Set<string> {
-  if (!raw) return new Set();
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((v): v is string => typeof v === "string" && v.length > 0));
-  } catch {
-    return new Set();
-  }
-}
-
 function readActiveSet(chainId: ChainId): Set<string> {
   if (typeof window === "undefined") return new Set();
   try {
-    const keyed = localStorage.getItem(activeStorageKey(chainId));
-    if (keyed) return parseIdList(keyed);
-    // One-time migration from the global v1 key (Solana-era installs).
-    if (chainId === "sol") {
-      const legacy = parseIdList(localStorage.getItem(ACTIVE_WALLETS_LEGACY_KEY));
-      if (legacy.size > 0) {
-        localStorage.setItem(activeStorageKey(chainId), JSON.stringify([...legacy]));
-        localStorage.removeItem(ACTIVE_WALLETS_LEGACY_KEY);
-        return legacy;
-      }
-    }
-    return new Set();
+    const parsed = JSON.parse(localStorage.getItem(activeStorageKey(chainId)) || "[]");
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((v): v is string => typeof v === "string" && v.length > 0));
   } catch {
     return new Set();
   }
@@ -131,32 +87,25 @@ function writeActiveSet(chainId: ChainId, ids: Set<string>) {
   }
 }
 
-function isActiveStorageKey(key: string | null): boolean {
-  if (!key) return false;
-  return key === ACTIVE_WALLETS_LEGACY_KEY || key.startsWith(`${ACTIVE_WALLETS_STORAGE_KEY}.`);
-}
-
-export interface UserWallet extends BackendWallet {
+export interface UserWallet extends ChainWallet {
   displayLabel: string;
-  isConnected: boolean; // true for the PHANTOM primary wallet
+  /** an address without its key: shows balances, never trades */
+  watchOnly: boolean;
 }
 
-function decorate(w: BackendWallet): UserWallet {
-  return {
-    ...w,
-    displayLabel: defaultLabel(w),
-    isConnected: w.kind === "PHANTOM",
-  };
+function decorate(w: VaultWallet, chain: ChainId): UserWallet {
+  const b = toChainWallet(w, chain);
+  return { ...b, displayLabel: defaultLabel(b), watchOnly: w.watchOnly };
 }
 
 export interface WalletBalance {
-  /** Native SOL balance in SOL units (not lamports). */
+  /** Native balance in whole coins (SOL / ETH / BNB). */
   sol: number;
   /** mint → token amount in display units (already divided by decimals). */
   tokens: Record<string, number>;
-  /** True while the initial REST seed is in flight. */
+  /** True while the first read is in flight. */
   loading: boolean;
-  /** Last time a live snapshot or trade patch touched this wallet (ms). */
+  /** Last time a read touched this wallet (ms). */
   updatedAt: number;
 }
 
@@ -184,13 +133,6 @@ function normalizeFetchedTokens(tokens: unknown): Record<string, number> | null 
   return out;
 }
 
-function tokensEqual(a: Record<string, number>, b: Record<string, number>): boolean {
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  for (const k of keys) if (a[k] !== b[k]) return false;
-  return true;
-}
-
 function keepKnownBalance(cur?: WalletBalance): WalletBalance {
   return {
     sol: finiteNumber(cur?.sol) ?? 0,
@@ -200,43 +142,13 @@ function keepKnownBalance(cur?: WalletBalance): WalletBalance {
   };
 }
 
-/** Outcome of a bulk create/import: what landed, what failed, and whether the
- *  per-user wallet cap cut the run short. */
-export interface BulkWalletResult {
-  created: BackendWallet[];
-  /** Per-item failures that weren't the wallet cap (duplicate, invalid key…). */
-  errors: Array<{ item: string; reason: string }>;
-  /** True when the server's wallet_limit_reached stopped the run early. */
-  limitReached: boolean;
-}
-
 interface Value {
+  /** This chain's wallets: Solana on Solana, EVM on the EVM chains. */
   wallets: UserWallet[];
   loading: boolean;
   error: string | null;
-  /** Effective per-user wallet cap from the backend. 0 = unlimited. */
-  walletLimit: number;
-  /** Total wallets counted against the cap (spans every chain). */
-  walletCount: number;
-  /** Wallets that can still be added. Infinity when the cap is unlimited. */
-  walletsRemaining: number;
+  /** Re-read the vault's list. */
   refresh: () => Promise<void>;
-  createPlatform: (label?: string) => Promise<BackendWallet>;
-  importPlatform: (secret: string, label?: string) => Promise<BackendWallet>;
-  /** Create `count` platform wallets in one run; refreshes once at the end. */
-  createPlatformBulk: (
-    count: number,
-    opts?: { labelPrefix?: string; onProgress?: (done: number, total: number) => void },
-  ) => Promise<BulkWalletResult>;
-  /** Import many base58 secrets in one run; refreshes once at the end. */
-  importPlatformBulk: (
-    entries: Array<{ secret: string; label?: string }>,
-    opts?: { onProgress?: (done: number, total: number) => void },
-  ) => Promise<BulkWalletResult>;
-  createDemo: (args?: { label?: string; initialSol?: number; initialUsdc?: number }) => Promise<BackendWallet>;
-  resetDemo: (id: string) => Promise<BackendWallet>;
-  remove: (id: string) => Promise<void>;
-  rename: (id: string, label: string) => Promise<void>;
 
   // Active selection — shared across sidebar / portfolio / trading panel.
   activeIds: Set<string>;
@@ -246,61 +158,52 @@ interface Value {
   setActive: (ids: string[]) => void;
   clearActive: () => void;
 
-  // Live balances — snapshot on subscribe, patches on wallet trades.
-  // Keyed by backend wallet id.
+  // Balances, keyed by wallet id.
   balances: Record<string, WalletBalance>;
-  /** Manual on-chain/RPC refresh (sidebar button). Updates shared balances. */
+  /** Read again now (after a trade, from the sidebar's refresh). */
   refreshBalances: (walletId?: string) => Promise<Record<string, WalletBalance>>;
 }
 
 const Ctx = createContext<Value | null>(null);
 
 export function UserWalletsProvider({ children }: { children: React.ReactNode }) {
-  const { authed, pushToast, guestPhantomPubkey } = useApp();
-  const { region } = useRegion();
   const { chainId } = useChain();
 
-  const [storedWallets, setWallets] = useState<UserWallet[]>([]);
-  // The connected browser wallet (Phantom, Solflare, … via the Wallet
-  // Standard) joins the list as the "connected" wallet, on Solana only.
-  const browser = useBrowserWallet().connected;
-  const wallets = useMemo<UserWallet[]>(() => {
-    if (!browser || chainId !== "sol") return storedWallets;
-    return [
-      ...storedWallets.filter((w) => w.id !== BROWSER_WALLET_ID && w.id !== "guest"),
-      {
-        id: BROWSER_WALLET_ID,
-        kind: "PHANTOM",
-        chainId: "sol",
-        pubkey: browser.address,
-        label: browser.wallet.name,
-        displayLabel: browser.wallet.name,
-        isConnected: true,
-        createdAt: "",
-        lastUsedAt: null,
-      },
-    ];
-  }, [storedWallets, browser, chainId]);
-  const [loading, setLoading] = useState(false);
+  const [all, setAll] = useState<VaultWallet[]>(() => cachedWallets());
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Effective wallet cap + total usage from the backend. limit 0 = unlimited.
-  const [limitInfo, setLimitInfo] = useState<{ limit: number; used: number }>({ limit: 0, used: 0 });
-  // Lazy-read so the first client render already has the saved selection.
-  // A separate mount effect used to hydrate *after* a persist effect that
-  // wrote `[]`, which wiped localStorage on every full page load.
+  // Lazy-read so the first render already has the saved selection.
   const [activeIds, setActiveIdsState] = useState<Set<string>>(() => readActiveSet(chainId));
 
-  // Race guard: increment on every refresh; discard responses from stale
-  // runs so region/auth switches don't overwrite fresh state with older.
-  const currentKey = useRef(0);
+  const wallets = useMemo(
+    () => all.filter((w) => w.family === familyOf(chainId)).map((w) => decorate(w, chainId)),
+    [all, chainId],
+  );
 
-  const client = useMemo(() => {
-    const session = readSession();
-    return new BackendClient(region.baseUrl, session?.token);
-  }, [region.baseUrl, authed]);
+  const refresh = useCallback(async () => {
+    try {
+      await vault.list(); // fires WALLETS_EVENT, which updates `all`
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Reload persisted selection when the user switches chain (not on the
-  // initial mount — lazy init already read storage for the first chain).
+  useEffect(() => {
+    const sync = () => setAll(cachedWallets());
+    window.addEventListener(WALLETS_EVENT, sync);
+    void refresh();
+    return () => window.removeEventListener(WALLETS_EVENT, sync);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!loading) mirrorToLocalStorage(wallets);
+  }, [wallets, loading]);
+
+  // Reload the persisted selection when the user switches chain (not on the
+  // first mount: the lazy init already read it).
   const chainHydratedRef = useRef(false);
   useEffect(() => {
     if (!chainHydratedRef.current) {
@@ -310,121 +213,34 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
     setActiveIdsState(readActiveSet(chainId));
   }, [chainId]);
 
-  // Persist after the wallet roster has loaded at least once so we never
-  // snapshot an empty selection that was cleared mid-fetch.
-  const persistReadyRef = useRef(false);
-  useEffect(() => {
-    if (!loading) persistReadyRef.current = true;
-  }, [loading]);
-
-  useEffect(() => {
-    if (!persistReadyRef.current) return;
-    writeActiveSet(chainId, activeIds);
-  }, [chainId, activeIds]);
-
-  const refresh = useCallback(async () => {
-    if (!authed) {
-      // For unauthenticated guests with Phantom connected, expose a synthetic
-      // wallet so trading panels and position views can route trades through
-      // the public-prepare / public-submit endpoints.
-      if (guestPhantomPubkey) {
-        setWallets([{
-          id: "guest",
-          kind: "PHANTOM",
-          pubkey: guestPhantomPubkey,
-          label: null,
-          displayLabel: "Phantom",
-          isConnected: true,
-          createdAt: "",
-          lastUsedAt: null,
-        }]);
-      } else {
-        setWallets([]);
-        mirrorToLocalStorage([]);
-      }
-      setLimitInfo({ limit: 0, used: 0 });
-      return;
-    }
-    const key = ++currentKey.current;
-    setLoading(true);
-    try {
-      const res = await client.listWallets(chainId);
-      if (currentKey.current !== key) return;
-      setWallets(res.wallets.map(decorate));
-      setLimitInfo({ limit: res.limit ?? 0, used: res.used ?? res.wallets.length });
-      // The localStorage mirror feeds the Solana tracker / x-handle paths,
-      // which subscribe Solana signers.
-      mirrorToLocalStorage(res.wallets);
-      setError(null);
-    } catch (e) {
-      if (currentKey.current !== key) return;
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (currentKey.current === key) setLoading(false);
-    }
-  }, [authed, client, guestPhantomPubkey, chainId]);
-
-  useEffect(() => {
-    void refresh();
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === PORTFOLIO_STORAGE_KEY) void refresh();
-      if (isActiveStorageKey(e.key)) setActiveIdsState(readActiveSet(chainId));
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, [refresh]);
-
-  // Reconcile persisted selection with the loaded wallet roster.
-  // Critical: do NOT prune while `loading` — on refresh wallets starts as
-  // `[]` and the old prune logic wiped every saved id before /wallets returned.
+  // Persist only once the list has loaded, so an empty first render never
+  // overwrites the saved selection.
   useEffect(() => {
     if (loading) return;
+    writeActiveSet(chainId, activeIds);
+  }, [chainId, activeIds, loading]);
 
-    const live = new Set(wallets.map((w) => w.id));
-    const stored = readActiveSet(chainId);
-
+  // Drop selected ids that no longer exist or cannot sign.
+  useEffect(() => {
+    if (loading) return;
+    const tradeable = new Set(wallets.filter((w) => !w.watchOnly).map((w) => w.id));
     setActiveIdsState((prev) => {
-      const fromPrev = [...prev].filter((id) => live.has(id));
-      if (fromPrev.length > 0) {
-        const next = new Set(fromPrev);
-        if (next.size === prev.size && fromPrev.every((id) => prev.has(id))) return prev;
-        return next;
-      }
-      // Selection was cleared during the loading gap — restore from storage.
-      const fromStored = [...stored].filter((id) => live.has(id));
-      if (fromStored.length > 0) return new Set(fromStored);
-      return prev;
+      const kept = [...prev].filter((id) => tradeable.has(id));
+      return kept.length === prev.size ? prev : new Set(kept);
     });
-  }, [wallets, loading, chainId]);
+  }, [wallets, loading]);
 
-  // ── Live balances ────────────────────────────────────────────────────
-  //
-  // Backend is the source of truth. We subscribe to the `wallets.balances`
-  // topic: an initial snapshot on subscribe, then patch frames when our
-  // wallets trade (platform via the signers feed, demo via fill invalidation).
+  // ── balances ─────────────────────────────────────────────────────────
 
   const [balances, setBalances] = useState<Record<string, WalletBalance>>({});
-
-  // Keyed by region+wallet-set; bumping this re-subscribes when the user's
-  // wallet roster changes (add/import/delete) so the backend sees the new
-  // set of pubkeys.
-  const walletIdsKey = useMemo(
-    () => wallets.map((w) => w.id).sort().join(","),
-    [wallets],
-  );
+  const walletIdsKey = useMemo(() => wallets.map((w) => w.id).sort().join(","), [wallets]);
 
   useEffect(() => {
-    if (!authed) {
-      setBalances({});
-      return;
-    }
     if (wallets.length === 0) {
       setBalances({});
       return;
     }
-
-    // Seed loading flags so the UI doesn't flash "0.00" before the
-    // snapshot frame arrives.
+    // Loading flags first, so the UI does not flash "0.00".
     setBalances((prev) => {
       const next: Record<string, WalletBalance> = {};
       for (const w of wallets) {
@@ -443,7 +259,7 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
     const pull = async () => {
       if (cancelled) return;
       try {
-        const res = await client.walletBalances();
+        const res = await fetchBalances();
         if (cancelled) return;
         setBalances((prev) => {
           const next: Record<string, WalletBalance> = { ...prev };
@@ -457,7 +273,7 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
           }
           return next;
         });
-      } catch { /* keep last */ }
+      } catch { /* keep the last */ }
     };
     void pull();
     const timer = setInterval(() => { void pull(); }, 12_000);
@@ -465,15 +281,14 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
       cancelled = true;
       clearInterval(timer);
     };
-    // walletIdsKey covers wallet roster changes.
+    // walletIdsKey covers roster changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authed, walletIdsKey, client]);
+  }, [walletIdsKey, chainId]);
 
   const refreshBalances = useCallback(
     async (walletId?: string): Promise<Record<string, WalletBalance>> => {
-      if (!authed) return {};
       try {
-        const res = await client.walletBalances(walletId ? [walletId] : undefined);
+        const res = await fetchBalances(walletId ? [walletId] : undefined);
         let nextSnapshot: Record<string, WalletBalance> = {};
         setBalances((prev) => {
           const next = { ...prev };
@@ -502,58 +317,41 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
         return {};
       }
     },
-    [authed, client],
+    [],
   );
 
-  // Enforce mode exclusivity: PHANTOM, PLATFORM, and DEMO are mutually
-  // exclusive groups. Toggling on a wallet of one group clears any active
-  // wallets in the other groups (you can't mix paper and real, or phantom
-  // and platform signing paths in a single trade).
+  // ── selection ────────────────────────────────────────────────────────
+
+  // Read from the vault's cache, not React state: a wallet created a moment
+  // ago can be selected before this provider re-renders with it.
+  const tradeableIds = useCallback(
+    () => new Set(cachedWallets().filter((w) => w.family === familyOf(chainId) && !w.watchOnly).map((w) => w.id)),
+    [chainId],
+  );
+
   const toggleActive = useCallback(
     (id: string) => {
       setActiveIdsState((prev) => {
-        const target = wallets.find((w) => w.id === id);
-        if (!target) return prev;
+        if (!tradeableIds().has(id)) return prev;
         const next = new Set(prev);
-        if (next.has(id)) {
-          next.delete(id);
-          return next;
-        }
-        for (const existingId of [...next]) {
-          const existing = wallets.find((w) => w.id === existingId);
-          if (!existing) {
-            next.delete(existingId);
-            continue;
-          }
-          if (existing.kind !== target.kind) next.delete(existingId);
-        }
-        next.add(id);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
         return next;
       });
     },
-    [wallets],
+    [tradeableIds],
   );
 
   const setActive = useCallback(
     (ids: string[]) => {
       setActiveIdsState((prev) => {
-        // Mixed-kind input: keep only the first kind encountered.
-        const byId = new Map(wallets.map((w) => [w.id, w] as const));
-        let anchorKind: WalletKind | null = null;
-        const next = new Set<string>();
-        for (const id of ids) {
-          const w = byId.get(id);
-          if (!w) continue;
-          if (anchorKind === null) anchorKind = w.kind;
-          if (w.kind === anchorKind) next.add(id);
-        }
-        if (next.size === prev.size && [...next].every((id) => prev.has(id))) {
-          return prev;
-        }
+        const tradeable = tradeableIds();
+        const next = new Set(ids.filter((id) => tradeable.has(id)));
+        if (next.size === prev.size && [...next].every((id) => prev.has(id))) return prev;
         return next;
       });
     },
-    [wallets],
+    [tradeableIds],
   );
 
   const clearActive = useCallback(() => {
@@ -567,176 +365,14 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
     [wallets, activeIds],
   );
 
-  const createPlatform = useCallback(
-    async (label?: string) => {
-      const created = await client.createPlatformWallet(label, chainId);
-      await refresh();
-      pushToast({
-        title: "WALLET CREATED",
-        body: `${created.pubkey.slice(0, 4)}…${created.pubkey.slice(-4)}`,
-        tone: "buy",
-      });
-      return created;
-    },
-    [client, refresh, pushToast, chainId],
-  );
-
-  const importPlatform = useCallback(
-    async (secret: string, label?: string) => {
-      const created = await client.importPlatformWallet(secret, label, chainId);
-      await refresh();
-      pushToast({
-        title: "WALLET IMPORTED",
-        body: `${created.pubkey.slice(0, 4)}…${created.pubkey.slice(-4)}`,
-        tone: "buy",
-      });
-      return created;
-    },
-    [client, refresh, pushToast, chainId],
-  );
-
-  // Both bulk helpers loop the single-op client call WITHOUT the per-item
-  // refresh() that createPlatform/importPlatform run, then refresh once at the
-  // end — a bulk of N would otherwise fire N /wallets round-trips. The server
-  // enforces the cap per call, so a wallet_limit_reached mid-run stops the loop
-  // cleanly and is reported (not thrown) so the caller can summarize.
-  const isLimitError = (e: unknown): boolean =>
-    (e as { code?: string })?.code === "wallet_limit_reached" ||
-    (e instanceof Error && e.message.includes("wallet_limit_reached"));
-
-  const createPlatformBulk = useCallback(
-    async (
-      count: number,
-      opts?: { labelPrefix?: string; onProgress?: (done: number, total: number) => void },
-    ): Promise<BulkWalletResult> => {
-      const total = Math.max(0, Math.floor(count));
-      const prefix = opts?.labelPrefix?.trim();
-      const created: BackendWallet[] = [];
-      const errors: Array<{ item: string; reason: string }> = [];
-      let limitReached = false;
-      for (let i = 0; i < total; i++) {
-        // One wallet keeps the label verbatim; a batch numbers them "Label N".
-        const label = prefix ? (total === 1 ? prefix : `${prefix} ${i + 1}`) : undefined;
-        try {
-          created.push(await client.createPlatformWallet(label, chainId));
-        } catch (e) {
-          if (isLimitError(e)) { limitReached = true; break; }
-          errors.push({ item: `#${i + 1}`, reason: e instanceof Error ? e.message : String(e) });
-        }
-        opts?.onProgress?.(i + 1, total);
-      }
-      await refresh();
-      if (created.length > 0) {
-        pushToast({
-          title: created.length === 1 ? "WALLET CREATED" : "WALLETS CREATED",
-          body: `${created.length} platform wallet${created.length === 1 ? "" : "s"}`,
-          tone: "buy",
-        });
-      }
-      return { created, errors, limitReached };
-    },
-    [client, refresh, pushToast, chainId],
-  );
-
-  const importPlatformBulk = useCallback(
-    async (
-      entries: Array<{ secret: string; label?: string }>,
-      opts?: { onProgress?: (done: number, total: number) => void },
-    ): Promise<BulkWalletResult> => {
-      const created: BackendWallet[] = [];
-      const errors: Array<{ item: string; reason: string }> = [];
-      let limitReached = false;
-      for (let i = 0; i < entries.length; i++) {
-        const { secret, label } = entries[i];
-        const tag = `${secret.slice(0, 6)}…`;
-        try {
-          created.push(await client.importPlatformWallet(secret, label?.trim() || undefined, chainId));
-        } catch (e) {
-          if (isLimitError(e)) { limitReached = true; break; }
-          const code = (e as { code?: string })?.code;
-          const reason =
-            code === "wallet_exists" ? "already imported"
-            : code === "invalid_secret" ? "invalid key"
-            : e instanceof Error ? e.message : String(e);
-          errors.push({ item: tag, reason });
-        }
-        opts?.onProgress?.(i + 1, entries.length);
-      }
-      await refresh();
-      if (created.length > 0) {
-        pushToast({
-          title: created.length === 1 ? "WALLET IMPORTED" : "WALLETS IMPORTED",
-          body: `${created.length} platform wallet${created.length === 1 ? "" : "s"}`,
-          tone: "buy",
-        });
-      }
-      return { created, errors, limitReached };
-    },
-    [client, refresh, pushToast, chainId],
-  );
-
-  const createDemo = useCallback(
-    async (args?: { label?: string; initialSol?: number; initialUsdc?: number }) => {
-      const created = await client.createDemoWallet({ ...args, chainId });
-      await refresh();
-      pushToast({
-        title: "DEMO WALLET CREATED",
-        body: `${(created.solBalance ?? 0).toFixed(0)} ${nativeSymbol(chainId)} · $${(created.usdcBalance ?? 0).toLocaleString()} USDC`,
-        tone: "buy",
-      });
-      return created;
-    },
-    [client, refresh, pushToast, chainId],
-  );
-
-  const resetDemo = useCallback(
-    async (id: string) => {
-      const updated = await client.resetDemoWallet(id);
-      await refresh();
-      pushToast({
-        title: "DEMO WALLET RESET",
-        body: `Restored to ${(updated.solBalance ?? 0).toFixed(0)} SOL · $${(updated.usdcBalance ?? 0).toLocaleString()} USDC`,
-        tone: "default",
-      });
-      return updated;
-    },
-    [client, refresh, pushToast],
-  );
-
-  const remove = useCallback(
-    async (id: string) => {
-      await client.deleteWallet(id);
-      await refresh();
-    },
-    [client, refresh],
-  );
-
-  const rename = useCallback(
-    async (id: string, label: string) => {
-      await client.renameWallet(id, label);
-      await refresh();
-    },
-    [client, refresh],
-  );
-
-  const walletsRemaining = limitInfo.limit > 0
-    ? Math.max(0, limitInfo.limit - limitInfo.used)
-    : Infinity;
-
   const value = useMemo<Value>(
     () => ({
-      wallets, loading, error,
-      walletLimit: limitInfo.limit, walletCount: limitInfo.used, walletsRemaining,
-      refresh,
-      createPlatform, importPlatform, createPlatformBulk, importPlatformBulk,
-      createDemo, resetDemo, remove, rename,
+      wallets, loading, error, refresh,
       activeIds, activeWallets, isActive, toggleActive, setActive, clearActive,
       balances, refreshBalances,
     }),
     [
-      wallets, loading, error, limitInfo, walletsRemaining, refresh,
-      createPlatform, importPlatform, createPlatformBulk, importPlatformBulk,
-      createDemo, resetDemo, remove, rename,
+      wallets, loading, error, refresh,
       activeIds, activeWallets, isActive, toggleActive, setActive, clearActive,
       balances, refreshBalances,
     ],

@@ -1,0 +1,68 @@
+# Desktop builds: `npm run dist` (this OS), `npm run dist:linux|win|mac`.
+# `npm run bundle` lays out dist/app (the Electron main process, no
+# dependencies) and dist/server (the server, shipped next to it unpacked).
+# Each OS builds best on itself: see .github/workflows/release.yml.
+appId: bot.raze.tradeui
+productName: Raze Trade UI
+copyright: Copyright © 2026 Raze
+directories:
+  app: dist/app
+  output: release
+  buildResources: build
+asar: true
+beforeBuild: scripts/electron-before-build.cjs
+# A resource's top-level node_modules is always filtered out, so it gets its
+# own entry.
+extraResources:
+  - from: dist/server
+    to: server
+    filter:
+      - "**/*"
+  - from: dist/server/node_modules
+    to: server/node_modules
+    filter:
+      - "**/*"
+artifactName: "raze-trade-ui-${version}-${os}-${arch}.${ext}"
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64]
+    - target: tar.gz
+      arch: [x64]
+  category: Finance
+  icon: build/icon.png
+  synopsis: Self-hosted trading terminal for Raze
+  maintainer: Raze
+  syncDesktopName: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  artifactName: "raze-trade-ui-${version}-setup.${ext}"
+
+portable:
+  artifactName: "raze-trade-ui-${version}-portable.${ext}"
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  category: public.app-category.finance
+  icon: build/icon.png
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist

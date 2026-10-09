@@ -22,15 +22,7 @@ export interface SlotStyle {
 
 export interface CardStyle {
   scale: number;          // CSS zoom multiplier — scales every px in the column
-  rowPaddingY: number;    // vertical padding inside each row
-  rowPaddingX: number;    // horizontal padding inside each row
-  rowGap: number;         // extra spacing between rows
-  rowRadius: number;      // border-radius applied to the row card
-  accentWidth: number;    // left accent stripe width (0 = none)
-  accentColor: string;
-  separatorOpacity: number; // 0 = hide row separator
   showSparkline: boolean;
-  showSocials: boolean;
 }
 
 export interface Slot {
@@ -69,15 +61,7 @@ export const DEFAULT_SLOT_STYLE: SlotStyle = {
 
 export const DEFAULT_CARD_STYLE: CardStyle = {
   scale: 1,
-  rowPaddingY: 5,
-  rowPaddingX: 12,
-  rowGap: 0,
-  rowRadius: 0,
-  accentWidth: 0,
-  accentColor: "var(--accent)",
-  separatorOpacity: 1,
   showSparkline: false,
-  showSocials: true,
 };
 
 export const DEFAULT_CONTAINER_STYLE: ContainerStyle = {
@@ -117,21 +101,11 @@ function sanitizeCardStyle(raw: unknown): CardStyle {
     const v = typeof o[k] === "number" ? (o[k] as number) : fallback;
     return Math.max(min, Math.min(max, v));
   };
-  const str = (k: string, fallback: string) =>
-    typeof o[k] === "string" && (o[k] as string).length < 200 ? (o[k] as string) : fallback;
   const bool = (k: string, fallback: boolean) =>
     typeof o[k] === "boolean" ? (o[k] as boolean) : fallback;
   return {
     scale: num("scale", 1, 0.6, 1.8),
-    rowPaddingY: num("rowPaddingY", 5, 0, 32),
-    rowPaddingX: num("rowPaddingX", 12, 0, 32),
-    rowGap: num("rowGap", 0, 0, 24),
-    rowRadius: num("rowRadius", 0, 0, 24),
-    accentWidth: num("accentWidth", 0, 0, 8),
-    accentColor: str("accentColor", DEFAULT_CARD_STYLE.accentColor),
-    separatorOpacity: num("separatorOpacity", 1, 0, 1),
     showSparkline: bool("showSparkline", false),
-    showSocials: bool("showSocials", true),
   };
 }
 

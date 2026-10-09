@@ -30,7 +30,8 @@ export function KeyboardShortcuts() {
           const k = ev.key.toLowerCase();
           if (k === "m") navRef.current("/monitor");
           if (k === "p") navRef.current("/portfolio");
-          if (k === "d") navRef.current("/deploy");
+          if (k === "w") navRef.current("/wallets");
+          if (k === "s") navRef.current("/swap");
           window.removeEventListener("keydown", next);
         };
         window.addEventListener("keydown", next);

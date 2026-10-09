@@ -1,51 +1,37 @@
 "use client";
 /**
- * Embedded right-side trading panel — full layout matches solana-ui's
- * TradingForm: limit-history toggle | BUY/SELL toggle | wallet count;
- * amount label row (UNIT · WALLET/TOTAL · MARKET/LIMIT); amount input
- * + inline submit; slip+fee row + INSTANT TRADE chip; preset tabs +
- * 4-button preset grid; limit slider/custom block.
+ * Embedded right-side trading panel — layout from solana-ui's TradingForm:
+ * BUY/SELL toggle | wallet count; amount input + denomination toggle;
+ * preset tabs + quick-amount grid; slip+fee row; submit. Market orders
+ * only: every trade is swapped on the router at once.
  *
  * Re-skinned with Raze Terminal's design tokens (--ink/--paper/--buy/--sell)
  * and atoms (Btn / Tooltip / Pill / Icon / SolAmount). Preferences
- * (presets, slip, fee, INSTANT-TRADE position, etc.) persist via
- * the new backend `/preferences` store through useUserPreference.
+ * (presets, slip, fee, INSTANT-TRADE position, etc.) persist in this
+ * browser through useUserPreference.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useApp } from "../../contexts/AppContext";
-import { useRegion } from "../../contexts/RegionContext";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useUserWallets } from "../../hooks/useUserWallets";
-import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
-import { fetchTokenSupply } from "../../api/client";
-import { notifyDemoChanged } from "../../lib/demoEvents";
-import { BackendClient, useSession } from "../../api/backend";
-import { AdvPanel } from "./AdvPanel";
-import { useBackend } from "../../api/backend";
-import { AutomodePanel } from "../../app/automation/_components/automode";
-import { AutoCleanPanel } from "../../app/automation/_components/autoClean";
+import { executeLocalTrade, type TradeBody } from "../../api/localTrade";
 import { useTokenPnl } from "../../hooks/useTokenPnl";
-import { Btn, Icon, Pill, Tooltip, SolAmount, QuoteAssetIcon, QuoteAmount, TokenIcon } from "../atoms";
+import { Icon, Tooltip, SolAmount, QuoteAssetIcon, QuoteAmount, TokenIcon } from "../atoms";
 import { fmtNum, fmtSol, fmtUsd, shortAddr } from "../../lib/format";
 import { explorerAccountUrl, explorerName, getActiveChain, isEvmChain, nativeSymbol } from "../../lib/chains";
-import { useLimitOrders, type LimitOrderView } from "../../hooks/useLimitOrders";
 import { useUserPreference } from "../../hooks/useUserPreference";
 import {
   defaultInstantPresets, PREF_KEYS, PRESET_KEYS,
   resolvePresetValue,
-  type InputMode, type InstantPresets, type OrderType, type Side,
+  type InstantPresets, type Side,
 } from "./presets";
 import { defaultQuoteMint, findQuoteMint } from "../../lib/quoteMints";
 import { PresetButton } from "./PresetButton";
 import { InstantTradePanel } from "./InstantTradePanel";
-import { CalculatePNLModal } from "./CalculatePNLModal";
 import { TokenMetricsGrid } from "./TokenMetricsGrid";
-import { AUTO_LABEL } from "../../app/automation/_components/atoms";
 import { SOL_MINT, toRaw, toUi, viaLabel } from "../../lib/swap/quote";
 import { useDocumentHidden, useMintDecimals, useSwapQuote } from "../../lib/swap/useSwapQuote";
-import { signerReserveKeys } from "../../lib/swap/execute";
-import { getBrowserWallet } from "../../lib/swap/browserWallet";
 import { explorerTxUrl } from "../../lib/chains";
 
 const MIN_TRANSACTIONS_FEE_LAMPORTS = 100_000;
@@ -65,45 +51,12 @@ interface Props {
 
 export function TradingPanel({ mint }: Props) {
   const { info } = useTokenInfo(mint);
-  const { authed, pushToast, sysConfig, setGuestPhantomPubkey } = useApp();
-  const { region } = useRegion();
-  const session = useSession();
+  const { pushToast } = useApp();
   const userWallets = useUserWallets();
-  const backend = useBackend();
   const solPrice = useSolPrice();
   const chainId = getActiveChain();
   const nat = nativeSymbol(chainId);
   const onSol = !isEvmChain(chainId);
-  const limitOrders = useLimitOrders(mint);
-
-  // Live mcap = livePriceSol × solUsd × supply, falling back to the REST
-  // snapshot from useTokenInfo. We need a live number for the limit-order
-  // slider so the "now" baseline and the user's % deltas track the chart
-  // — info.marketCap is a snapshot from page-load and drifts on hot tokens.
-  const liveMintList = useMemo(() => [mint], [mint]);
-  const livePriceMap = useLiveTradePrices(liveMintList);
-  const livePriceSol = livePriceMap.get(mint)?.price ?? 0;
-  const [supply, setSupply] = useState<number>(1_000_000_000);
-  useEffect(() => {
-    let cancelled = false;
-    fetchTokenSupply(mint)
-      .then((res) => {
-        if (cancelled) return;
-        const raw = Number(res.supply ?? 0);
-        // Pump.fun ships at 1B and almost never burns; if raze returns a
-        // suspiciously small number (or none) keep the default rather
-        // than zero out mcap.
-        if (raw >= 1_000_000) setSupply(raw);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [mint]);
-  const liveMarketCap = useMemo(() => {
-    const sp = solPrice ?? 0;
-    const live = livePriceSol > 0 && sp > 0 ? livePriceSol * sp * supply : 0;
-    if (live > 0) return live;
-    return info?.marketCap ?? 0;
-  }, [livePriceSol, solPrice, supply, info?.marketCap]);
 
   // ── User-persisted prefs ───────────────────────────────────────────
   const [instantPresets, setInstantPresets] = useUserPreference<InstantPresets>(PREF_KEYS.instantPresets, defaultInstantPresets);
@@ -124,8 +77,6 @@ export function TradingPanel({ mint }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [buyAmount, setBuyAmount] = useUserPreference<string>(PREF_KEYS.buyAmount, "");
-  const [buyMode, setBuyMode] = useUserPreference<InputMode>(PREF_KEYS.buyInputMode, "perWallet");
-  const [sellMode, setSellMode] = useUserPreference<InputMode>(PREF_KEYS.sellInputMode, "perWallet");
   // Manual-amount denomination (market orders only). buy: "quote" = spend the
   // quote currency (SOL/USDC, exactIn — default) ⇄ "token" = receive an exact
   // token qty (exactOut). sell: "token" = sell an exact token qty (exactIn —
@@ -164,74 +115,37 @@ export function TradingPanel({ mint }: Props) {
   // Quote shown in the amount field + used for routing, per side. Both labels
   // are kept in sync by Settings, so this reflects the user's active quote.
   const activeQuote = side === "buy" ? buyInputMint : sellOutputMint;
-  const [orderType, setOrderType] = useState<OrderType>("market");
-  // Unified MM tab: the parent owns the action grid; the embedded live panels
-  // just render their session lists + the create modal the grid triggers.
-  const [mmCreate, setMmCreate] = useState<null | "autobuy" | "autosell" | "volume" | "clean">(null);
-  const [mmRefresh, setMmRefresh] = useState(0);
   const [sellAmount, setSellAmount] = useState<string>("");
-  const [limitPriceUsd, setLimitPriceUsd] = useState<string>("");
-  const [limitSliderPct, setLimitSliderPct] = useState<number>(0);
-  const [limitInputMode, setLimitInputMode] = useState<"slider" | "custom">("slider");
   const [editingPresets, setEditingPresets] = useState(false);
-  const [pnlOpen, setPnlOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const activeSlot = instantPresets[activePreset] ?? defaultInstantPresets[activePreset] ?? defaultInstantPresets["1"];
 
-  // ── Wallet routing — Phantom XOR Platform ─────────────────────────
-  // useUserWallets injects a synthetic guest wallet when !authed + guestPhantomPubkey
-  const wallets = userWallets.wallets;
-  const connectedWallet = useMemo(
-    () => wallets.find((w) => w.isConnected) ?? null,
-    [wallets],
-  );
-  const activePlatformWallets = userWallets.activeWallets.filter((w) => !w.isConnected);
-  const effectiveWallets =
-    activePlatformWallets.length > 0
-      ? activePlatformWallets
-      : connectedWallet ? [connectedWallet] : [];
-  const selectedDemoWalletIds = useMemo(
-    () => effectiveWallets.filter((w) => w.kind === "DEMO").map((w) => w.id),
-    [effectiveWallets],
-  );
-  const tokenPnl = useTokenPnl(mint, selectedDemoWalletIds);
-  const effectiveKind: "connected" | "platform" | "none" =
-    effectiveWallets.length === 0
-      ? "none"
-      : effectiveWallets[0].isConnected ? "connected" : "platform";
+  // ── Wallets that sign: the active ones (top-bar picker), each trading
+  // its own amount. Only vault wallets with a key can be active.
+  const effectiveWallets = userWallets.activeWallets;
+  const tokenPnl = useTokenPnl(mint);
+  const effectiveKind: "platform" | "none" = effectiveWallets.length === 0 ? "none" : "platform";
 
-  // Limit + Adv modes both run server-side and need a platform wallet.
-  useEffect(() => {
-    if ((orderType === "limit" || orderType === "adv") && effectiveKind === "connected") {
-      setOrderType("market");
-    }
-  }, [orderType, effectiveKind]);
-
-  const { sol: effectiveSol, tokens: effectiveTokens, quote: effectiveQuote, anyLoading } = useMemo(() => {
-    let sol = 0, tokens = 0, quote = 0, loading = false;
+  const { tokens: effectiveTokens, quote: effectiveQuote } = useMemo(() => {
+    let tokens = 0, quote = 0;
     const quoteMintAddr = activeQuote.mint;
     for (const w of effectiveWallets) {
       const bal = userWallets.balances[w.id];
       if (!bal) continue;
-      if (bal.loading) loading = true;
-      sol += bal.sol;
       tokens += bal.tokens[mint] ?? 0;
       // Active-quote balance: native lamports for SOL, else the quote SPL token.
       quote += quoteMintAddr == null ? bal.sol : (bal.tokens[quoteMintAddr] ?? 0);
     }
-    return { sol, tokens, quote, anyLoading: loading };
+    return { tokens, quote };
   }, [effectiveWallets, userWallets.balances, mint, activeQuote.mint]);
 
   // ── Trade execution paths ──────────────────────────────────────────
-  // Market trades run on the Raze Solana router from this machine: per wallet
-  // one quote → build → sign → send → confirm, all wallets at once
-  // (`trade.execute`, src/api/localTrade.ts). Local wallets sign with their
-  // own key; the connected browser wallet asks for approval.
-  type TradeRequest = Parameters<typeof backend.execute>[0];
+  // Market trades run on the Raze Solana router: per wallet one quote, then
+  // the server builds, signs with the vault's key and sends; the browser
+  // confirms. All wallets at once (src/api/localTrade.ts).
   async function placeMarketTrade(
     thisSide: Side,
     amountInput: string,
-    mode: InputMode,
     denom: "quote" | "token" | "percent",
   ) {
     if (!onSol) {
@@ -243,21 +157,20 @@ export function TradingPanel({ mint }: Props) {
       pushToast({ title: "ENTER AMOUNT", body: "Amount must be greater than 0", tone: "sell" });
       return;
     }
-    const targets = effectiveWallets.filter((w) => w.kind !== "DEMO");
+    const targets = effectiveWallets;
     if (targets.length === 0) {
       pushToast({
         title: "NO WALLET",
-        body: effectiveWallets.length ? "Demo wallets do not trade on chain." : "Connect a wallet or select a local one.",
+        body: "Pick the wallets that trade in the top bar, or add one in Wallets.",
         tone: "sell",
       });
       return;
     }
-    // Percent is per wallet; an amount is per wallet, or split across them
-    // when the mode is cumulative.
-    const each = denom === "percent" ? Math.min(100, n) : mode === "cumulative" ? n / targets.length : n;
+    // Each wallet trades the amount (a percentage is of its own holding).
+    const each = denom === "percent" ? Math.min(100, n) : n;
     const q = thisSide === "buy" ? buyInputMint : sellOutputMint;
     const common = { side: thisSide, mint, slippageBps: clampSlippageBps(slipBps), transactionsFeeLamports };
-    let body: Omit<TradeRequest, "walletId">;
+    let body: Omit<TradeBody, "walletId">;
     if (thisSide === "buy") {
       const pay = q.mint ? { inputMint: q.mint } : {};
       body = denom === "token"
@@ -274,7 +187,7 @@ export function TradingPanel({ mint }: Props) {
 
     setBusy(true);
     try {
-      const results = await Promise.allSettled(targets.map((w) => backend.execute({ ...body, walletId: w.id })));
+      const results = await Promise.allSettled(targets.map((w) => executeLocalTrade({ ...body, walletId: w.id })));
       const ok: string[] = [];
       results.forEach((r, i) => {
         if (r.status === "fulfilled") ok.push(r.value.signature);
@@ -303,21 +216,9 @@ export function TradingPanel({ mint }: Props) {
     }
   }
 
-  async function placeLimitOrder() {
-    pushToast({
-      title: "MARKET ONLY",
-      body: "Limit orders need a server watching the price around the clock. Trade UI swaps at market on the router.",
-      tone: "sell",
-    });
-  }
-
   function onSubmit() {
-    if (orderType === "limit") {
-      void placeLimitOrder();
-      return;
-    }
     const amount = side === "buy" ? buyAmount : sellAmount;
-    void placeMarketTrade(side, amount, side === "buy" ? buyMode : sellMode, side === "buy" ? buyDenom : sellDenom);
+    void placeMarketTrade(side, amount, side === "buy" ? buyDenom : sellDenom);
   }
 
   function onPresetClick(value: string) {
@@ -325,26 +226,22 @@ export function TradingPanel({ mint }: Props) {
     // Quick presets are one-shot actions in their native denomination (buy =
     // SOL spend, sell = % of holdings). They fire directly and do NOT overwrite
     // the manual amount box, which carries its own denomination (toggle).
-    void placeMarketTrade(side, resolved, side === "buy" ? buyMode : sellMode, side === "buy" ? "quote" : "percent");
+    void placeMarketTrade(side, resolved, side === "buy" ? "quote" : "percent");
   }
 
   const symbolLabel = (info?.symbol ?? "").trim() || "TOKEN";
-  // What the manual amount fetches right now, on the router: one wallet's
-  // share (per-wallet, or the cumulative total split), refreshed while the
-  // page is visible and an amount is typed.
+  // What the manual amount fetches right now, on the router, for one wallet;
+  // refreshed while the page is visible and an amount is typed.
   const tabHidden = useDocumentHidden();
   const tokenDecimals = useMintDecimals(onSol && mint ? mint : null);
   const typed = side === "buy" ? buyAmount : sellAmount;
-  const previewMode = side === "buy" ? buyMode : sellMode;
   const previewDenom = side === "buy" ? buyDenom : sellDenom;
   const previewQuoteMint = activeQuote.mint ?? SOL_MINT;
-  const previewWallets = Math.max(1, effectiveWallets.length);
   const previewReq = useMemo(() => {
-    if (!onSol || !mint || orderType !== "market") return null;
+    if (!onSol || !mint) return null;
     const n = parseFloat(typed);
     if (!isFinite(n) || n <= 0) return null;
-    const each = previewMode === "cumulative" ? n / previewWallets : n;
-    const text = each.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
+    const text = n.toLocaleString("en-US", { useGrouping: false, maximumFractionDigits: 20 });
     // quote denomination: buy spends it (exact-in), sell receives it (exact-out);
     // token denomination: buy receives it (exact-out), sell spends it (exact-in).
     const exactOut = (side === "buy") === (previewDenom === "token");
@@ -356,15 +253,13 @@ export function TradingPanel({ mint }: Props) {
       amount: toRaw(text, dec),
       swapMode: exactOut ? ("ExactOut" as const) : ("ExactIn" as const),
     };
-  }, [onSol, mint, orderType, typed, previewMode, previewWallets, side, previewDenom, previewQuoteMint, tokenDecimals, activeQuote.decimals]);
-  const browserSigner = effectiveKind === "connected" ? getBrowserWallet() : null;
+  }, [onSol, mint, typed, side, previewDenom, previewQuoteMint, tokenDecimals, activeQuote.decimals]);
   const preview = useSwapQuote({
     inputMint: previewReq?.inputMint ?? "",
     outputMint: previewReq?.outputMint ?? "",
     amount: previewReq?.amount ?? null,
     swapMode: previewReq?.swapMode,
     slippageBps: clampSlippageBps(slipBps),
-    reserveKeys: browserSigner ? signerReserveKeys({ kind: "browser", owner: browserSigner.address, wallet: browserSigner.wallet }) : undefined,
     paused: tabHidden || busy,
     pollMs: 2_000,
   });
@@ -402,11 +297,8 @@ export function TradingPanel({ mint }: Props) {
   // Active manual-amount denomination + its display label/icon (market only).
   const activeDenom = side === "buy" ? buyDenom : sellDenom;
   const devAddr = info?.signer ?? null;
-  // Unknown stays unknown ("–" / hidden): the API reports the creator's
-  // launches but neither their graduations nor the dev's own buy.
+  // Tokens the creator launched (the API reports launches, not graduations).
   const creatorDeploys = info?.creatorDeploys;
-  const creatorMigrations = info?.creatorMigrations;
-  const creatorBuySol = info?.creatorBuySol;
   const tokenAge = info?.created_at ? formatAge(info.created_at) : "—";
 
   // All 8 quick-amount slots (4×2 grid). Same preset data as InstantTradePanel.
@@ -461,47 +353,19 @@ export function TradingPanel({ mint }: Props) {
         </div>
       </div>
 
-      {/* ── 2) Market / Limit / Adv. + wallet pill ──────────────────── */}
+      {/* ── 2) Market + wallet pill ─────────────────────────────────── */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "0 12px",
         gap: 8,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <UnderlineTab
-            label="Market"
-            active={orderType === "market"}
-            onClick={() => setOrderType("market")}
-          />
-          <UnderlineTab
-            label="Limit"
-            active={orderType === "limit"}
-            disabled={effectiveKind === "connected"}
-            title={effectiveKind === "connected"
-              ? "Pick a platform wallet — limit orders sign on the backend"
-              : undefined}
-            onClick={() => effectiveKind !== "connected" && setOrderType("limit")}
-          />
-          <UnderlineTab
-            label="Adv."
-            active={orderType === "adv"}
-            disabled={effectiveKind === "connected"}
-            title={effectiveKind === "connected"
-              ? "Pick a platform wallet — runs server-side"
-              : `TP/SL ladder, trailing & migration sell + market-making (${AUTO_LABEL.autobuy}/${AUTO_LABEL.autosell}, ${AUTO_LABEL.volume}, ${AUTO_LABEL.clean})`}
-            onClick={() => effectiveKind !== "connected" && setOrderType("adv")}
-          />
+          <UnderlineTab label="Market" active />
         </div>
 
-        <Tooltip content={
-          effectiveKind === "connected"
-            ? "Trades signed with connected Phantom"
-            : `${effectiveWallets.length} wallet${effectiveWallets.length === 1 ? "" : "s"} · balance`
-        }>
+        <Tooltip content={`${effectiveWallets.length} wallet${effectiveWallets.length === 1 ? "" : "s"} · balance`}>
           <span style={walletBalancePillStyle} aria-label="Active wallets">
-            {effectiveKind === "connected"
-              ? <span style={{ display: "inline-flex", color: "var(--paper-2)", lineHeight: 0 }}>{Icon.phantom(12)}</span>
-              : <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--paper)", fontWeight: 600 }}>{effectiveWallets.length}</span>}
+            <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--paper)", fontWeight: 600 }}>{effectiveWallets.length}</span>
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{Icon.wallet(11)}</span>
             {side === "buy" ? (
               // Buy: the quote you pay with (SOL / USDC / USD1).
@@ -528,252 +392,226 @@ export function TradingPanel({ mint }: Props) {
       </div>
 
       {/* ── 3) AMOUNT input + active-chain quote ─────────────────────── */}
-      {orderType !== "adv" && (
-        <div style={{ padding: "10px 12px 6px" }}>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "10px 12px",
-            background: "var(--ink-0)",
-            border: "1px solid var(--line-soft)",
-            borderRadius: 6,
-          }}>
-            <span style={{
-              fontSize: 11, fontFamily: "var(--font-mono)",
-              color: "var(--paper-4)", letterSpacing: "0.08em",
-              textTransform: "uppercase", flexShrink: 0,
-            }}>AMOUNT</span>
-            <input
-              value={side === "buy" ? buyAmount : sellAmount}
-              onChange={(e) => {
-                const v = e.target.value.replace(/[^0-9.]/g, "");
-                if (side === "buy") setBuyAmount(v);
-                else setSellAmount(v);
-              }}
-              placeholder="0.0"
-              inputMode="decimal"
-              disabled={!mint}
-              style={{
-                flex: 1, minWidth: 0,
-                padding: 0,
-                fontSize: 16, fontWeight: 500,
-                fontFamily: "var(--font-mono)", color: "var(--paper)",
-                background: "transparent",
-                border: 0,
-                outline: "none",
-              }}
-            />
-            {orderType === "market" ? (
-              // Denomination toggle. Buy: pay in quote (SOL/USDC, exact-in) ⇄
-              // receive an exact token qty (exact-out). Sell: sell an exact token
-              // qty (exact-in) ⇄ receive an exact quote amount (exact-out).
-              <button
-                type="button"
-                onClick={() => {
-                  // Switching denomination changes what the typed number means
-                  // (SOL vs token) — clear it so a stale value isn't re-submitted
-                  // under the new unit.
-                  if (side === "buy") {
-                    setBuyDenom(buyDenom === "token" ? "quote" : "token");
-                    setBuyAmount("");
-                  } else {
-                    setSellDenom(sellDenom === "token" ? "quote" : "token");
-                    setSellAmount("");
-                  }
-                }}
-                title={
-                  side === "buy"
-                    ? activeDenom === "token"
-                      ? `Buying an exact ${symbolLabel} amount (exact-out). Tap to spend ${activeQuote.label}.`
-                      : `Spending ${activeQuote.label} (exact-in). Tap to buy an exact ${symbolLabel} amount.`
-                    : activeDenom === "token"
-                      ? `Selling an exact ${symbolLabel} amount (exact-in). Tap to receive an exact ${activeQuote.label} amount.`
-                      : `Receiving an exact ${activeQuote.label} amount (exact-out). Tap to sell an exact ${symbolLabel} amount.`
-                }
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  flexShrink: 0, padding: "4px 8px",
-                  background: "var(--ink-2)",
-                  border: "1px solid var(--line-soft)",
-                  borderRadius: 4,
-                  color: "var(--paper-2)",
-                  fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                {activeDenom === "token" ? (
-                  <>
-                    <TokenIcon token={{ mint_address: mint, symbol: info?.symbol, image: info?.image }} size={14} />
-                    {symbolLabel}
-                  </>
-                ) : (
-                  <>
-                    <QuoteAssetIcon label={activeQuote.label} size={14} />
-                    {activeQuote.label}
-                  </>
-                )}
-                <span aria-hidden style={{ color: "var(--paper-4)", fontSize: 9, marginLeft: 1 }}>⇅</span>
-              </button>
+      <div style={{ padding: "10px 12px 6px" }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "10px 12px",
+          background: "var(--ink-0)",
+          border: "1px solid var(--line-soft)",
+          borderRadius: 6,
+        }}>
+          <span style={{
+            fontSize: 11, fontFamily: "var(--font-mono)",
+            color: "var(--paper-4)", letterSpacing: "0.08em",
+            textTransform: "uppercase", flexShrink: 0,
+          }}>AMOUNT</span>
+          <input
+            value={side === "buy" ? buyAmount : sellAmount}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^0-9.]/g, "");
+              if (side === "buy") setBuyAmount(v);
+              else setSellAmount(v);
+            }}
+            placeholder="0.0"
+            inputMode="decimal"
+            disabled={!mint}
+            style={{
+              flex: 1, minWidth: 0,
+              padding: 0,
+              fontSize: 16, fontWeight: 500,
+              fontFamily: "var(--font-mono)", color: "var(--paper)",
+              background: "transparent",
+              border: 0,
+              outline: "none",
+            }}
+          />
+          {/* Denomination toggle. Buy: pay in quote (SOL/USDC, exact-in) ⇄
+              receive an exact token qty (exact-out). Sell: sell an exact token
+              qty (exact-in) ⇄ receive an exact quote amount (exact-out). */}
+          <button
+            type="button"
+            onClick={() => {
+              // Switching denomination changes what the typed number means
+              // (SOL vs token) — clear it so a stale value isn't re-submitted
+              // under the new unit.
+              if (side === "buy") {
+                setBuyDenom(buyDenom === "token" ? "quote" : "token");
+                setBuyAmount("");
+              } else {
+                setSellDenom(sellDenom === "token" ? "quote" : "token");
+                setSellAmount("");
+              }
+            }}
+            title={
+              side === "buy"
+                ? activeDenom === "token"
+                  ? `Buying an exact ${symbolLabel} amount (exact-out). Tap to spend ${activeQuote.label}.`
+                  : `Spending ${activeQuote.label} (exact-in). Tap to buy an exact ${symbolLabel} amount.`
+                : activeDenom === "token"
+                  ? `Selling an exact ${symbolLabel} amount (exact-in). Tap to receive an exact ${activeQuote.label} amount.`
+                  : `Receiving an exact ${activeQuote.label} amount (exact-out). Tap to sell an exact ${symbolLabel} amount.`
+            }
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              flexShrink: 0, padding: "4px 8px",
+              background: "var(--ink-2)",
+              border: "1px solid var(--line-soft)",
+              borderRadius: 4,
+              color: "var(--paper-2)",
+              fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            {activeDenom === "token" ? (
+              <>
+                <TokenIcon token={{ mint_address: mint, symbol: info?.symbol, image: info?.image }} size={14} />
+                {symbolLabel}
+              </>
             ) : (
-              <span
-                title={side === "buy" ? `Pay with ${activeQuote.label}` : `Receive ${activeQuote.label}`}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  flexShrink: 0, padding: "4px 8px",
-                  background: "var(--ink-2)",
-                  border: "1px solid var(--line-soft)",
-                  borderRadius: 4,
-                  color: "var(--paper-2)",
-                  fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 600,
-                }}
-              >
+              <>
                 <QuoteAssetIcon label={activeQuote.label} size={14} />
                 {activeQuote.label}
-              </span>
+              </>
             )}
-          </div>
+            <span aria-hidden style={{ color: "var(--paper-4)", fontSize: 9, marginLeft: 1 }}>⇅</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── 4) Preset slot + quick amounts ───────────────────────────── */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 3,
+        padding: "0 12px 6px",
+      }}>
+        {PRESET_KEYS.map((k) => (
+          <MinimalPresetTab
+            key={k}
+            label={k}
+            isActive={k === activePreset}
+            onClick={() => setActivePreset(k)}
+          />
+        ))}
+        <Tooltip content={editingPresets ? "Done editing" : "Edit presets"}>
+          <button
+            onClick={() => setEditingPresets((v) => !v)}
+            style={{
+              ...quickEditBtnStyle,
+              width: 22,
+              height: 22,
+              flexShrink: 0,
+              ...(editingPresets
+                ? {
+                    borderColor: "var(--accent)",
+                    color: "var(--accent)",
+                    background: "var(--accent-w)",
+                  }
+                : {
+                    background: "transparent",
+                    color: "var(--paper-4)",
+                  }),
+            }}
+            aria-label={editingPresets ? "Done editing" : "Edit presets"}
+            aria-pressed={editingPresets}
+          >
+            <EditIcon size={10} />
+          </button>
+        </Tooltip>
+      </div>
+
+      {!editingPresets && (
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gridTemplateRows: "repeat(2, auto)",
+          gap: 4,
+          padding: "0 12px 6px",
+        }}>
+          {quickAmounts.map((v, i) => (
+            <PresetButton
+              key={`quick-${side}-${i}`}
+              value={v}
+              onExecute={(amt) => onPresetClick(amt)}
+              onChange={(next) => side === "buy" ? editBuyPreset(i, next) : editSellPreset(i, next)}
+              isLoading={busy}
+              variant={side}
+              isEditMode={false}
+            />
+          ))}
         </div>
       )}
 
-      {/* ── 4) Preset slot + quick amounts ───────────────────────────── */}
-      {orderType === "market" && (
-        <>
+      {editingPresets && (
+        <div style={{ padding: "0 12px 6px", display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 3,
-            padding: "0 12px 6px",
+            fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--paper-4)",
+            letterSpacing: "0.06em", textTransform: "uppercase",
           }}>
-            {PRESET_KEYS.map((k) => (
-              <MinimalPresetTab
-                key={k}
-                label={k}
-                isActive={k === activePreset}
-                onClick={() => setActivePreset(k)}
+            Edit amounts
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4 }}>
+            {(side === "buy" ? activeSlot.buyAmounts : activeSlot.sellAmounts).map((v, i) => (
+              <PresetButton
+                key={`edit-${side}-${i}`}
+                value={v}
+                onExecute={() => {}}
+                onChange={(next) => side === "buy" ? editBuyPreset(i, next) : editSellPreset(i, next)}
+                isLoading={busy}
+                variant={side}
+                isEditMode={true}
               />
             ))}
-            <Tooltip content={editingPresets ? "Done editing" : "Edit presets"}>
-              <button
-                onClick={() => setEditingPresets((v) => !v)}
-                style={{
-                  ...quickEditBtnStyle,
-                  width: 22,
-                  height: 22,
-                  flexShrink: 0,
-                  ...(editingPresets
-                    ? {
-                        borderColor: "var(--accent)",
-                        color: "var(--accent)",
-                        background: "var(--accent-w)",
-                      }
-                    : {
-                        background: "transparent",
-                        color: "var(--paper-4)",
-                      }),
-                }}
-                aria-label={editingPresets ? "Done editing" : "Edit presets"}
-                aria-pressed={editingPresets}
-              >
-                <EditIcon size={10} />
-              </button>
-            </Tooltip>
           </div>
-
-          {!editingPresets && (
-            <div style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gridTemplateRows: "repeat(2, auto)",
-              gap: 4,
-              padding: "0 12px 6px",
-            }}>
-              {quickAmounts.map((v, i) => (
-                <PresetButton
-                  key={`quick-${side}-${i}`}
-                  value={v}
-                  onExecute={(amt) => onPresetClick(amt)}
-                  onChange={(next) => side === "buy" ? editBuyPreset(i, next) : editSellPreset(i, next)}
-                  isLoading={busy}
-                  variant={side}
-                  isEditMode={false}
-                />
-              ))}
-            </div>
-          )}
-
-          {editingPresets && (
-            <div style={{ padding: "0 12px 6px", display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{
-                fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--paper-4)",
-                letterSpacing: "0.06em", textTransform: "uppercase",
-              }}>
-                Edit amounts
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4 }}>
-                {(side === "buy" ? activeSlot.buyAmounts : activeSlot.sellAmounts).map((v, i) => (
-                  <PresetButton
-                    key={`edit-${side}-${i}`}
-                    value={v}
-                    onExecute={() => {}}
-                    onChange={(next) => side === "buy" ? editBuyPreset(i, next) : editSellPreset(i, next)}
-                    isLoading={busy}
-                    variant={side}
-                    isEditMode={true}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </>
+        </div>
       )}
 
       {/* ── 5) Config icons row ──────────────────────────────────────── */}
-      {orderType !== "adv" && (
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "4px 12px 8px",
-          gap: 6,
-          fontSize: 11, fontFamily: "var(--font-mono)",
-          color: "var(--paper-2)",
-        }}>
-          <Tooltip content="Slippage tolerance">
-            <span style={configChipStyle}>
-              <FlameIcon size={11} />
-              <input
-                type="text"
-                value={slipPct}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value.replace(/[^0-9.]/g, ""));
-                  if (isFinite(v) && v >= 0) setSlipBps(clampSlippageBps(v * 100));
-                }}
-                style={configInputStyle}
-              />
-              <span style={{ color: "var(--paper-4)" }}>%</span>
-            </span>
-          </Tooltip>
-          <span style={{ color: "var(--line)" }}>|</span>
-          <Tooltip content={`Priority fee (${nat})`}>
-            <span style={configChipStyle}>
-              <GasIcon size={11} />
-              <input
-                type="text"
-                value={feeSol}
-                onChange={(e) => {
-                  const v = parseFloat(e.target.value.replace(/[^0-9.]/g, ""));
-                  if (isFinite(v) && v >= 0) setTransactionsFeeLamports(Math.floor(v * 1e9));
-                }}
-                onBlur={() => {
-                  if (transactionsFeeLamports < MIN_TRANSACTIONS_FEE_LAMPORTS) {
-                    setTransactionsFeeLamports(MIN_TRANSACTIONS_FEE_LAMPORTS);
-                  }
-                }}
-                style={{ ...configInputStyle, width: 44 }}
-              />
-            </span>
-          </Tooltip>
-        </div>
-      )}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "4px 12px 8px",
+        gap: 6,
+        fontSize: 11, fontFamily: "var(--font-mono)",
+        color: "var(--paper-2)",
+      }}>
+        <Tooltip content="Slippage tolerance">
+          <span style={configChipStyle}>
+            <FlameIcon size={11} />
+            <input
+              type="text"
+              value={slipPct}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value.replace(/[^0-9.]/g, ""));
+                if (isFinite(v) && v >= 0) setSlipBps(clampSlippageBps(v * 100));
+              }}
+              style={configInputStyle}
+            />
+            <span style={{ color: "var(--paper-4)" }}>%</span>
+          </span>
+        </Tooltip>
+        <span style={{ color: "var(--line)" }}>|</span>
+        <Tooltip content={`Priority fee (${nat})`}>
+          <span style={configChipStyle}>
+            <GasIcon size={11} />
+            <input
+              type="text"
+              value={feeSol}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value.replace(/[^0-9.]/g, ""));
+                if (isFinite(v) && v >= 0) setTransactionsFeeLamports(Math.floor(v * 1e9));
+              }}
+              onBlur={() => {
+                if (transactionsFeeLamports < MIN_TRANSACTIONS_FEE_LAMPORTS) {
+                  setTransactionsFeeLamports(MIN_TRANSACTIONS_FEE_LAMPORTS);
+                }
+              }}
+              style={{ ...configInputStyle, width: 44 }}
+            />
+          </span>
+        </Tooltip>
+      </div>
 
-      {orderType === "market" && (previewText || !onSol) && (
+      {(previewText || !onSol) && (
         <div
           title={onSol ? "Live router quote for one wallet's trade" : undefined}
           style={{
@@ -787,112 +625,34 @@ export function TradingPanel({ mint }: Props) {
         </div>
       )}
 
-      {orderType !== "adv" && (
-        <div style={{ padding: "0 12px 10px" }}>
-          <button
-            onClick={onSubmit}
-            disabled={
-              busy ||
-              !onSol ||
-              effectiveKind === "none" ||
-              (orderType === "limit"
-                ? (!limitPriceUsd || effectiveKind !== "platform")
-                : !(side === "buy" ? buyAmount : sellAmount))
-            }
-            style={{
-              width: "100%",
-              padding: "14px 16px",
-              fontSize: 15, fontWeight: 700,
-              color: side === "buy" ? "var(--ink-0)" : "#fff",
-              background: side === "buy" ? "var(--buy)" : "var(--sell)",
-              border: 0,
-              borderRadius: 999,
-              cursor: busy ? "not-allowed" : "pointer",
-              opacity: busy ? 0.55 : 1,
-              transition: "background 120ms, opacity 120ms",
-              letterSpacing: "0.01em",
-            }}
-          >
-            {orderType === "limit"
-              ? `Set Limit ${side === "buy" ? "Buy" : "Sell"}`
-              : busy
-                ? effectiveKind === "connected" ? `${browserSigner?.wallet.name ?? "Wallet"}…`
-                  : effectiveWallets.length > 1 ? `× ${effectiveWallets.length}` : "Sending…"
-                : `${side === "buy" ? "Buy" : "Sell"} ${symbolLabel}`}
-          </button>
-        </div>
-      )}
-
-      {/* Limit price controls (kept for orderType=limit) */}
-      {orderType === "limit" && (
-        <LimitPriceControls
-          marketCap={liveMarketCap > 0 ? liveMarketCap : null}
-          inputMode={limitInputMode}
-          setInputMode={setLimitInputMode}
-          priceUsd={limitPriceUsd}
-          setPriceUsd={setLimitPriceUsd}
-          sliderPct={limitSliderPct}
-          setSliderPct={setLimitSliderPct}
-        />
-      )}
-
-      {/* ADV — TP/SL ladder + market-making (auto-buy/sell, volume, Auto Clean) */}
-      {orderType === "adv" && (
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <AdvPanel
-            mint={mint}
-            symbol={info?.symbol ?? null}
-            walletIds={effectiveWallets.filter((w) => !w.isConnected).map((w) => w.id)}
-            slipBps={slipBps}
-            transactionsFeeLamports={transactionsFeeLamports}
-          />
-          <div style={{ borderTop: "1px solid var(--line-soft)", margin: "2px 12px 0" }} />
-          <div style={{ padding: "12px 12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {/* unified market-making grid (mirrors the /deploy ADV tab) */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span className="eyebrow" style={{ fontSize: 9, color: "var(--paper-4)", letterSpacing: "0.1em" }}>MARKET MAKING</span>
-              <button
-                onClick={() => setMmRefresh((n) => n + 1)}
-                title="Refresh sessions"
-                style={{
-                  width: 22, height: 22, borderRadius: 6,
-                  display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  background: "transparent", border: "1px solid var(--line-soft)",
-                  color: "var(--paper-3)", cursor: "pointer", fontSize: 12, lineHeight: 1,
-                }}
-              >↻</button>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              <Btn size="sm" tone="primary" style={{ width: "100%" }} onClick={() => setMmCreate("autobuy")}>{AUTO_LABEL.autobuy}</Btn>
-              <Btn size="sm" tone="primary" style={{ width: "100%" }} onClick={() => setMmCreate("autosell")}>{AUTO_LABEL.autosell}</Btn>
-              <Btn size="sm" style={{ width: "100%" }} onClick={() => setMmCreate("volume")}>{AUTO_LABEL.volume}</Btn>
-              <Btn size="sm" tone="primary" style={{ width: "100%" }} onClick={() => setMmCreate("clean")}>{AUTO_LABEL.clean}</Btn>
-            </div>
-            <AutomodePanel
-              embedded
-              create={mmCreate === "clean" ? null : mmCreate}
-              onCreateChange={(c) => setMmCreate(c)}
-              refreshNonce={mmRefresh}
-              client={backend}
-              wallets={userWallets.wallets}
-              pushToast={pushToast}
-              mint={mint}
-              symbol={info?.symbol ?? null}
-            />
-            <AutoCleanPanel
-              embedded
-              createOpen={mmCreate === "clean"}
-              onCreateClose={() => setMmCreate(null)}
-              refreshNonce={mmRefresh}
-              client={backend}
-              wallets={userWallets.wallets}
-              pushToast={pushToast}
-              mint={mint}
-              symbol={info?.symbol ?? null}
-            />
-          </div>
-        </div>
-      )}
+      <div style={{ padding: "0 12px 10px" }}>
+        <button
+          onClick={onSubmit}
+          disabled={
+            busy ||
+            !onSol ||
+            effectiveKind === "none" ||
+            !(side === "buy" ? buyAmount : sellAmount)
+          }
+          style={{
+            width: "100%",
+            padding: "14px 16px",
+            fontSize: 15, fontWeight: 700,
+            color: side === "buy" ? "var(--ink-0)" : "#fff",
+            background: side === "buy" ? "var(--buy)" : "var(--sell)",
+            border: 0,
+            borderRadius: 999,
+            cursor: busy ? "not-allowed" : "pointer",
+            opacity: busy ? 0.55 : 1,
+            transition: "background 120ms, opacity 120ms",
+            letterSpacing: "0.01em",
+          }}
+        >
+          {busy
+            ? effectiveWallets.length > 1 ? `× ${effectiveWallets.length}` : "Sending…"
+            : `${side === "buy" ? "Buy" : "Sell"} ${symbolLabel}`}
+        </button>
+      </div>
 
       {/* ── 9) Stats inline (Bought / Sold / Holding / PnL) ─────────── */}
       <TokenPnlStrip pnl={tokenPnl} solPrice={solPrice ?? 0} />
@@ -906,12 +666,6 @@ export function TradingPanel({ mint }: Props) {
           <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{Icon.phantom(12)}</span>
           <span style={addressLabelStyle}>DA:</span>
           <span style={addressValueStyle}>{shortAddr(devAddr, 6)}</span>
-          <Tooltip content="Mute dev">
-            <button type="button" style={iconBtnStyle} aria-label="Mute"><MuteIcon size={11} /></button>
-          </Tooltip>
-          <Tooltip content="Search dev">
-            <button type="button" style={iconBtnStyle} aria-label="Search">{Icon.search(11)}</button>
-          </Tooltip>
           <Tooltip content={`Open on ${explorerName()}`}>
             <a
               href={explorerAccountUrl(devAddr)}
@@ -923,19 +677,16 @@ export function TradingPanel({ mint }: Props) {
         </div>
       )}
 
-      {/* ── 16) Dev pill (deploys/migrations + dev buy + age) ──────── */}
+      {/* ── 16) Dev pill (launches + age) ──────────────────────────── */}
       {devAddr && (
         <div style={{ padding: "4px 12px 14px" }}>
           <div style={devPillStyle}>
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{UpArrowIcon(10)}</span>
             <span style={{ color: "var(--paper-2)" }}>{shortAddr(devAddr, 4)}</span>
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{Icon.phantom(10)}</span>
-            <span style={{ color: "var(--accent)" }}>
-              {creatorMigrations ?? "–"}/{creatorDeploys != null ? Math.max(creatorDeploys, creatorMigrations ?? 0) : "–"}
+            <span style={{ color: "var(--accent)" }} title="Tokens this dev launched">
+              {creatorDeploys ?? "–"}
             </span>
-            {creatorBuySol != null && (
-              <SolAmount iconSize={10} style={{ color: "var(--paper-2)" }}>{creatorBuySol > 0 ? fmtSol(creatorBuySol, 3) : "0"}</SolAmount>
-            )}
             <span style={{ display: "inline-flex", color: "var(--paper-3)", lineHeight: 0 }}>{ClockIcon(10)}</span>
             <span style={{ color: "var(--paper-3)" }}>{tokenAge}</span>
           </div>
@@ -943,226 +694,20 @@ export function TradingPanel({ mint }: Props) {
       )}
 
       <InstantTradePanel
-        isOpen={floatingOpen}
+        isOpen={floatingOpen && onSol}
         onClose={() => setFloatingOpen(false)}
         mint={mint}
+        buyQuote={buyInputMint}
+        pnl={tokenPnl}
         onTrade={async (s, amt, isPercentage) => {
           const asString = String(amt);
-          const mode = s === "buy" ? buyMode : (isPercentage ? "perWallet" : sellMode);
           // Instant panel: buy amounts are SOL ("quote"); sell amounts are either
           // a % of holdings or an exact token qty, per its own isPercentage flag.
           const denom = s === "buy" ? "quote" : (isPercentage ? "percent" : "token");
-          await placeMarketTrade(s, asString, mode, denom);
+          await placeMarketTrade(s, asString, denom);
         }}
       />
-      <CalculatePNLModal
-        open={pnlOpen}
-        onClose={() => setPnlOpen(false)}
-        mint={mint}
-      />
     </aside>
-  );
-}
-
-function LimitPriceControls({
-  marketCap,
-  inputMode, setInputMode,
-  priceUsd, setPriceUsd,
-  sliderPct, setSliderPct,
-}: {
-  marketCap: number | null;
-  inputMode: "slider" | "custom";
-  setInputMode: (m: "slider" | "custom") => void;
-  priceUsd: string;
-  setPriceUsd: (v: string) => void;
-  sliderPct: number;
-  setSliderPct: (v: number) => void;
-}) {
-  function onSlide(pct: number) {
-    setSliderPct(pct);
-    // The effect below also re-derives priceUsd; calling it here too gives
-    // a synchronous update for the slider's drag feedback so the button
-    // doesn't flicker disabled→enabled while the effect schedules.
-    if (!marketCap || marketCap <= 0) return;
-    const target = marketCap * (1 + pct / 100);
-    setPriceUsd(target > 0 ? target.toFixed(0) : "");
-  }
-
-  // Keep priceUsd locked to (mcap × (1 + slider%)) while in slider mode.
-  // Without this, opening the panel with the slider at the default 0%
-  // leaves priceUsd empty (its initial state), so SET LIMIT is disabled
-  // until the user drags. Re-running on every mcap update also makes the
-  // slider track the live chart instead of the page-load snapshot.
-  useEffect(() => {
-    if (inputMode !== "slider") return;
-    if (!marketCap || marketCap <= 0) return;
-    const target = marketCap * (1 + sliderPct / 100);
-    setPriceUsd(target > 0 ? target.toFixed(0) : "");
-  }, [inputMode, sliderPct, marketCap, setPriceUsd]);
-  return (
-    <div style={{ padding: "4px 12px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <button
-          type="button"
-          onClick={() => setInputMode(inputMode === "custom" ? "slider" : "custom")}
-          style={{
-            padding: "2px 6px",
-            fontSize: 9, fontFamily: "var(--font-mono)",
-            color: inputMode === "custom" ? "var(--ink-0)" : "var(--paper-3)",
-            background: inputMode === "custom" ? "var(--paper)" : "transparent",
-            border: `1px solid ${inputMode === "custom" ? "var(--paper)" : "var(--line-soft)"}`,
-            borderRadius: 3,
-            cursor: "pointer",
-            letterSpacing: "0.06em",
-          }}
-        >CUSTOM</button>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--paper-4)" }}>
-          now {marketCap && marketCap > 0 ? `$${fmtNum(marketCap)}` : "—"}
-        </span>
-      </div>
-
-      {inputMode === "custom" ? (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "6px 8px",
-          background: "var(--ink-0)",
-          border: "1px solid var(--line-soft)",
-          borderRadius: 4,
-        }}>
-          <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--paper-4)" }}>$</span>
-          <input
-            value={priceUsd}
-            onChange={(e) => { setPriceUsd(e.target.value.replace(/[^0-9.]/g, "")); setSliderPct(0); }}
-            placeholder="50000"
-            inputMode="decimal"
-            style={{
-              flex: 1, background: "transparent", border: 0, outline: 0,
-              fontSize: 13, fontFamily: "var(--font-mono)", color: "var(--paper)",
-              minWidth: 0,
-            }}
-          />
-          <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--paper-4)" }}>USD</span>
-        </div>
-      ) : (
-        <>
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--paper-4)",
-          }}>
-            <span>-99%</span>
-            <span style={{
-              color: sliderPct === 0 ? "var(--paper-3)"
-                : sliderPct > 0 ? "var(--buy)" : "var(--sell)",
-              fontWeight: 600,
-            }}>
-              {sliderPct > 0 ? "+" : ""}{sliderPct}%
-              {priceUsd && (
-                <span style={{ color: "var(--paper-4)", marginLeft: 4 }}>
-                  (${fmtNum(parseFloat(priceUsd) || 0)})
-                </span>
-              )}
-            </span>
-            <span>+200%</span>
-          </div>
-          <input
-            type="range"
-            min={-99} max={200} step={1} value={sliderPct}
-            onChange={(e) => onSlide(parseInt(e.target.value, 10))}
-            style={{ width: "100%", accentColor: "var(--paper)" }}
-          />
-        </>
-      )}
-    </div>
-  );
-}
-
-function LimitHistoryPanel({
-  orders, loading, error, marketCap, onCancel, onClose,
-}: {
-  orders: LimitOrderView[];
-  loading: boolean;
-  error: string | null;
-  marketCap: number | null;
-  onCancel: (id: string) => void;
-  onClose: () => void;
-}) {
-  // The hook already scopes to this mint when called with one — no need
-  // to re-filter. Show a single status row when there's nothing to list.
-  if (orders.length === 0) {
-    return (
-      <div style={{
-        padding: "8px 12px",
-        borderBottom: "1px solid var(--line-soft)",
-        background: "var(--ink-0)",
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--paper-4)",
-      }}>
-        <span>
-          {error
-            ? `Error: ${error}`
-            : loading
-              ? "Loading limit orders…"
-              : "No limit orders for this token."}
-        </span>
-        <button onClick={onClose} style={{
-          background: "transparent", border: 0, color: "var(--paper-4)",
-          cursor: "pointer", fontSize: 10,
-        }}>close</button>
-      </div>
-    );
-  }
-  return (
-    <div style={{
-      maxHeight: 160, overflowY: "auto",
-      borderBottom: "1px solid var(--line-soft)",
-      background: "var(--ink-0)",
-    }}>
-      {orders.map((o) => {
-        const pending = o.status === "active";
-        const color = o.side === "buy" ? "var(--buy)" : "var(--sell)";
-        const target = o.limitConfig.targetMcapUsd;
-        const distance = marketCap && marketCap > 0
-          ? `${((target / marketCap - 1) * 100).toFixed(1)}%`
-          : "—";
-        return (
-          <div key={o.id} style={{
-            display: "flex", alignItems: "center", gap: 8,
-            padding: "6px 12px",
-            fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--paper-2)",
-            borderBottom: "1px dashed var(--line-soft)",
-          }}>
-            <span style={{ color, fontWeight: 600, width: 28 }}>{o.side.toUpperCase()}</span>
-            <span style={{ color: "var(--paper-3)" }}>MC ${fmtNum(target)}</span>
-            {pending && <span style={{ color: "var(--paper-4)" }}>{distance}</span>}
-            <span style={{ color: "var(--paper-4)" }}>
-              {o.side === "buy" ? `${o.amount}◎` : `${o.amount}%`}
-            </span>
-            <div style={{ flex: 1 }} />
-            <Pill
-              tone={
-                o.status === "filled" ? "buy"
-                  : o.status === "failed" || o.status === "cancelled" || o.status === "expired" ? "sell"
-                  : "default"
-              }
-              size="xs"
-            >{o.status}</Pill>
-            {pending && (
-              <Tooltip content="Cancel">
-                <button
-                  onClick={() => onCancel(o.id)}
-                  style={{
-                    background: "transparent", border: 0, padding: 2,
-                    color: "var(--paper-4)", cursor: "pointer", fontSize: 11,
-                  }}
-                  aria-label="Cancel"
-                >×</button>
-              </Tooltip>
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1198,14 +743,6 @@ function ExternalIcon({ size = 11 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path d="M9 2h5v5M14 2L7 9M12 9v4H3V4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function MuteIcon({ size = 11 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M2.5 6v4h2L8 13V3L4.5 6h-2zM11 6l3 4M14 6l-3 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

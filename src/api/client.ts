@@ -1,7 +1,6 @@
 import { CHAIN_CHANGED_EVENT, getActiveChain, type ChainId } from "../lib/chains";
 import {
   normalizeWalletHoldingsResponse,
-  normalizeWalletPerformanceResponse,
   normalizeWalletPnlHistoryResponse,
 } from "./normalize";
 import { evmapiGet, imageSrc } from "./evmapi";
@@ -18,12 +17,13 @@ import {
   type Rec,
 } from "./mappers";
 import { fetchNativePrices, nativeUsd } from "./native";
+import type { BatchEnrichEntry } from "../lib/batchEnrichCoordinator";
 import type {
+  ChainSentiment,
   TokenEvent,
   Trade,
   Holder,
   TopTrader,
-  TrendingToken,
   TrendingPeriod,
   SearchResult,
   TokenPriceChanges,
@@ -31,11 +31,7 @@ import type {
   WalletHoldingsResponse,
   WalletSummaryResponse,
   WalletSummaryItem,
-  WalletPerformanceResponse,
-  WalletFifoPnlResponse,
   WalletPnlHistoryResponse,
-  WalletTokensResponse,
-  PnlSummaryResponse,
 } from "../types";
 
 export { fetchNativePrices, nativeUsd };
@@ -111,14 +107,6 @@ function rows(data: unknown): Rec[] {
   return Array.isArray(data) ? data.map((r) => asRecord(r) ?? {}) : [];
 }
 
-export function chainPath(solPath: string): string {
-  return solPath;
-}
-
-// ── tokens ─────────────────────────────────────────────────────────────────
-
-/** The API's full Token for one address (identity, price, stats, pool,
- *  launchpad, safety). Shared by header, strip, supply, quote and metadata. */
 export async function fetchTokenRaw(mint: string, c: string = chain()): Promise<Rec> {
   const { data } = await get<Rec>(tokenPath(mint, "", c), {}, 5_000);
   return data;
@@ -129,7 +117,7 @@ const BATCH_IDS = 10;
 export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0) => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
-  const data: Record<string, unknown> = {};
+  const data: Record<string, BatchEnrichEntry> = {};
   // Only addresses of the active chain's family: one foreign id (a search
   // result from another chain) makes the API reject the whole batch (400).
   const evm = c !== "sol";
@@ -153,14 +141,9 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
       if (!t.mint_address) continue;
       // Batch rows answer lowercase EVM addresses; key by what was asked.
       const asked = slice.find((m) => m.toLowerCase() === t.mint_address.toLowerCase()) ?? t.mint_address;
-      data[asked] = {
+      const entry: BatchEnrichEntry = {
         name: t.name || undefined,
         symbol: t.symbol || undefined,
-        image: t.image ?? undefined,
-        last_price: t.lastPrice,
-        lastPrice: t.lastPrice,
-        marketCap: t.marketCap,
-        liquidity: t.liquidity,
         priceChange: t.priceChange,
         // USD and native kept apart: `volume_24h` is USD, `total_sol_volume`
         // is SOL/ETH/BNB.
@@ -174,11 +157,9 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
         sniper_percentage: t.sniperPercentage,
         signer: t.signer,
         platform: t.dex || undefined,
-        dex: t.dex || undefined,
         creatorDeploys: t.creatorDeploys,
-        creator_deploys: t.creatorDeploys,
-        graduationPercent: t.graduationPercent,
       };
+      data[asked] = entry;
     }
   }
   return { success: true, data };
@@ -304,34 +285,16 @@ function trendingInterval(period: TrendingPeriod): string {
   }
 }
 
-function toTrending(t: TokenEvent): TrendingToken {
-  return {
-    ...t,
-    mint: t.mint_address,
-    image: t.image,
-    marketCap: t.marketCap,
-    volume: t.volume24h,
-    priceChange: t.priceChange,
-    tradeCount: t.tradeCount,
-  };
-}
-
-export const fetchTrending = async (period: TrendingPeriod = "daily", limit = 50) => {
+export const fetchTrending = async (period: TrendingPeriod = "daily", limit = 50): Promise<{ data: TokenEvent[] }> => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
   const { data } = await get<unknown>("/trending", { chain: c, limit, interval: trendingInterval(period) }, 5_000);
-  return { data: rows(data).map((r) => toTrending(apiTokenToEvent(r, native))).filter((t) => t.mint) };
-};
-
-export const fetchSolPrice = async () => {
-  const usd = await nativeUsd(chain()).catch(() => 0);
-  return { solPrice: usd, nativePrice: usd, hasValidPrice: usd > 0 };
+  return { data: rows(data).map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address) };
 };
 
 export interface SearchOptions {
   q?: string;
   creator?: string;
-  authority?: string;
   limit?: number;
   page?: number;
 }
@@ -371,7 +334,7 @@ export async function fetchSearch(
 ): Promise<{ data: SearchResult[] }> {
   const native = await nativeUsd(chain()).catch(() => 0);
   const lim = typeof arg === "string" ? limit : (arg.limit ?? 20);
-  const creator = typeof arg === "string" ? "" : (arg.creator || arg.authority || "");
+  const creator = typeof arg === "string" ? "" : (arg.creator || "");
   if (creator) {
     const list = await fetchCreatedTokens(creator, lim);
     return { data: list.map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
@@ -381,43 +344,6 @@ export async function fetchSearch(
   const { data } = await get<unknown>("/search", { q: q.trim(), limit: Math.min(50, lim) }, 5_000);
   return { data: rows(data).map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
 }
-
-export const fetchTokensByDeployer = (creator: string, limit = 20, page = 1) =>
-  fetchSearch({ creator, limit, page });
-
-export const fetchTokensByAuthority = (authority: string, limit = 20, page = 1) =>
-  fetchSearch({ authority, limit, page });
-
-export interface CreatorMigration {
-  mint: string;
-  name: string;
-  symbol: string;
-  uri?: string;
-  migratedAt?: string;
-  /** Not served by the API (no all-time high); kept for the type's callers. */
-  athMcap?: number;
-  /** Market cap now, USD. */
-  marketCap?: number;
-}
-
-export const fetchCreatorMigrations = async (signer: string, limit = 50) => {
-  const list = await fetchCreatedTokens(signer, limit, { graduated: true });
-  return {
-    success: true,
-    data: list.map((r) => {
-      const lp = asRecord(r.launchpad);
-      return {
-        mint: String(r.address ?? ""),
-        name: String(r.name ?? ""),
-        symbol: String(r.symbol ?? ""),
-        migratedAt: msToIso(lp?.graduatedAt),
-        marketCap: num(r.marketCapUsd),
-      } satisfies CreatorMigration;
-    }).filter((m) => m.mint),
-  };
-};
-
-export const fetchTokenMeta = (mint: string) => fetchTokenInfo(mint).then((r) => r.data);
 
 export interface QuoteData {
   mint: string;
@@ -576,20 +502,13 @@ function statsToSummary(address: string, s: Rec, native: number): WalletSummaryI
     totalVolumeUsd: volume,
     avgTradeSizeSol: trades > 0 ? (usdToNative(volume, native) ?? 0) / trades : 0,
     avgTradeSizeUsd: trades > 0 ? volume / trades : 0,
-    largestTradeSol: 0,
-    largestTradeUsd: 0,
-    totalFees: 0,
     realizedPnlSol: usdToNative(realized, native) ?? 0,
     realizedPnlUsd: realized,
     realizedPnlPct: num(s.realizedPnlPercent) ?? null,
     uniqueTokensTraded: num(s.tokensTraded) ?? 0,
-    winningTokens: 0,
     // The UI reads a 0–1 ratio.
     winRate: winRate != null ? winRate / 100 : 0,
     lastTradeAt: msToIso(s.lastActiveAt) ?? null,
-    proTradeCount: 0,
-    sniperCount: 0,
-    bundleCount: 0,
   };
 }
 
@@ -622,60 +541,6 @@ export const fetchWalletSummary = async (
   } satisfies WalletSummaryResponse;
 };
 
-const LEADERBOARD_PERIOD = { daily: "1d", weekly: "7d", monthly: "30d" } as const;
-
-export const fetchPnlLeaderboard = async (opts?: { period?: "daily" | "weekly" | "monthly"; platform?: string; limit?: number }) => {
-  const c = chain();
-  const period = opts?.period ?? "daily";
-  const native = await nativeUsd(c).catch(() => 0);
-  // No per-platform leaderboard on this API: `platform` is not applied.
-  const { data } = await get<unknown>("/wallets/top", {
-    chain: c,
-    period: LEADERBOARD_PERIOD[period],
-    sort: "pnl",
-    limit: Math.min(100, opts?.limit ?? 50),
-  }, 30_000);
-  const list = rows(data);
-  return {
-    success: true as const,
-    error: undefined as string | undefined,
-    period,
-    platform: "all",
-    wallets: list.map((r) => ({
-      signer: String(r.address ?? ""),
-      pnlSol: usdToNative(r.realizedPnlUsd, native) ?? 0,
-      pnlUsd: num(r.realizedPnlUsd) ?? 0,
-      trades: num(r.trades) ?? 0,
-    })).filter((w) => w.signer),
-    limit: list.length,
-    offset: 0,
-    solPriceUsd: native,
-  };
-};
-
-/** Chain-wide PnL distribution: the API has no aggregate for it. Reported as
- *  unavailable so the KPI tiles stay empty instead of showing zeros. */
-export const fetchPnlSummary = async (opts?: { period?: "daily" | "weekly" | "monthly"; platform?: string }) =>
-  ({
-    success: false,
-    error: "not_available",
-    period: opts?.period ?? "daily",
-    platform: "all",
-    totalProfitableWallets: 0,
-    totalPnlSol: 0,
-    totalPnlUsd: 0,
-    avgPnlSol: 0,
-    avgPnlUsd: 0,
-    medianPnlSol: 0,
-    medianPnlUsd: 0,
-    p90PnlSol: 0,
-    p90PnlUsd: 0,
-    p99PnlSol: 0,
-    p99PnlUsd: 0,
-    maxPnlSol: 0,
-    maxPnlUsd: 0,
-  }) satisfies PnlSummaryResponse;
-
 /** PnlPoint[] (oldest first) for the seconds window [from, to]. */
 async function fetchPnlPoints(address: string, from: number, to: number, resolution: "1h" | "1d"): Promise<Rec[]> {
   const nowSec = Date.now() / 1000;
@@ -688,69 +553,6 @@ async function fetchPnlPoints(address: string, from: number, to: number, resolut
     return t >= fromMs - (resolution === "1d" ? 86_400_000 : 3_600_000) && t <= toMs;
   });
 }
-
-export const fetchWalletPerformance = async (
-  address: string,
-  options: { from: number; to: number; resolution?: "1h" | "1d" },
-) => {
-  const native = await nativeUsd(chain()).catch(() => 0);
-  const resolution = options.resolution ?? "1d";
-  const points = await fetchPnlPoints(address, options.from, options.to, resolution);
-  return normalizeWalletPerformanceResponse({
-    success: true,
-    address,
-    startTime: new Date(options.from * 1000).toISOString(),
-    endTime: new Date(options.to * 1000).toISOString(),
-    resolution,
-    solPriceUsd: native,
-    data: points.map((p) => {
-      const pnl = num(p.realizedPnlUsd) ?? 0;
-      const vol = num(p.volumeUsd) ?? 0;
-      return {
-        timestamp: msToIso(p.time) ?? "",
-        trades: num(p.trades) ?? 0,
-        buys: 0,
-        sells: 0,
-        volumeSol: usdToNative(vol, native) ?? 0,
-        volumeUsd: vol,
-        realizedPnlSol: usdToNative(pnl, native) ?? 0,
-        realizedPnlUsd: pnl,
-        uniqueTokens: 0,
-      };
-    }),
-  }) as WalletPerformanceResponse;
-};
-
-/**
- * Realized PnL for the window from the wallet profile. The API has no cost
- * basis per token, so no FIFO lots are returned (`tokens` is empty) and the
- * UI shows unrealized PnL as unknown instead of deriving one from a made-up
- * cost.
- */
-export const fetchWalletPnl = async (
-  address: string,
-  options: { from?: number; to?: number; limit?: number } = {},
-) => {
-  const native = await nativeUsd(chain()).catch(() => 0);
-  const stats = await fetchWalletStats(address, periodFor(options.from, options.to));
-  const realized = num(stats.realizedPnlUsd) ?? 0;
-  return {
-    success: true,
-    address,
-    data: {
-      totalRealizedPnlSol: usdToNative(realized, native) ?? 0,
-      totalRealizedPnlUsd: realized,
-      totalUnrealizedCostSol: 0,
-      totalUnrealizedCostUsd: 0,
-      tokenCount: 0,
-      tokens: [],
-    },
-    tradesProcessed: num(stats.trades) ?? 0,
-    truncated: false,
-    solPriceUsd: native,
-    timestamp: new Date().toISOString(),
-  } satisfies WalletFifoPnlResponse;
-};
 
 export const fetchWalletPnlHistory = async (
   address: string,
@@ -777,43 +579,6 @@ export const fetchWalletPnlHistory = async (
   }) as WalletPnlHistoryResponse;
 };
 
-export const fetchWalletTokenBreakdown = async (
-  address: string,
-  options: { limit?: number; sort?: "volume" | "pnl" | "trades" | "recent"; offset?: number } = {},
-) => {
-  const holdings = await fetchWalletHoldings(address);
-  const native = await nativeUsd(chain()).catch(() => 0);
-  const data = holdings.data.slice(options.offset ?? 0, (options.offset ?? 0) + (options.limit ?? 50)).map((h) => ({
-    mint: h.mint,
-    totalTrades: 0,
-    buys: 0,
-    sells: 0,
-    totalVolumeSol: 0,
-    totalVolumeUsd: 0,
-    buyVolumeSol: 0,
-    buyVolumeUsd: 0,
-    sellVolumeSol: 0,
-    sellVolumeUsd: 0,
-    realizedPnlSol: 0,
-    realizedPnlUsd: 0,
-    totalFees: 0,
-    name: h.name,
-    symbol: h.symbol,
-    positionStatus: "open" as const,
-  }));
-  return {
-    success: true,
-    address,
-    data,
-    count: data.length,
-    limit: options.limit ?? 50,
-    offset: options.offset ?? 0,
-    sort: options.sort ?? "volume",
-    hasMore: false,
-    solPriceUsd: native,
-  } satisfies WalletTokensResponse;
-};
-
 export const fetchChainSentiment = async () => {
   const { data } = await get<unknown>("/trending", { chain: chain(), limit: 20, interval: "1h" }, 30_000);
   let buys = 0, sells = 0;
@@ -825,38 +590,10 @@ export const fetchChainSentiment = async () => {
   const buyRatio = buys + sells ? buys / (buys + sells) : 0.5;
   return {
     score: Math.round(buyRatio * 100),
-    label: buyRatio >= 0.55 ? "buy" : buyRatio <= 0.45 ? "sell" : "neutral",
     buyRatio,
     trades: buys + sells,
-  };
+  } satisfies ChainSentiment;
 };
-
-export interface OhlcCandle {
-  timestamp: string | number;
-  open: string | number;
-  high: string | number;
-  low: string | number;
-  close: string | number;
-  volume?: string | number;
-  sol_price?: string | number;
-}
-
-export interface TradingVolume {
-  trade_count: number;
-  total_sol_volume: number;
-  total_token_volume: number;
-  buy_count: number;
-  sell_count: number;
-  bundle_trades: number;
-  sniper_trades: number;
-  protrader_trades: number;
-  buySolVolume: number;
-  sellSolVolume: number;
-  netFlow: number;
-  buySellRatio: number;
-  feesTotal: number;
-  uniqueTraders: number;
-}
 
 export interface SignerCountsResponse {
   success: boolean;
@@ -885,35 +622,6 @@ export const fetchSignerCounts = async (signer: string, _withTokens = false) => 
       migrationTokens: migrated.map((r) => String(r.address ?? "")),
     },
   } satisfies SignerCountsResponse;
-};
-
-export const fetchTradingVolume = async (mint: string, _hours = 24) => {
-  const c = chain();
-  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
-  const w = asRecord(asRecord(data.stats)?.["24h"]) || {};
-  const buys = num(w.buys) ?? 0;
-  const sells = num(w.sells) ?? 0;
-  return {
-    success: true,
-    mint,
-    hours: 24,
-    data: {
-      trade_count: num(w.trades) ?? buys + sells,
-      total_sol_volume: usdToNative(w.volumeUsd, native) ?? 0,
-      total_token_volume: 0,
-      buy_count: buys,
-      sell_count: sells,
-      bundle_trades: 0,
-      sniper_trades: 0,
-      protrader_trades: 0,
-      buySolVolume: usdToNative(w.buyVolumeUsd, native) ?? 0,
-      sellSolVolume: usdToNative(w.sellVolumeUsd, native) ?? 0,
-      netFlow: (usdToNative(w.buyVolumeUsd, native) ?? 0) - (usdToNative(w.sellVolumeUsd, native) ?? 0),
-      buySellRatio: sells ? buys / sells : 1,
-      feesTotal: 0,
-      uniqueTraders: 0,
-    } satisfies TradingVolume,
-  };
 };
 
 // ── candles ────────────────────────────────────────────────────────────────
@@ -946,83 +654,3 @@ export const fetchCandles = async (
     .filter((c): c is ApiCandle => c != null)
     .sort((a, b) => a.time - b.time);
 };
-
-/** Candles in the chain's native coin (price per token). */
-export const fetchOhlc = async (
-  mint: string,
-  timeframe: OhlcTimeframe = "1s",
-  limit = 60,
-  to?: number,
-) => {
-  const native = await nativeUsd(chain()).catch(() => 0);
-  const bars = await fetchCandles(mint, { interval: timeframe, limit, to });
-  const div = native > 0 ? native : 1;
-  const candles: OhlcCandle[] = bars.map((b) => ({
-    timestamp: new Date(b.time).toISOString(),
-    open: b.open / div,
-    high: b.high / div,
-    low: b.low / div,
-    close: b.close / div,
-    volume: b.volume,
-  }));
-  return {
-    data: candles,
-    candles,
-    interval: timeframe,
-    oldestTimestamp: bars[0]?.time ?? null,
-    count: candles.length,
-  };
-};
-
-export interface FundingInfo {
-  fundedBy: string;
-  fundedAt: string;
-  signature: string;
-  slot: number;
-  lamports: string;
-  solAmount: number;
-  source: "observed" | "rpc_backfilled" | "rpc_unresolved";
-}
-export interface FundingChainEntry {
-  wallet: string;
-  fundedBy: string | null;
-  fundedAt?: string;
-  signature?: string;
-  slot?: number;
-  lamports?: string;
-  solAmount?: number;
-  source?: FundingInfo["source"];
-}
-export interface FundedByEntry {
-  wallet: string;
-  fundedAt: string;
-  signature: string;
-  slot: number;
-  lamports: string;
-  solAmount: number;
-  source: FundingInfo["source"];
-}
-export interface FundingCluster {
-  rootFunder: string;
-  depth: number;
-  wallets: string[];
-}
-export interface HolderEdge {
-  a: string;
-  b: string;
-  kind: "sol" | "token";
-  transfers: number;
-  firstSeen: string;
-  lastSeen: string;
-}
-
-export const fetchFundingLookup = async (_wallets: string[], ..._rest: unknown[]) =>
-  ({ success: true, fundings: {} as Record<string, FundingInfo | null>, missing: [] as string[], enrichmentEnqueued: [] as string[] });
-export const fetchFundingFundedBy = async (..._rest: unknown[]) => ({ success: true, funded: {} as Record<string, { wallets: FundedByEntry[]; nextCursor: string | null; more: boolean }> });
-export const fetchFundingChain = async (..._rest: unknown[]) => ({ success: true, chains: {} as Record<string, FundingChainEntry[]> });
-export const fetchFundingCluster = async (..._rest: unknown[]) => ({ success: true, clusters: [] as FundingCluster[], unclustered: [] as string[], enrichmentEnqueued: [] as string[] });
-export const fetchHolderEdges = async (mint: string, ..._rest: unknown[]) => ({ success: true, mint, edges: [] as HolderEdge[] });
-
-const emptyList = async <T,>(extra: T) => extra;
-
-void emptyList;

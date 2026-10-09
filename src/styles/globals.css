@@ -120,22 +120,6 @@ input, textarea { font-family: inherit; color: inherit; }
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes flashgreen {
-  0%   { background: var(--accent-w); }
-  100% { background: transparent; }
-}
-@keyframes flashBuy {
-  0%   { background: var(--buy-w); }
-  100% { background: transparent; }
-}
-@keyframes flashSell {
-  0%   { background: var(--sell-w); }
-  100% { background: transparent; }
-}
-@keyframes pulseDot {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.35; }
-}
 @keyframes flashPrice {
   0%   { filter: brightness(1.6) saturate(1.3); }
   100% { filter: brightness(1) saturate(1); }
@@ -204,33 +188,6 @@ input, textarea { font-family: inherit; color: inherit; }
   60%  { transform: rotate(-14deg) scale(1.18); }
   100% { transform: rotate(0) scale(1); }
 }
-@keyframes radialFanIn {
-  from { opacity: 0; transform: scaleX(0.08); }
-  to   { opacity: 1; transform: scaleX(1); }
-}
-.radial-quick-buy-svg {
-  animation: radialFanIn 130ms ease-out;
-  transform-origin: left center;
-}
-.radial-quick-sell-svg {
-  animation: radialFanIn 130ms ease-out;
-  transform-origin: right center;
-}
-.radial-quick-sell-sector path {
-  transition: fill 90ms, stroke 90ms;
-}
-.radial-quick-sell-sector:hover path {
-  fill: color-mix(in oklch, var(--sell) 30%, var(--ink-1));
-  stroke: var(--sell);
-}
-.radial-quick-buy-sector path {
-  transition: fill 90ms, stroke 90ms;
-}
-.radial-quick-buy-sector:hover path {
-  fill: color-mix(in oklch, var(--accent) 30%, var(--ink-1));
-  stroke: var(--accent);
-}
-
 .quick-buy-overlay {
   position: absolute;
   top: 0;
@@ -644,33 +601,6 @@ input, textarea { font-family: inherit; color: inherit; }
   text-overflow: ellipsis;
 }
 
-.toast-card__mute {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin-top: -1px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--paper-4);
-  cursor: pointer;
-  transition: color 140ms, background 140ms, border-color 140ms;
-}
-.toast-card__mute:hover {
-  color: var(--sell);
-  background: var(--sell-w);
-  border-color: color-mix(in oklch, var(--sell) 35%, transparent);
-}
-.toast-card__mute[aria-pressed="true"] {
-  color: var(--accent);
-  cursor: default;
-  background: transparent;
-  border-color: transparent;
-}
-
 .toast-card__progress {
   position: absolute;
   bottom: 0;
@@ -686,15 +616,6 @@ input, textarea { font-family: inherit; color: inherit; }
   opacity: 0.7;
   animation: toastProgress var(--toast-duration) linear forwards;
 }
-.flash-buy  { animation: flashBuy  1.2s ease-out; }
-.flash-sell { animation: flashSell 1.2s ease-out; }
-.new-token-card { animation: slideIn 280ms cubic-bezier(0.16, 1, 0.3, 1), flashgreen 1.4s ease-out; }
-
-.dot-live {
-  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--buy); animation: pulseDot 1.8s ease-in-out infinite;
-}
-
 .skeleton {
   background: linear-gradient(90deg, var(--ink-1) 25%, var(--ink-2) 50%, var(--ink-1) 75%);
   background-size: 400px 100%;
@@ -710,7 +631,6 @@ input, textarea { font-family: inherit; color: inherit; }
   color: var(--paper-3);
 }
 .rule { height: 1px; background: var(--line-soft); }
-.vrule { width: 1px; background: var(--line-soft); align-self: stretch; }
 .kbd {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px;
@@ -765,7 +685,6 @@ input, textarea { font-family: inherit; color: inherit; }
 
 /* dvh-aware full height (falls back to vh on browsers without dvh) */
 .app-vh    { height: 100vh; height: 100dvh; }
-.app-minvh { min-height: 100vh; min-height: 100dvh; }
 
 /* opt-in scroll containers (pages use these instead of inheriting overflow:hidden) */
 .app-scroll {
@@ -781,11 +700,6 @@ input, textarea { font-family: inherit; color: inherit; }
 /* keep horizontal scrollability on dense mobile strips but hide the scrollbar */
 .scroll-x-hide { scrollbar-width: none; -ms-overflow-style: none; }
 .scroll-x-hide::-webkit-scrollbar { display: none; }
-
-/* generic responsive show/hide helpers */
-@media (max-width: 768px) { .hide-mobile { display: none !important; } }
-@media (max-width: 480px) { .hide-phone  { display: none !important; } }
-@media (min-width: 769px) { .only-mobile { display: none !important; } }
 
 /* touch-device affordances */
 @media (pointer: coarse) {

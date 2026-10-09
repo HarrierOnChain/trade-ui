@@ -9,14 +9,12 @@ import React, {
   startTransition,
 } from "react";
 import {
-  CHAIN_AVAILABILITY_EVENT,
   CHAIN_CHANGED_EVENT,
   CHAIN_LIST,
   CHAINS,
   type Chain,
   type ChainId,
   getActiveChain,
-  isChainEnabled,
   isChainId,
   readStoredChain,
   setActiveChain,
@@ -24,7 +22,7 @@ import {
 } from "../lib/chains";
 
 export interface SetChainOpts {
-  /** Default true. Token-URL / deploy wizard pass false so wizard state survives. */
+  /** Default true. A token URL passes false so the page keeps its state. */
   reload?: boolean;
 }
 
@@ -50,7 +48,7 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
   // Post-mount: load the persisted chain (if any) and reconcile.
   useEffect(() => {
     const stored = readStoredChain();
-    if (stored && isChainEnabled(stored) && stored !== chainId) {
+    if (stored && stored !== chainId) {
       setActiveChain(stored);
       setChainIdState(stored);
     } else {
@@ -65,34 +63,18 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
     setActiveChain(chainId);
   }, [chainId]);
 
-  // Admin chain availability arrives with the system config (AuthGate →
-  // applyChainAvailability). Re-render so the switcher drops disabled chains,
-  // and adopt the clamp if the active chain was just disabled.
-  const [availabilityTick, setAvailabilityTick] = useState(0);
+  // Another surface switched the module-level chain: follow it.
   useEffect(() => {
-    const onAvailability = () => {
-      setAvailabilityTick((t) => t + 1);
-      setChainIdState(getActiveChain());
-    };
     const onChanged = (e: Event) => {
       const id = (e as CustomEvent<{ chainId?: string }>).detail?.chainId;
-      if (typeof id === "string" && isChainId(id) && isChainEnabled(id)) {
-        setChainIdState(id);
-      } else {
-        setChainIdState(getActiveChain());
-      }
+      setChainIdState(typeof id === "string" && isChainId(id) ? id : getActiveChain());
     };
-    window.addEventListener(CHAIN_AVAILABILITY_EVENT, onAvailability);
     window.addEventListener(CHAIN_CHANGED_EVENT, onChanged);
-    return () => {
-      window.removeEventListener(CHAIN_AVAILABILITY_EVENT, onAvailability);
-      window.removeEventListener(CHAIN_CHANGED_EVENT, onChanged);
-    };
+    return () => window.removeEventListener(CHAIN_CHANGED_EVENT, onChanged);
   }, []);
 
   const setChain = useCallback((id: ChainId, opts?: SetChainOpts) => {
     if (id === chainId) return;
-    if (!isChainEnabled(id)) return;
     setActiveChain(id);
     writeStoredChain(id);
     // A chain switch changes EVERY data surface (deploys, trending, holders,
@@ -101,8 +83,8 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
     // state update left them showing the previous chain's data. Reload so the
     // whole tree re-initialises against the now-persisted chain: the only way
     // to guarantee nothing stays stale. Static chunks are cached, so this is a
-    // re-parse, not a re-download. Token URLs and the deploy wizard skip the
-    // reload so they can keep local state.
+    // re-parse, not a re-download. Token URLs skip the reload so they can keep
+    // local state.
     if (opts?.reload !== false && typeof window !== "undefined") {
       window.location.reload();
       return;
@@ -111,15 +93,8 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
   }, [chainId]);
 
   const value = useMemo<Value>(
-    () => ({
-      chain: CHAINS[chainId],
-      chainId,
-      setChain,
-      chains: CHAIN_LIST.filter((c) => isChainEnabled(c.id)),
-    }),
-    // availabilityTick invalidates the filtered list when the admin config lands.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chainId, setChain, availabilityTick],
+    () => ({ chain: CHAINS[chainId], chainId, setChain, chains: CHAIN_LIST }),
+    [chainId, setChain],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

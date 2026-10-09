@@ -20,7 +20,7 @@ import {
   type SlotStyle,
 } from "../../lib/monitorTemplate";
 import { CardStyleProvider } from "../../contexts/CardStyleContext";
-import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
+import { useIsMobile } from "../../hooks/useMediaQuery";
 import { clampLeft, clampTop, viewportMaxWidth } from "../../lib/popover";
 import {
   EditorToolbar,
@@ -35,7 +35,6 @@ export default function MonitorPage() {
   const { setSelectedMint } = useSelectedToken();
   const { record } = useLastSeen();
   const isMobile = useIsMobile();
-  const isPhone = useIsPhone();
   const [template, setTemplateState] = useState<MonitorTemplate | null>(null);
   const [selectedSlotId, setSelectedSlotIdState] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);

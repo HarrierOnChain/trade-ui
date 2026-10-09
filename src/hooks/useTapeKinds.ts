@@ -1,10 +1,10 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-export type TapeKind = "deploy" | "migrating" | "migration" | "trending" | "mine" | "watch" | "x";
+export type TapeKind = "deploy" | "migrating" | "migration" | "trending" | "mine";
 
 export const TAPE_KINDS: TapeKind[] = [
-  "deploy", "migrating", "migration", "trending", "mine", "watch", "x",
+  "deploy", "migrating", "migration", "trending", "mine",
 ];
 
 export const DEFAULT_TAPE_KINDS: TapeKind[] = [...TAPE_KINDS];
@@ -15,8 +15,6 @@ export const TAPE_VIEW_LABEL: Record<TapeKind, string> = {
   migration: "Migrations",
   trending: "Trending",
   mine: "My Wallets",
-  watch: "Tracked",
-  x: "X",
 };
 
 export const TAPE_VIEW_SHORT: Record<TapeKind, string> = {
@@ -25,8 +23,6 @@ export const TAPE_VIEW_SHORT: Record<TapeKind, string> = {
   migration: "Mig+",
   trending: "Trnd",
   mine: "Mine",
-  watch: "Trk",
-  x: "X",
 };
 
 export const TAPE_ACCENT: Record<TapeKind, string> = {
@@ -35,8 +31,6 @@ export const TAPE_ACCENT: Record<TapeKind, string> = {
   migration: "var(--accent)",
   trending: "var(--paper)",
   mine: "var(--accent)",
-  watch: "oklch(0.74 0.13 75)",
-  x: "var(--info, #1d9bf0)",
 };
 
 export const TAPE_VIEW_KEY = "spool.sidebar.tape.view";
@@ -50,7 +44,10 @@ function normalizeTapeKinds(value: unknown): TapeKind[] | null {
   if (value === "all") return DEFAULT_TAPE_KINDS;
   if (isTapeKind(value)) return [value];
   if (!Array.isArray(value)) return null;
-  return TAPE_KINDS.filter((k) => value.includes(k));
+  const kinds = TAPE_KINDS.filter((k) => value.includes(k));
+  // A selection made only of lanes that no longer exist falls back to the
+  // defaults instead of an empty tape.
+  return kinds.length === 0 && value.length > 0 ? null : kinds;
 }
 
 export function readStoredTapeKinds(): TapeKind[] {

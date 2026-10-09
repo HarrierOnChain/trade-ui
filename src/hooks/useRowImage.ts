@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { fetchPublicMetadata } from "../api/metadata";
 import { isLoadableImageUrl } from "../lib/imageUrl";
 import { runPooled } from "../lib/requestPool";
-import { streamSettledDelay } from "../lib/wire/events";
+import { streamSettledDelay } from "../lib/streamSettle";
 
 const RETRY_MS = 8_000;
 const MAX_ATTEMPTS = 3;

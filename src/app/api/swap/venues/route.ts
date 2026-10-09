@@ -1,4 +1,5 @@
 import { fail, fetchUp, relayRouter, routerBase } from "../../../../lib/swap/upstream";
+import { gateClosed } from "../../../../lib/server/gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -7,7 +8,9 @@ let cache: { at: number; body: string | null } = { at: 0, body: null };
 
 /** → router `GET /venues`: the venues it can both serve and build, with the
  *  price oracle's verdict. Cached for a minute. */
-export async function GET() {
+export async function GET(req: Request) {
+  const closed = gateClosed(req);
+  if (closed) return closed;
   if (cache.body && Date.now() - cache.at < 60_000) {
     return new Response(cache.body, { headers: { "content-type": "application/json" } });
   }

@@ -179,8 +179,7 @@ export function dropRetracted(prev: Trade[], gone: { signature: string; wallet?:
 }
 
 /**
- * Merges lists for display (the tape with demo fills; the tape with wallet
- * histories for chart marks). Each list keeps its rows, which its source told
+ * Merges lists for display (the tape with wallet histories for chart marks). Each list keeps its rows, which its source told
  * apart; a row an earlier list holds (same signature and wallet) is taken from
  * that list only. Leg keys of the result are unique.
  */

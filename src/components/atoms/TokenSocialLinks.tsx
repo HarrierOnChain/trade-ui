@@ -1,7 +1,6 @@
 import React from "react";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
-import { XLinkPreview } from "./XLinkPreview";
 import { classifyXUrl, type XUrlInfo } from "../../lib/xUrl";
 import { classifySocialUrl, type SocialPlatform } from "../../lib/socialUrl";
 import { tweetAgeMinutesFromId, tweetFreshnessColor } from "../../lib/tweetAge";
@@ -163,7 +162,7 @@ export function TokenSocialLinks({
   if (xInfo) {
     const label = xAriaLabel(xInfo);
     items.push(
-      <XLinkPreview key="x" info={xInfo} stopPropagation={stopPropagation}>
+      <Tooltip key="x" content={label}>
         <a
           href={xInfo.url}
           target="_blank"
@@ -176,7 +175,7 @@ export function TokenSocialLinks({
         >
           {xIconFor(xInfo, iconSize)}
         </a>
-      </XLinkPreview>,
+      </Tooltip>,
     );
   }
   if (telegram) {

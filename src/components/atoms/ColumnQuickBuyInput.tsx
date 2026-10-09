@@ -5,11 +5,14 @@ import { QuoteAssetIcon } from "./QuoteAssetIcon";
 import { useQuickBuyAmount } from "../../hooks/useQuickBuyAmount";
 import { useBuyQuoteMint } from "../../hooks/useBuyQuoteMint";
 import { useIsPhone } from "../../hooks/useMediaQuery";
+import { useChain } from "../../contexts/ChainContext";
+import { swapsOn } from "../../lib/chains";
 
 export function ColumnQuickBuyInput({ column }: { column?: string }) {
   const [amount, setAmount] = useQuickBuyAmount(column);
   const [quote] = useBuyQuoteMint();
   const isPhone = useIsPhone();
+  const { chainId } = useChain();
   const [text, setText] = useState(String(amount));
   const [focused, setFocused] = useState(false);
 
@@ -23,6 +26,8 @@ export function ColumnQuickBuyInput({ column }: { column?: string }) {
     if (Number.isFinite(n) && n >= 0) setAmount(n);
     else setText(String(amount));
   }
+
+  if (!swapsOn(chainId)) return null;
 
   return (
     <Tooltip content={`Quick-buy amount · pay with ${quote.label}`}>

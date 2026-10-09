@@ -2,7 +2,7 @@
 /**
  * Any-pair Solana swap on the Raze router (what swap.raze.bot was): a live
  * quote, the route and its split, the DEX filter, slippage, and the swap
- * itself from the connected browser wallet or a local wallet.
+ * itself from a wallet of the vault (the server signs, the key stays there).
  *
  * The quote on screen is the one that is built: the floor shown is the floor
  * the program enforces, and a quote older than 10 s is never built.
@@ -12,16 +12,13 @@ import { TokenIcon } from "../atoms";
 import { useApp } from "../../contexts/AppContext";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useUserWallets } from "../../hooks/useUserWallets";
-import { localSolanaSigners } from "../../api/localWallets";
+import { solanaSigners } from "../../api/vaultWallets";
 import { solanaSigner } from "../../api/localTrade";
 import { explorerTxUrl } from "../../lib/chains";
 import { shortAddr } from "../../lib/format";
-import { BROWSER_WALLET_ID, useBrowserWallet } from "../../lib/swap/browserWallet";
 import { FALLBACK_VENUES, fetchVenues, tokenBalanceRaw } from "../../lib/swap/client";
 import {
   executeSwap,
-  needsV0,
-  signerReserveKeys,
   swapErrorText,
   type SwapSigner,
   type SwapStage,
@@ -34,7 +31,7 @@ import {
   useSwapQuote,
   type QuoteStatus,
 } from "../../lib/swap/useSwapQuote";
-import { BrowserWalletSection } from "../TradingPanel/BrowserWalletSection";
+import { useClientNav } from "../shell/ClientPages";
 import { TokenPicker } from "./TokenPicker";
 import { STABLES, tokenFor, type SwapToken } from "./tokens";
 
@@ -53,9 +50,7 @@ const STATUS_LABEL: Record<QuoteStatus, string> = {
 
 const STAGE_LABEL: Record<SwapStage, string> = {
   quote: "Quoting…",
-  build: "Building transaction…",
-  sign: "Signing…",
-  send: "Sending…",
+  sign: "Building, signing, sending…",
   confirm: "Confirming…",
 };
 
@@ -151,7 +146,7 @@ export function SwapCard() {
   const { pushToast } = useApp();
   const solPrice = useSolPrice();
   const userWallets = useUserWallets();
-  const browser = useBrowserWallet();
+  const { navigate } = useClientNav();
   const tabHidden = useDocumentHidden();
 
   const [inputMint, setInputMint] = useState(SOL_MINT);
@@ -170,11 +165,11 @@ export function SwapCard() {
   const [stage, setStage] = useState<SwapStage | null>(null);
   const [balance, setBalance] = useState<{ key: string; raw: bigint } | null>(null);
   const [balanceTick, setBalanceTick] = useState(0);
-  // Local wallets with a key, read after mount (localStorage).
+  // Vault wallets with a key (Solana), from the last list.
   const [locals, setLocals] = useState<Array<{ id: string; pubkey: string; label: string | null }>>([]);
 
   useEffect(() => {
-    setLocals(localSolanaSigners());
+    setLocals(solanaSigners());
   }, [userWallets.wallets]);
 
   useEffect(() => {
@@ -187,18 +182,15 @@ export function SwapCard() {
   }, [amountText]);
 
   // ── who pays ──────────────────────────────────────────────────────────
-  const options = useMemo(() => [
-    ...(browser.connected
-      ? [{ id: BROWSER_WALLET_ID, label: browser.connected.wallet.name, pubkey: browser.connected.address }]
-      : []),
-    ...locals.map((w) => ({ id: w.id, label: w.label || `Wallet ${shortAddr(w.pubkey, 4)}`, pubkey: w.pubkey })),
-  ], [browser.connected, locals]);
+  const options = useMemo(
+    () => locals.map((w) => ({ id: w.id, label: w.label || `Wallet ${shortAddr(w.pubkey, 4)}`, pubkey: w.pubkey })),
+    [locals],
+  );
   const defaultId = useMemo(() => {
     const activeLocal = userWallets.activeWallets.find((w) => locals.some((l) => l.id === w.id));
     if (activeLocal) return activeLocal.id;
-    if (browser.connected) return BROWSER_WALLET_ID;
     return locals[0]?.id ?? null;
-  }, [userWallets.activeWallets, locals, browser.connected]);
+  }, [userWallets.activeWallets, locals]);
   const chosenId = signerId && options.some((o) => o.id === signerId) ? signerId : defaultId;
   const chosen = options.find((o) => o.id === chosenId) ?? null;
   const signer: SwapSigner | null = useMemo(() => {
@@ -208,9 +200,9 @@ export function SwapCard() {
     } catch {
       return null;
     }
-    // browser.connected: the browser signer follows the connected account
+    // locals: the vault list the signer is read from
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chosenId, browser.connected]);
+  }, [chosenId, locals]);
 
   // ── the quote ─────────────────────────────────────────────────────────
   const inDec = useMintDecimals(inputMint);
@@ -220,14 +212,12 @@ export function SwapCard() {
     () => venues.filter((v) => disabledDex.has(v.dex)).map((v) => v.dex),
     [venues, disabledDex],
   );
-  const reserveKeys = signer ? signerReserveKeys(signer) : undefined;
   const q = useSwapQuote({
     inputMint,
     outputMint,
     amount: amountRaw,
     slippageBps,
     excludeDexes,
-    reserveKeys,
     paused: tabHidden || stage !== null,
   });
 
@@ -342,9 +332,9 @@ export function SwapCard() {
   }
 
   const ctaText = stage
-    ? stage === "sign" && signer?.kind === "browser" ? "Approve in your wallet…" : STAGE_LABEL[stage]
+    ? STAGE_LABEL[stage]
     : !signer
-      ? "Connect a wallet to swap"
+      ? "Add a wallet to swap"
       : q.noRoute
         ? noRouteText
         : insufficient
@@ -489,7 +479,7 @@ export function SwapCard() {
             </span>
           </DRow>
           <DRow label="Route">{quote ? viaLabel(quote) : "—"}</DRow>
-          {signer && <DRow label="Transaction">{needsV0(signer) ? "v0 · compact routes (wallet has no v1 yet)" : "v1"}</DRow>}
+          {signer && <DRow label="Transaction">v1 · signed by this Trade UI's vault</DRow>}
           <DRow label="Priority fee">router estimate, max 0.0005 SOL</DRow>
           <DRow label="Transport">{q.status === "live" ? `Router REST · every ${QUOTE_POLL_MS} ms` : "—"}</DRow>
         </div>
@@ -528,11 +518,12 @@ export function SwapCard() {
       </button>
 
       {!signer && (
-        <div style={{ ...box, padding: 0, overflow: "hidden" }}>
-          <BrowserWalletSection />
-          <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--paper-3)" }}>
-            Or add a local wallet (Portfolio → Wallets): it signs here, without a wallet prompt.
-          </div>
+        <div style={{ ...box, padding: "10px 12px", fontSize: 12, color: "var(--paper-3)", lineHeight: 1.5 }}>
+          No Solana wallet with a key yet.{" "}
+          <button type="button" onClick={() => navigate("/wallets")} style={{
+            background: "transparent", border: 0, padding: 0, color: "var(--accent)", cursor: "pointer", fontSize: 12,
+          }}>Create or import one</button>{" "}
+          in Wallets: it signs on this Trade UI's server, without a prompt.
         </div>
       )}
 

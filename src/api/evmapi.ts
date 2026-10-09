@@ -1,5 +1,3 @@
-import { readApiSettings } from "./settings";
-
 /**
  * The API's envelope: `{"data": …}` on success (plus `"next"` on paged lists),
  * `{"error": {"code", "message"}}` with an HTTP status on failure.
@@ -37,11 +35,6 @@ export async function evmapiGet<T>(
     url.searchParams.set(k, String(v));
   }
   const headers: Record<string, string> = { accept: "application/json" };
-  const { apiKey, apiBase } = readApiSettings();
-  if (apiKey) headers["x-trade-ui-key"] = apiKey;
-  // Only forward an explicit Settings override. The hardcoded raze.bot
-  // default must not override RAZE_API_BASE from .env.local.
-  if (apiBase && apiBase !== "https://api.raze.bot") headers["x-trade-ui-base"] = apiBase;
 
   let res: Response;
   try {
@@ -92,9 +85,4 @@ export function imageSrc(path: string | null | undefined): string | null {
   // API's prefix until 2026-10-05, dropped here).
   const rel = (path.startsWith("/") ? path : `/${path}`).replace(/^\/v1(?=\/)/, "");
   return `/api/raze${rel}`;
-}
-
-/** Same-origin URL of the API's image redirect for a token (302 → the image). */
-export function tokenImagePath(chain: string, address: string): string {
-  return `/api/raze/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/image`;
 }

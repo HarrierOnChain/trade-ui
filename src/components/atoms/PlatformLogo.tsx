@@ -25,7 +25,7 @@ function platformLogoSrc(platform?: string | null): string | null {
   if (exact) return `/platforms/${exact[1]}`;
 
   const value = raw.toLowerCase();
-  // Substring aliases for deploy wizard / loose labels ("pumpfun", "letsbonk", …).
+  // Substring aliases for loose labels ("pumpfun", "letsbonk", …).
   // "pumpswap" contains "pump", so it MUST be checked before the generic pump branch.
   if (value.includes("pumpswap")) return `/platforms/${PLATFORM_ICONS.PumpSwap}`;
   if (value.includes("mayhem")) return `/platforms/${PLATFORM_ICONS.Mayhem}`;

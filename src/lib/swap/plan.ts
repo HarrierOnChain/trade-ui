@@ -1,9 +1,8 @@
 /**
- * A terminal trade (the `trade.execute` body the panels and the quick-buy /
- * quick-sell hooks send) → the router swap that carries it out. Pure: the
- * chain reads come in through `io`, so the tests drive it with fixed numbers.
+ * A terminal trade (the body the trading panel and the quick-buy / quick-sell
+ * hooks send) → the router swap that carries it out. Pure: the chain reads
+ * come in through `io`, so the tests drive it with fixed numbers.
  */
-import type { QuoteView } from "./quote";
 
 export interface TradeBody {
   walletId: string;
@@ -89,15 +88,4 @@ export async function planTrade(body: TradeBody, io: PlanIo): Promise<SwapPlan> 
   }
   if (amount <= 0n) throw new Error("Amount too small");
   return { inputMint, outputMint, amount, swapMode: "ExactIn" };
-}
-
-/** What a filled quote says in one line, for the toast. */
-export function describeFill(
-  q: Pick<QuoteView, "inAmount" | "outAmount">,
-  dec: { in: number; out: number },
-  sym: { in: string; out: string },
-): string {
-  const f = (raw: bigint, d: number) =>
-    (Number(raw) / 10 ** d).toLocaleString("en-US", { maximumFractionDigits: d > 4 ? 4 : d });
-  return `${f(q.inAmount, dec.in)} ${sym.in} → ${f(q.outAmount, dec.out)} ${sym.out}`;
 }

@@ -2,24 +2,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Icon, Tooltip } from "../atoms";
 import { useApp } from "../../contexts/AppContext";
-import { useRegion } from "../../contexts/RegionContext";
 import { useUserPreference } from "../../hooks/useUserPreference";
 import { useUserWallets } from "../../hooks/useUserWallets";
 import { PREF_KEYS } from "../TradingPanel/presets";
 import { quoteMints, defaultQuoteMint } from "../../lib/quoteMints";
-import { BackendClient, useSession, writeSession } from "../../api/backend";
-import { usePrivy, useDelegatedActions } from "@privy-io/react-auth";
-import { privyAvailable } from "./PrivyRoot";
 import { shortAddr } from "../../lib/format";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
-import { fluidColsFit } from "../../lib/responsive";
+import { useClientNav } from "./ClientPages";
+import { ConnectionPanel, SecurityPanel } from "../vault/SecurityPanel";
+import { auth, type RuntimeConfig } from "../../lib/vault/client";
 
 type SectionId =
   | "general"
   | "trading"
-  | "network"
+  | "connection"
   | "wallets"
-  | "account"
+  | "security"
   | "shortcuts";
 
 interface SectionDef {
@@ -31,9 +29,9 @@ interface SectionDef {
 const SECTIONS: SectionDef[] = [
   { id: "general",       label: "General",       icon: Icon.gear(13) },
   { id: "trading",       label: "Trading",       icon: Icon.bolt(13) },
-  { id: "network",       label: "Network",       icon: Icon.solana(13) },
+  { id: "connection",    label: "Connection",    icon: Icon.solana(13) },
   { id: "wallets",       label: "Wallets",       icon: Icon.wallet(13) },
-  { id: "account",       label: "Account",       icon: Icon.xProfile(13) },
+  { id: "security",      label: "Security",      icon: Icon.lock(13) },
   { id: "shortcuts",     label: "Shortcuts",     icon: Icon.search(13) },
 ];
 
@@ -41,6 +39,14 @@ export function SettingsModal() {
   const { settingsOpen, closeSettings } = useApp();
   const [section, setSection] = useState<SectionId>("general");
   const isMobile = useIsMobile();
+  const [config, setConfig] = useState<RuntimeConfig | null>(null);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    let cancelled = false;
+    auth.config().then((c) => { if (!cancelled) setConfig(c); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [settingsOpen]);
 
   return (
     <Modal open={settingsOpen} onClose={closeSettings} width={860} align="center" mobileVariant={isMobile ? "sheet" : "center"}>
@@ -60,9 +66,9 @@ export function SettingsModal() {
           <div style={{ flex: 1, overflow: "auto", padding: "16px 20px" }}>
             {section === "general"       && <GeneralPanel />}
             {section === "trading"       && <TradingPanel />}
-            {section === "network"       && <NetworkPanel />}
-            {section === "wallets"       && <WalletsPanel />}
-            {section === "account"       && <AccountPanel onAfterDisconnect={closeSettings} />}
+            {section === "connection"    && <ConnectionPanel config={config} />}
+            {section === "wallets"       && <WalletsPanel onManage={closeSettings} />}
+            {section === "security"      && <SecurityPanel config={config} onConfig={setConfig} />}
             {section === "shortcuts"     && <ShortcutsPanel />}
           </div>
         </div>
@@ -305,7 +311,8 @@ const STARTUP_OPTIONS: { value: string; label: string }[] = [
   { value: "last",        label: "Last visited" },
   { value: "/monitor",    label: "Monitor" },
   { value: "/portfolio",  label: "Portfolio" },
-  { value: "/deploy",     label: "Deploy" },
+  { value: "/wallets",    label: "Wallets" },
+  { value: "/swap",       label: "Swap" },
 ];
 
 function GeneralPanel() {
@@ -359,19 +366,6 @@ function GeneralPanel() {
       </Row>
     </Section>
   );
-}
-
-function zoomBtn(disabled: boolean): React.CSSProperties {
-  return {
-    width: 28, height: 28,
-    background: "var(--ink-0)",
-    border: "1px solid var(--line-soft)",
-    borderRadius: 6,
-    color: disabled ? "var(--paper-4)" : "var(--paper)",
-    cursor: disabled ? "not-allowed" : "pointer",
-    fontSize: 13,
-    display: "inline-flex", alignItems: "center", justifyContent: "center",
-  };
 }
 
 /* ───────── Trading ───────── */
@@ -446,435 +440,76 @@ function TradingPanel() {
   );
 }
 
-/* ───────── Network / region ───────── */
+/* ───────── Wallets ───────── */
 
-function NetworkPanel() {
-  const {
-    region, regions, setRegion,
-    checking, latencies, refreshRegionPings,
-  } = useRegion();
-  const isMobile = useIsMobile();
-  const [apiBase, setApiBase] = useState("https://api.raze.bot");
-  const [apiKey, setApiKey] = useState("");
-  const [apiMsg, setApiMsg] = useState<string | null>(null);
-  const [apiBusy, setApiBusy] = useState(false);
-
-  useEffect(() => {
-    void import("../../api/settings").then(({ readApiSettings }) => {
-      const s = readApiSettings();
-      setApiBase(s.apiBase);
-      setApiKey(s.apiKey);
-    });
-  }, []);
-
-  async function saveApi() {
-    setApiBusy(true);
-    setApiMsg(null);
-    try {
-      const { writeApiSettings } = await import("../../api/settings");
-      await writeApiSettings({ apiBase, apiKey });
-      const res = await fetch("/api/raze/chains", {
-        headers: { "x-trade-ui-key": apiKey.trim(), accept: "application/json" },
-      });
-      if (res.status === 401) throw new Error("Key rejected");
-      setApiMsg("Saved");
-    } catch (e) {
-      setApiMsg(e instanceof Error ? e.message : String(e));
-    } finally {
-      setApiBusy(false);
-    }
-  }
-
-  const regional = regions.filter((r) => r.id !== "local");
+function WalletsPanel({ onManage }: { onManage: () => void }) {
+  const userWallets = useUserWallets();
+  const { navigate } = useClientNav();
+  const wallets = userWallets.wallets;
 
   return (
     <Section>
-      <Row label="API base" hint="The market-data API's host root. Default is https://api.raze.bot.">
-        <input
-          value={apiBase}
-          onChange={(e) => setApiBase(e.target.value)}
-          style={{ ...selectStyle, minWidth: 220 }}
-        />
-      </Row>
-      <Row label="API key" hint="Sent as x-api-key through the local /api/raze proxy. Stored on this machine.">
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="x-api-key"
-          style={{ ...selectStyle, minWidth: 220 }}
-        />
-      </Row>
-      <Row label="" hint={apiMsg ?? ""}>
+      <Row label="Wallets on this chain" hint="Keys live in the encrypted vault on this Trade UI's server, never in the browser.">
         <button
           type="button"
-          onClick={() => { void saveApi(); }}
-          disabled={apiBusy || !apiKey.trim()}
-          style={{ ...selectStyle, minWidth: 0, padding: "6px 12px" }}
+          onClick={() => { onManage(); navigate("/wallets"); }}
+          style={{ ...selectStyle, minWidth: 0, padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: 6 }}
         >
-          {apiBusy ? "Saving…" : "Save key"}
+          {Icon.key(11)} Manage wallets
         </button>
       </Row>
-      <Row
-        label="Region selection"
-        hint="The fastest gateway is auto-selected on load. Pick one below to override."
-      >
-        <button
-          onClick={refreshRegionPings}
-          disabled={checking}
-          style={{
-            ...selectStyle,
-            minWidth: 0, padding: "6px 10px",
-            color: checking ? "var(--paper-4)" : "var(--paper)",
-          }}
-        >
-          {checking ? "Pinging…" : "Refresh"}
-        </button>
-      </Row>
-      <div style={{ paddingTop: 8 }}>
-        <span className="eyebrow" style={{ display: "block", paddingBottom: 6 }}>
-          Available regions
-        </span>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: isMobile ? fluidColsFit(140) : "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 8,
-        }}>
-          {regional.map((r) => {
-            const lat = latencies[r.id];
-            const active = region.id === r.id;
+      {userWallets.loading && wallets.length === 0 ? (
+        <span style={{ fontSize: 12, color: "var(--paper-3)", paddingTop: 12 }}>Loading wallets…</span>
+      ) : wallets.length === 0 ? (
+        <span style={{ fontSize: 12, color: "var(--paper-3)", paddingTop: 12 }}>No wallets yet.</span>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 12 }}>
+          {wallets.map((w) => {
+            const bal = userWallets.balances[w.id];
             return (
-              <button
-                key={r.id}
-                onClick={() => setRegion(r.id)}
+              <div
+                key={w.id}
                 style={{
-                  display: "flex", flexDirection: "column", alignItems: "flex-start",
-                  gap: 4, padding: "10px 12px",
-                  background: active ? "var(--ink-2)" : "var(--ink-0)",
-                  border: "1px solid " + (active ? "var(--paper-3)" : "var(--line-soft)"),
-                  borderRadius: 6, cursor: "pointer",
-                  textAlign: "left",
+                  display: "grid",
+                  gridTemplateColumns: "1fr auto auto",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "10px 12px",
+                  background: "var(--ink-0)",
+                  border: "1px solid var(--line-soft)",
+                  borderRadius: 6,
                 }}
               >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 14 }}>{r.flag}</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
                   <span style={{
-                    fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase",
-                    color: active ? "var(--paper)" : "var(--paper-2)", fontWeight: 600,
+                    fontSize: 12, color: "var(--paper)",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
-                    {r.label}
+                    {w.displayLabel}
                   </span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--paper-4)" }}>
+                    {shortAddr(w.pubkey, 8)}
+                  </span>
+                </div>
+                <span className="mono" style={{
+                  fontSize: 10, color: "var(--paper-2)",
+                  padding: "2px 6px",
+                  background: "var(--ink-2)", borderRadius: 4,
+                  textTransform: "uppercase", letterSpacing: "0.06em",
+                }}>
+                  {w.watchOnly ? "watch" : "key"}
                 </span>
                 <span className="mono" style={{
-                  fontSize: 10,
-                  color: lat?.status === "ok"
-                    ? "var(--accent)"
-                    : lat?.status === "error"
-                      ? "var(--sell)"
-                      : "var(--paper-4)",
+                  fontSize: 11, color: "var(--paper)", minWidth: 70, textAlign: "right",
                 }}>
-                  {lat?.status === "ok" ? `${lat.ms} ms`
-                    : lat?.status === "checking" ? "checking…"
-                    : lat?.status === "error" ? "unreachable"
-                    : "—"}
+                  {bal?.loading ? "…" : (bal?.sol ?? 0).toFixed(3)}
                 </span>
-              </button>
+              </div>
             );
           })}
         </div>
-      </div>
-    </Section>
-  );
-}
-
-/* ───────── Wallets ───────── */
-
-function WalletsPanel() {
-  const userWallets = useUserWallets();
-  const wallets = userWallets.wallets;
-
-  if (userWallets.loading && wallets.length === 0) {
-    return (
-      <Section>
-        <span style={{ fontSize: 12, color: "var(--paper-3)" }}>Loading wallets…</span>
-      </Section>
-    );
-  }
-
-  if (wallets.length === 0) {
-    return (
-      <Section>
-        <span style={{ fontSize: 12, color: "var(--paper-3)" }}>
-          No wallets yet. Add one from the sidebar.
-        </span>
-      </Section>
-    );
-  }
-
-  return (
-    <Section>
-      <span className="eyebrow" style={{ display: "block", paddingBottom: 8 }}>
-        {wallets.length} wallet{wallets.length === 1 ? "" : "s"} on this account
-      </span>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {wallets.map((w) => {
-          const bal = userWallets.balances[w.id];
-          return (
-            <div
-              key={w.id}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr auto auto",
-                alignItems: "center",
-                gap: 12,
-                padding: "10px 12px",
-                background: "var(--ink-0)",
-                border: "1px solid var(--line-soft)",
-                borderRadius: 6,
-              }}
-            >
-              <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                <span style={{
-                  fontSize: 12, color: "var(--paper)",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                }}>
-                  {w.displayLabel}
-                </span>
-                <span className="mono" style={{ fontSize: 10, color: "var(--paper-4)" }}>
-                  {shortAddr(w.pubkey, 8)}
-                </span>
-              </div>
-              <span className="mono" style={{
-                fontSize: 11, color: "var(--paper-2)",
-                padding: "2px 6px",
-                background: "var(--ink-2)", borderRadius: 4,
-                textTransform: "uppercase", letterSpacing: "0.06em",
-              }}>
-                {w.kind}
-              </span>
-              <span className="mono" style={{
-                fontSize: 11, color: "var(--paper)", minWidth: 70, textAlign: "right",
-              }}>
-                {bal?.loading ? "…" : `${(bal?.sol ?? 0).toFixed(3)} SOL`}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </Section>
-  );
-}
-
-/* ───────── Account ───────── */
-
-function AccountPanel({ onAfterDisconnect }: { onAfterDisconnect: () => void }) {
-  const session = useSession();
-  const { region } = useRegion();
-  const { setAuthed, pushToast } = useApp();
-  const [me, setMe] = useState<{ email: string | null; role: string; createdAt: string } | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-    const c = new BackendClient(region.baseUrl, session.token);
-    c.me().then((r) => {
-      if (cancelled) return;
-      setMe({ email: r.email, role: r.role, createdAt: r.createdAt });
-    }).catch(() => { /* ignore */ });
-    return () => { cancelled = true; };
-  }, [session, region.baseUrl]);
-
-  const copy = async () => {
-    if (!session?.pubkey) return;
-    try {
-      await navigator.clipboard.writeText(session.pubkey);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch { /* ignore */ }
-  };
-
-  async function disconnect() {
-    if (session?.token) {
-      const c = new BackendClient(region.baseUrl, session.token);
-      void c.logout().catch(() => {});
-    }
-    writeSession(null);
-    setAuthed(false);
-    pushToast({ title: "DISCONNECTED", body: "Session ended", tone: "default" });
-    onAfterDisconnect();
-  }
-
-  if (!session) {
-    return (
-      <Section>
-        <span style={{ fontSize: 12, color: "var(--paper-3)" }}>
-          You are browsing as a guest. Connect a wallet from the top right to manage account settings.
-        </span>
-      </Section>
-    );
-  }
-
-  return (
-    <Section>
-      <Row
-        label="Wallet"
-        hint="The Phantom pubkey signing for this session."
-      >
-        <Tooltip content={session.pubkey} mono>
-          <button
-            onClick={copy}
-            className="mono"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "6px 10px",
-              background: "var(--ink-0)",
-              border: "1px solid var(--line-soft)",
-              borderRadius: 6,
-              color: "var(--paper)",
-              fontSize: 11,
-              cursor: "pointer",
-            }}
-          >
-            {copied ? Icon.check(11) : Icon.copy(11)}
-            <span>{shortAddr(session.pubkey, 8)}</span>
-          </button>
-        </Tooltip>
-      </Row>
-      <Row label="Email" hint="Linked email, used for password sign-in.">
-        <span className="mono" style={{ fontSize: 11, color: me?.email ? "var(--paper)" : "var(--paper-4)" }}>
-          {me?.email ?? "Not linked"}
-        </span>
-      </Row>
-      <Row label="Role" hint="Your access level on this region.">
-        <span className="mono" style={{
-          fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
-          padding: "3px 8px", borderRadius: 4,
-          background: "var(--ink-2)", color: "var(--paper-2)",
-          border: "1px solid var(--line-soft)",
-        }}>
-          {me?.role ?? "—"}
-        </span>
-      </Row>
-      <Row label="Session expires">
-        <span className="mono" style={{ fontSize: 11, color: "var(--paper-3)" }}>
-          {new Date(session.expiresAt).toLocaleString()}
-        </span>
-      </Row>
-      {privyAvailable() && <PrivyDelegateRow />}
-      <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 16 }}>
-        <button
-          onClick={disconnect}
-          style={{
-            padding: "8px 14px",
-            background: "transparent",
-            border: "1px solid var(--sell)",
-            color: "var(--sell)",
-            borderRadius: 6,
-            fontSize: 11,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            cursor: "pointer",
-            fontFamily: "var(--font-mono)",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--sell)"; e.currentTarget.style.color = "var(--ink-0)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--sell)"; }}
-        >
-          Disconnect
-        </button>
-      </div>
-    </Section>
-  );
-}
-
-/* ───────── Privy automated-trading delegation ───────── */
-//
-// Only meaningful for users signed in via Privy (usePrivy().authenticated with
-// an embedded Solana wallet). For everyone else this renders nothing. Lets the
-// user grant our server permission to sign trades on their embedded wallet
-// (limit orders, ladders) without the browser present — then re-syncs
-// the backend's `signerProvisioned` gate via auth.privyRefresh.
-
-function PrivyDelegateRow() {
-  const { ready, authenticated, user } = usePrivy();
-  const { delegateWallet } = useDelegatedActions();
-  const { region } = useRegion();
-  const session = useSession();
-  const { pushToast } = useApp();
-  const [busy, setBusy] = useState(false);
-  const [delegated, setDelegated] = useState<boolean | null>(null);
-
-  // Find the embedded Solana wallet on the Privy user.
-  const solWallet = useMemo(() => {
-    if (!user) return null;
-    for (const acct of user.linkedAccounts ?? []) {
-      if (
-        acct.type === "wallet" &&
-        acct.chainType === "solana" &&
-        (acct.walletClientType === "privy" || acct.walletClientType === "privy-v2")
-      ) {
-        return acct;
-      }
-    }
-    return null;
-  }, [user]);
-
-  useEffect(() => {
-    if (solWallet) setDelegated(Boolean(solWallet.delegated));
-  }, [solWallet]);
-
-  // Not a Privy session, or no embedded Solana wallet yet → nothing to show.
-  if (!ready || !authenticated || !solWallet) return null;
-
-  async function enable() {
-    if (busy || !solWallet) return;
-    setBusy(true);
-    try {
-      await delegateWallet({ address: solWallet.address, chainType: "solana" });
-      // Privy is the source of truth; re-sync the backend gate.
-      if (session?.token) {
-        await new BackendClient(region.baseUrl, session.token).privyRefresh().catch(() => {});
-      }
-      setDelegated(true);
-      pushToast({ title: "AUTOMATED TRADING ON", body: "Server can now sign for your Privy wallet", tone: "buy" });
-    } catch (err) {
-      pushToast({ title: "DELEGATION FAILED", body: err instanceof Error ? err.message : String(err), tone: "sell" });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Row
-      label="Automated trading"
-      hint="Delegate signing to the server so limit orders & ladders can fire while you're away."
-    >
-      {delegated ? (
-        <span className="mono" style={{
-          fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase",
-          padding: "3px 8px", borderRadius: 4,
-          background: "color-mix(in oklch, var(--buy) 16%, var(--ink-1))",
-          color: "var(--buy)", border: "1px solid var(--buy)",
-        }}>
-          Enabled
-        </span>
-      ) : (
-        <button
-          onClick={enable}
-          disabled={busy}
-          className="mono"
-          style={{
-            padding: "6px 12px", fontSize: 11,
-            background: "var(--amber)", color: "var(--ink-0)",
-            border: "none", borderRadius: 6,
-            cursor: busy ? "wait" : "pointer", opacity: busy ? 0.7 : 1,
-            letterSpacing: "0.06em", textTransform: "uppercase",
-          }}
-        >
-          {busy ? "Enabling…" : "Enable"}
-        </button>
       )}
-    </Row>
+    </Section>
   );
 }
 
@@ -883,8 +518,12 @@ function PrivyDelegateRow() {
 function ShortcutsPanel() {
   const items = useMemo(() => [
     { keys: ["⌘", "K"],    label: "Open search" },
+    { keys: ["/"],          label: "Open search" },
     { keys: ["Esc"],        label: "Close any modal or overlay" },
-    { keys: ["⌘", "B"],    label: "Toggle sidebar" },
+    { keys: ["G", "M"],    label: "Go to Monitor" },
+    { keys: ["G", "P"],    label: "Go to Portfolio" },
+    { keys: ["G", "W"],    label: "Go to Wallets" },
+    { keys: ["G", "S"],    label: "Go to Swap" },
     { keys: ["⌘", "+"],    label: "Zoom in" },
     { keys: ["⌘", "−"],    label: "Zoom out" },
     { keys: ["⌘", "0"],    label: "Reset zoom" },

@@ -1,23 +1,13 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { imageSrc } from "../../api/evmapi";
-import { getImgProxyBase } from "../../api/config";
 import { getActiveChain } from "../../lib/chains";
 import { hash } from "../../lib/random";
 
-/** Build the regional backend URL for the `/img` proxy. The `<img>` tag
- *  needs a URL (not a wire RPC), so image bytes are the one carve-out from
- *  the wire-only rule — backend talks to Raze with the server-side apiKey. */
-function backendImg(razeProxyUrl: string): string {
-  const base = getImgProxyBase().replace(/\/$/, "");
-  return `${base}/img?razeProxy=${encodeURIComponent(razeProxyUrl)}`;
-}
-
-/** Gateways for <img> — Pinata first (pump.fun pins there). i.raze.sh only
- *  has CIDs this host uploaded; ipfs.io is last because it is slow. */
+/** Gateways for <img> — Pinata first (pump.fun pins there); ipfs.io is last
+ *  because it is slow. */
 const IPFS_GATEWAY_PREFIXES = [
   "https://pump.mypinata.cloud/ipfs/",
-  "https://i.raze.sh/ipfs/",
   "https://ipfs.io/ipfs/",
 ] as const;
 
@@ -79,33 +69,6 @@ function buildImageCandidates(
 
   const candidates: string[] = [];
 
-  // Hosts the Raze image proxy (`/api/sol/image/proxy`) is willing to
-  // fetch on our behalf. Must stay in sync with the backend allowlist in
-  // raze/solana/history/src/api/handlers/image_proxy.rs.
-  const PROXY_ALLOWED_PREFIXES = [
-    "https://ipfs.io/",
-    "https://gateway.pinata.cloud/",
-    "https://pump.mypinata.cloud/",
-    "https://arweave.net/",
-    "https://nftstorage.link/",
-    "https://cloudflare-ipfs.com/",
-    "https://cf-ipfs.com/",
-    "https://i.raze.sh/",
-    "https://pbs.twimg.com/",
-    "https://abs.twimg.com/",
-    "https://cdn.discordapp.com/",
-    "https://media.discordapp.net/",
-    "https://i.imgur.com/",
-    "https://imgur.com/",
-    "https://raw.githubusercontent.com/",
-    "https://shdw-drive.genesysgo.net/",
-    "https://image.dexscreener.com/",
-    "https://dd.dexscreener.com/",
-    "https://dweb.link/",
-    "https://w3s.link/",
-  ];
-  const proxyable = (u: string) => PROXY_ALLOWED_PREFIXES.some((p) => u.startsWith(p));
-
   // The API's image route (`/tokens/{chain}/{address}/image`, a 302 to
   // the token's image). First when the row carries no image of its own;
   // after the row's own URL otherwise, which saves the redirect hop.
@@ -115,21 +78,8 @@ function buildImageCandidates(
     for (const prefix of IPFS_GATEWAY_PREFIXES) {
       addUnique(candidates, `${prefix}${ipfsPath}`);
     }
-    const fleetUrl = `https://pump.mypinata.cloud/ipfs/${ipfsPath}`;
-    const proxyBase = getImgProxyBase().replace(/\/$/, "");
-    if (proxyBase) {
-      addUnique(candidates, `${proxyBase}/img?url=${encodeURIComponent(fleetUrl)}`);
-      addUnique(candidates, backendImg(fleetUrl));
-    }
   } else if (raw) {
-    const httpsUrl = raw.startsWith("http://") ? "https://" + raw.slice(7) : raw;
-    addUnique(candidates, httpsUrl);
-    // Adblockers commonly block twimg / discord CDNs. The proxy bypasses
-    // that by serving the bytes from our own origin.
-    const proxyBase = getImgProxyBase().replace(/\/$/, "");
-    if (proxyBase && proxyable(httpsUrl)) {
-      addUnique(candidates, backendImg(httpsUrl));
-    }
+    addUnique(candidates, raw.startsWith("http://") ? "https://" + raw.slice(7) : raw);
   }
 
   addUnique(candidates, ownImageSrc(mint, chain));

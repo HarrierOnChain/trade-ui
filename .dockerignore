@@ -1,0 +1,12 @@
+node_modules
+.next
+.next-prod
+dist
+release
+data
+.env
+.env.*
+!.env.example
+.git
+.github
+*.log

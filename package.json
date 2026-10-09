@@ -1,38 +1,50 @@
 {
   "name": "trade-ui",
-  "version": "0.1.0",
-  "private": false,
-  "description": "Self-hosted multi-chain trading UI for the Raze market-data API",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Self-hosted trading terminal for the Raze market-data API and Solana router: password-locked wallet vault, browser and desktop",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "node server.cjs --dev",
+    "dev": "node server.mjs --dev",
     "build": "next build",
-    "start": "NODE_ENV=production node server.cjs",
-    "test": "node --test src/lib/trades.test.ts src/lib/swap/swap.test.ts",
+    "start": "node server.mjs",
+    "test": "node --test \"test/*.test.mjs\" src/lib/trades.test.ts src/lib/swap/swap.test.ts src/lib/vault/keyText.test.ts",
+    "typecheck": "tsc --noEmit",
+    "bundle": "node scripts/bundle-server.mjs",
     "electron": "electron .",
-    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3000 && env TRADE_UI_URL=http://127.0.0.1:3000 electron .\""
+    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:3000/api/auth/status && electron .\"",
+    "dist": "npm run build && npm run bundle && electron-builder",
+    "dist:linux": "npm run build && npm run bundle && electron-builder --linux",
+    "dist:win": "npm run build && npm run bundle && electron-builder --win",
+    "dist:mac": "npm run build && npm run bundle && electron-builder --mac"
   },
   "dependencies": {
-    "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@razedotbot/charts": "^0.5.0",
     "@solana/kit": "^6.10.0",
-    "@solana/web3.js": "^1.98.4",
-    "@wallet-standard/app": "^1.1.1",
-    "lightweight-charts": "^5.2.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-rnd": "^10.5.3"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
     "concurrently": "^9.1.2",
-    "electron": "^37.2.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.3",
     "wait-on": "^8.0.3"
+  },
+  "productName": "Raze Trade UI",
+  "license": "MIT",
+  "author": {
+    "name": "Raze",
+    "url": "https://raze.bot"
+  },
+  "homepage": "https://raze.bot",
+  "engines": {
+    "node": ">=22.18"
   }
 }

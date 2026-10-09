@@ -1,0 +1,6 @@
+# Caddy in front of Trade UI: HTTPS certificates, WebSockets and the headers
+# Trade UI needs (Host, X-Forwarded-Proto) work out of the box.
+# Set TRADE_UI_PUBLIC_URL=https://trade.example.com for Trade UI.
+trade.example.com {
+	reverse_proxy 127.0.0.1:3000
+}

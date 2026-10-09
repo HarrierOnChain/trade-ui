@@ -25,9 +25,6 @@
     "paths": {
       "@/*": [
         "./src/*"
-      ],
-      "@privy-io/react-auth": [
-        "./src/shims/privy.tsx"
       ]
     }
   },
@@ -40,9 +37,8 @@
   ],
   "exclude": [
     "node_modules",
-    "backend",
-    "src/lib/candleDespike.parity.test.ts",
     "src/lib/trades.test.ts",
-    "src/lib/swap/swap.test.ts"
+    "src/lib/swap/swap.test.ts",
+    "src/lib/vault/keyText.test.ts"
   ]
 }

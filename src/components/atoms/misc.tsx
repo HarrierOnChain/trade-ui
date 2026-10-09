@@ -79,51 +79,6 @@ export function Change({ v, big }: { v?: number | null; big?: boolean }) {
   );
 }
 
-// ── Stat ───────────────────────────────────────────────────────────────────
-export function Stat({
-  label,
-  value,
-  sub,
-  tone,
-}: {
-  label: string;
-  value: React.ReactNode;
-  sub?: React.ReactNode;
-  tone?: "buy" | "sell" | "green";
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-      <span className="eyebrow">{label}</span>
-      <span className="mono" style={{
-        fontSize: 16, fontWeight: 500,
-        color:
-          tone === "buy" ? "var(--buy)" :
-          tone === "sell" ? "var(--sell)" :
-          tone === "green" ? "var(--accent)" :
-          "var(--paper)",
-        letterSpacing: "-0.01em",
-      }}>{value}</span>
-      {sub && <span className="mono" style={{ fontSize: 10, color: "var(--paper-3)" }}>{sub}</span>}
-    </div>
-  );
-}
-
-// ── Live dot ───────────────────────────────────────────────────────────────
-export function LiveDot({
-  label = "LIVE",
-  color = "var(--buy)",
-}: {
-  label?: string;
-  color?: string;
-}) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <span className="dot-live" style={{ background: color }} />
-      {label && <span className="eyebrow" style={{ fontSize: 9 }}>{label}</span>}
-    </span>
-  );
-}
-
 // ── Column header ──────────────────────────────────────────────────────────
 export function ColumnHeader({
   title,
@@ -283,9 +238,4 @@ export function Modal({
       >{children}</div>
     </div>
   );
-}
-
-/** Convenience wrapper: a {@link Modal} that becomes a bottom sheet on phones. */
-export function BottomSheet(props: Omit<React.ComponentProps<typeof Modal>, "mobileVariant">) {
-  return <Modal {...props} mobileVariant="sheet" />;
 }

@@ -1,4 +1,4 @@
-import { fetchSearch, fetchTokensByDeployer } from "./client";
+import { fetchSearch } from "./client";
 import { fetchPublicMetadata, seedPublicMetadata } from "./metadata";
 import type { SearchResult } from "../types";
 
@@ -13,7 +13,7 @@ export function looksLikeSolanaAddress(value: string): boolean {
 /** Hydrate seedPublicMetadata cache from a list of results. */
 function seedFromResults(results: SearchResult[]): void {
   results.forEach((r) => {
-    seedPublicMetadata(r.mint, { name: r.name, symbol: r.symbol, uri: r.uri });
+    seedPublicMetadata(r.mint, { name: r.name, symbol: r.symbol });
   });
 }
 
@@ -80,23 +80,4 @@ export async function fetchSearchWithMetadataFallback(
       platform: "metadata",
     }],
   };
-}
-
-/** Direct: list tokens deployed by a wallet, no fallbacks. */
-export async function fetchDeployerTokens(
-  walletAddress: string,
-  limit = 20,
-  page = 1,
-): Promise<{ data: SearchResult[] }> {
-  if (!looksLikeSolanaAddress(walletAddress)) {
-    return { data: [] };
-  }
-  try {
-    const res = await fetchTokensByDeployer(walletAddress, limit, page);
-    const data = Array.isArray(res.data) ? res.data : [];
-    seedFromResults(data);
-    return { data };
-  } catch {
-    return { data: [] };
-  }
 }

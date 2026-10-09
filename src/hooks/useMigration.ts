@@ -2,7 +2,6 @@
 
 // Per-mint live migration trigger — fires once when a token the user is
 // currently viewing graduates from its launchpad (pump.fun → PumpSwap, …).
-// Mirrors `useDexPaid`'s `liveFlipAt` contract.
 //
 // REST baseline (`alreadyMigrated`) is supplied by the parent — it already
 // knows from `useTokenInfo` whether `token.migrated_at` was non-null at

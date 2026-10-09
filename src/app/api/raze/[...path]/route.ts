@@ -1,60 +1,53 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { gateClosed } from "../../../../lib/server/gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** RAZE_API_BASE is the API's host root (`https://api.raze.bot`,
- *  `http://localhost:8810`); the API serves its routes there. */
-const DEFAULT_BASE = (process.env.RAZE_API_BASE || "https://api.raze.bot").replace(/\/+$/, "");
-
-function sanitizeBase(raw: string): string | null {
-  const s = raw.trim().replace(/\/+$/, "");
-  if (!s) return null;
-  try {
-    const u = new URL(s);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return s;
-  } catch {
-    return null;
-  }
+/**
+ * `/api/raze/*` → the market-data API, with the key added here. Both come from
+ * the server's environment only (RAZE_API_BASE, RAZE_API_KEY): nothing the
+ * browser sends can point this proxy, or the key, anywhere else.
+ */
+function upstream(): { base: string; key: string } {
+  return {
+    base: (process.env.RAZE_API_BASE || "https://api.raze.bot").trim().replace(/\/+$/, ""),
+    key: (process.env.RAZE_API_KEY || "").trim(),
+  };
 }
 
 function errorBody(code: string, message: string) {
   return { error: { code, message } };
 }
 
-async function credentials(req: NextRequest): Promise<{ base: string; key: string }> {
-  const jar = await cookies();
-  const envKey = (process.env.RAZE_API_KEY || "").trim();
-  const envBase = (process.env.RAZE_API_BASE || "").replace(/\/+$/, "");
-  const headerKey = req.headers.get("x-trade-ui-key") || req.headers.get("x-api-key") || "";
-  // .env.local wins. Browser localStorage still defaults to api.raze.bot and
-  // would otherwise override a local API via x-trade-ui-base.
-  const key = (
-    envKey ||
-    headerKey ||
-    jar.get("trade_ui_api_key")?.value ||
-    ""
-  ).trim();
-  const base = (
-    envBase ||
-    sanitizeBase(req.headers.get("x-trade-ui-base") || "") ||
-    jar.get("trade_ui_api_base")?.value ||
-    DEFAULT_BASE
-  ).replace(/\/+$/, "");
-  return { base, key };
+/** What may come back on this app's own origin: data and raster images. HTML,
+ *  SVG or script from an upstream (bytes a token creator may control) would
+ *  run as the app, so anything else is served as an inert download. */
+const SAFE_TYPES = /^(application\/json|application\/problem\+json|text\/event-stream|text\/plain|image\/(png|jpe?g|gif|webp|avif|x-icon|vnd\.microsoft\.icon))\b/i;
+
+function safeHeaders(contentType: string | null): Headers {
+  const h = new Headers();
+  if (contentType && SAFE_TYPES.test(contentType)) h.set("content-type", contentType);
+  else {
+    h.set("content-type", "application/octet-stream");
+    h.set("content-disposition", "attachment");
+  }
+  h.set("x-content-type-options", "nosniff");
+  h.set("content-security-policy", "default-src 'none'; sandbox");
+  return h;
 }
 
+const MAX_BODY = 1024 * 1024;
+
 async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] }> }) {
+  const closed = gateClosed(req);
+  if (closed) return closed;
   const params = await ctx.params;
   // `/api/raze/v1/…` and `/api/raze/…` are the same route (`/v1` was the
   // API's prefix until 2026-10-05).
   const segs = (params.path || []).filter((s, i) => !(i === 0 && s === "v1"));
   const path = segs.map(encodeURIComponent).join("/");
-  const { base, key } = await credentials(req);
-  // No key is fine: an API without keys configured is open. When it is not,
-  // it answers 401 itself and the UI asks for a key.
+  const { base, key } = upstream();
   let url: URL;
   try {
     url = new URL(`${base}/${path}`);
@@ -88,12 +81,17 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] 
     signal: AbortSignal.timeout(20_000),
   };
   if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = Buffer.from(await req.arrayBuffer());
+    if (Number(req.headers.get("content-length") || 0) > MAX_BODY) {
+      return NextResponse.json(errorBody("bad_request", "Body too large"), { status: 413 });
+    }
+    const body = Buffer.from(await req.arrayBuffer());
+    if (body.length > MAX_BODY) return NextResponse.json(errorBody("bad_request", "Body too large"), { status: 413 });
+    init.body = body;
   }
 
-  let upstream: Response;
+  let upstreamRes: Response;
   try {
-    upstream = await fetch(url, init);
+    upstreamRes = await fetch(url, init);
   } catch (e) {
     const timedOut =
       e instanceof Error && (e.name === "TimeoutError" || /timed out/i.test(e.message));
@@ -105,16 +103,16 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] 
       { status: timedOut ? 504 : 502 },
     );
   }
-  const outHeaders = new Headers();
-  // `location`: the token image route answers 302 to the image itself.
-  const pass = ["content-type", "cache-control", "x-request-id", "location", "retry-after"];
+  const outHeaders = safeHeaders(upstreamRes.headers.get("content-type"));
+  // `location`: the token image route answers 302 to the image itself, which
+  // the browser then loads from its own origin.
+  const pass = ["cache-control", "x-request-id", "location", "retry-after"];
   for (const name of pass) {
-    const v = upstream.headers.get(name);
+    const v = upstreamRes.headers.get(name);
     if (v) outHeaders.set(name, v);
   }
-  return new NextResponse(upstream.body, { status: upstream.status, headers: outHeaders });
+  return new NextResponse(upstreamRes.body, { status: upstreamRes.status, headers: outHeaders });
 }
-
 const SSE_MAX = 12;
 let sseLive = 0;
 
@@ -164,7 +162,9 @@ async function proxySse(req: NextRequest, url: URL, headers: Headers): Promise<N
   }
 
   const outHeaders = new Headers();
-  outHeaders.set("content-type", upstream.headers.get("content-type") || "text/event-stream; charset=utf-8");
+  outHeaders.set("content-type", "text/event-stream; charset=utf-8");
+  outHeaders.set("x-content-type-options", "nosniff");
+  outHeaders.set("content-security-policy", "default-src 'none'; sandbox");
   outHeaders.set("cache-control", "no-store");
   outHeaders.set("connection", "keep-alive");
   outHeaders.set("x-accel-buffering", "no");

@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import { useUserPreference } from "../../hooks/useUserPreference";
 import { useUserWallets } from "../../hooks/useUserWallets";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
+import type { TokenPnlData } from "../../hooks/useTokenPnl";
 import {
   defaultInstantPresets, PREF_KEYS, PRESET_KEYS,
   type InstantPresets,
@@ -27,6 +28,10 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   mint: string;
+  /** The quote buys spend (SOL, USDC, …): the buy amounts are in it. */
+  buyQuote: { label: string; mint: string | null };
+  /** This token's bought / sold / holding / PnL, in SOL (the trading panel's). */
+  pnl: TokenPnlData;
   onTrade: (side: TradeSide, amount: number, isPercentage: boolean) => Promise<void>;
 }
 
@@ -47,7 +52,7 @@ function padTo8(list: string[], fallbacks: string[]): string[] {
 
 function clamp(v: number, lo: number, hi: number) { return Math.min(hi, Math.max(lo, v)); }
 
-export function InstantTradePanel({ isOpen, onClose, mint, onTrade }: Props) {
+export function InstantTradePanel({ isOpen, onClose, mint, buyQuote, pnl, onTrade }: Props) {
   const userWallets = useUserWallets();
   const { info } = useTokenInfo(mint);
 
@@ -97,8 +102,12 @@ export function InstantTradePanel({ isOpen, onClose, mint, onTrade }: Props) {
   // ── Wallet data ──────────────────────────────────────────────────────
   const activeWallets = userWallets.activeWallets.length
     ? userWallets.activeWallets
-    : userWallets.wallets.filter((w) => !w.isConnected);
-  const totalBalance = activeWallets.reduce((s, w) => s + (userWallets.balances[w.id]?.sol ?? 0), 0);
+    : userWallets.wallets.filter((w) => !w.watchOnly);
+  const quoteBalance = activeWallets.reduce((s, w) => {
+    const bal = userWallets.balances[w.id];
+    if (!bal) return s;
+    return s + (buyQuote.mint == null ? bal.sol : (bal.tokens[buyQuote.mint] ?? 0));
+  }, 0);
   const tokenHolding = activeWallets.reduce((s, w) => s + (userWallets.balances[w.id]?.tokens[mint] ?? 0), 0);
   const activeWalletsCount = activeWallets.length;
   useEffect(() => { activeWalletsRef.current = activeWalletsCount; }, [activeWalletsCount]);
@@ -229,7 +238,7 @@ export function InstantTradePanel({ isOpen, onClose, mint, onTrade }: Props) {
   const handleClose = useCallback(() => onCloseRef.current(), []);
 
   // Forward wheel events to the element under the panel so that scrollable
-  // content (e.g. the bubblemap SVG) keeps its zoom when the panel overlaps it.
+  // content (e.g. the chart) keeps its zoom when the panel overlaps it.
   const handleWheelPassthrough = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     el.style.pointerEvents = "none";
@@ -354,7 +363,7 @@ export function InstantTradePanel({ isOpen, onClose, mint, onTrade }: Props) {
         {tradeError && (
           <div style={{ fontSize: 10, color: "#f87171", background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 4, padding: "4px 8px", fontFamily: "var(--font-mono, monospace)" }}>{tradeError}</div>
         )}
-        <SectionHeader label="Buy" ticker="SOL" value={totalBalance.toFixed(2)} />
+        <SectionHeader label="Buy" ticker={buyQuote.label} value={quoteBalance.toFixed(2)} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
           {currentPreset.buyAmounts.slice(0, 4).map((val, i) => (
             <PresetSlot key={`buy-${i}`} value={val} busy={tradingButton === `buy-${i}`} disabled={!!tradingButton} variant="buy" editing={editing} btnH={btnH} onClick={() => handleTrade("buy", val, `buy-${i}`)} onChange={(v) => editPreset("buy", i, v)} />
@@ -384,12 +393,12 @@ export function InstantTradePanel({ isOpen, onClose, mint, onTrade }: Props) {
         )}
       </div>
 
-      <Footer holding={tokenHolding} />
+      <Footer pnl={pnl} />
     </div>
   ), [
     activePreset, setActivePreset, editing, toggleEditing,
     settingsOpen, panelOpacity, setPanelOpacity,
-    tradingButton, tradeError, totalBalance, tokenHolding, tickerLabel,
+    tradingButton, tradeError, quoteBalance, buyQuote.label, tokenHolding, tickerLabel, pnl,
     activeWalletsCount, handleClose, handleTrade, editPreset,
     handleGripPointerDown, showExtraButtons, btnH, currentPreset,
   ]);
@@ -487,8 +496,9 @@ function PresetSlot({ value, busy, disabled, variant, editing, btnH, onClick, on
   );
 }
 
-function Footer({ holding }: { holding: number }) {
-  const bought = 0, sold = 0, pnl = 0;
+/** Bought / sold / holding / PnL in SOL, as on the trading panel. */
+function Footer({ pnl: p }: { pnl: TokenPnlData }) {
+  const { bought, sold, holding, pnl } = p;
   const cell: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "center", gap: 4 };
   const div: React.CSSProperties = { borderRight: "1px solid #1F1F1F" };
   return (

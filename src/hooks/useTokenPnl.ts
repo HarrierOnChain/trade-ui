@@ -2,9 +2,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
-import { useBackend } from "../api/backend";
-import { demoMintHoldingSnapshot, demoMintTradeTotals } from "../lib/demoMintStats";
-import { onDemoChanged } from "../lib/demoEvents";
 import { tradeKey } from "../lib/trades";
 import { useTokenInfo } from "./useTokenInfo";
 import { useLiveTradePrices } from "./useLiveTradePrices";
@@ -20,45 +17,23 @@ export interface TokenPnlData {
 
 const PAGE_SIZE = 200; // the API's page cap
 const MAX_PAGES = 10;
-const DEMO_REFRESH_MS = 6_000;
 
-/** Per-mint PnL on the trading panel.
- *
- * Platform wallets: trade history via fetchTradesBySignerMint + live WS
- * (all platform wallets in the account — not scoped to the active selection,
- * matching the original b33-style total).
- *
- * Demo wallets: bought/sold/holdings from demoSummary for the selected demo
- * wallet ids only (synthetic pubkeys can't use the on-chain trades API).
- */
-export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPnlData {
-  const backend = useBackend();
+/** Per-mint PnL on the trading panel: trade history via
+ * fetchTradesBySignerMint + live WS, for every wallet of the vault on this
+ * chain (not scoped to the active selection). */
+export function useTokenPnl(mint: string): TokenPnlData {
   const userWallets = useUserWallets();
   const { info } = useTokenInfo(mint);
   const liveMintsArg = useMemo(() => (mint ? [mint] : []), [mint]);
   const livePriceMap = useLiveTradePrices(liveMintsArg);
 
-  const platformWallets = useMemo(
-    () => userWallets.wallets.filter((w) => !w.isConnected && w.kind !== "DEMO"),
-    [userWallets.wallets],
-  );
+  const platformWallets = userWallets.wallets;
   const pubkeys = useMemo(() => platformWallets.map((w) => w.pubkey), [platformWallets]);
   const pubkeysKey = pubkeys.join(",");
-
-  const demoWalletIdsKey = useMemo(
-    () => [...demoWalletIds].sort().join(","),
-    [demoWalletIds],
-  );
 
   const [platformBought, setPlatformBought] = useState(0);
   const [platformSold, setPlatformSold] = useState(0);
   const [platformLoading, setPlatformLoading] = useState(false);
-
-  const [demoBought, setDemoBought] = useState(0);
-  const [demoSold, setDemoSold] = useState(0);
-  const [demoTokensHeld, setDemoTokensHeld] = useState(0);
-  const [demoEntryPriceSol, setDemoEntryPriceSol] = useState(0);
-  const [demoLoading, setDemoLoading] = useState(false);
 
   // (signature, wallet): two of the user's wallets co-signing one transaction
   // are two fills, both counted.
@@ -166,62 +141,6 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
     };
   }, [mint, pubkeysKey, pubkeys]);
 
-  // ── Demo: demoSummary for selected demo wallets ─────────────────────
-  useEffect(() => {
-    if (!mint || demoWalletIds.length === 0) {
-      setDemoBought(0);
-      setDemoSold(0);
-      setDemoTokensHeld(0);
-      setDemoEntryPriceSol(0);
-      setDemoLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    const refresh = async () => {
-      setDemoLoading(true);
-      try {
-        const summaries = await Promise.all(
-          demoWalletIds.map((id) => backend.demoSummary(id)),
-        );
-        if (cancelled) return;
-        let aggBought = 0;
-        let aggSold = 0;
-        let aggTokens = 0;
-        let costSol = 0;
-        for (const summary of summaries) {
-          const totals = demoMintTradeTotals(summary, mint);
-          aggBought += totals.bought;
-          aggSold += totals.sold;
-          const snap = demoMintHoldingSnapshot(summary, mint);
-          aggTokens += snap.tokens;
-          if (snap.tokens > 0 && snap.entryPriceSol > 0) {
-            costSol += snap.tokens * snap.entryPriceSol;
-          }
-        }
-        setDemoBought(aggBought);
-        setDemoSold(aggSold);
-        setDemoTokensHeld(aggTokens);
-        setDemoEntryPriceSol(aggTokens > 0 ? costSol / aggTokens : 0);
-      } catch {
-        /* next poll / demo-changed event retries */
-      } finally {
-        if (!cancelled) setDemoLoading(false);
-      }
-    };
-
-    void refresh();
-    const offEvent = onDemoChanged(() => {
-      if (!cancelled) void refresh();
-    });
-    const iv = setInterval(refresh, DEMO_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      offEvent();
-      clearInterval(iv);
-    };
-  }, [mint, demoWalletIdsKey, demoWalletIds, backend]);
-
   const livePrice = livePriceMap.get(mint)?.price ?? 0;
   const lastPrice = livePrice > 0 ? livePrice : (info?.lastPrice ?? 0);
 
@@ -233,25 +152,6 @@ export function useTokenPnl(mint: string, demoWalletIds: string[] = []): TokenPn
     return tokenBalance * lastPrice;
   }, [platformWallets, userWallets.balances, mint, lastPrice]);
 
-  const demoHolding = useMemo(() => {
-    if (demoWalletIds.length === 0) return 0;
-    let tokenBalance = demoTokensHeld;
-    for (const id of demoWalletIds) {
-      tokenBalance = Math.max(
-        tokenBalance,
-        userWallets.balances[id]?.tokens[mint] ?? 0,
-      );
-    }
-    const markPrice =
-      lastPrice > 0 ? lastPrice : demoEntryPriceSol > 0 ? demoEntryPriceSol : 0;
-    return tokenBalance * markPrice;
-  }, [demoWalletIds, userWallets.balances, mint, lastPrice, demoTokensHeld, demoEntryPriceSol]);
-
-  const bought = platformBought + demoBought;
-  const sold = platformSold + demoSold;
-  const holding = platformHolding + demoHolding;
-  const pnl = sold - bought + holding;
-  const loading = platformLoading || demoLoading;
-
-  return { bought, sold, holding, pnl, loading };
+  const pnl = platformSold - platformBought + platformHolding;
+  return { bought: platformBought, sold: platformSold, holding: platformHolding, pnl, loading: platformLoading };
 }

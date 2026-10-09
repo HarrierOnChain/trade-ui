@@ -1,0 +1,47 @@
+# systemd unit for Trade UI from a checkout (`npm ci && npm run build`) or from
+# the bundled server (`npm run bundle`, then copy dist/server to /opt/trade-ui).
+#
+#   sudo useradd --system --home /var/lib/trade-ui tradeui
+#   sudo cp deploy/trade-ui.service /etc/systemd/system/
+#   sudo install -m 600 -o root .env /etc/trade-ui.env
+#   sudo systemctl enable --now trade-ui
+#   journalctl -u trade-ui     # the first-run link with the setup code
+[Unit]
+Description=Raze Trade UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradeui
+Group=tradeui
+WorkingDirectory=/opt/trade-ui
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=TRADE_UI_DATA_DIR=/var/lib/trade-ui
+# Read after the lines above: a HOST or TRADE_UI_DATA_DIR set there wins.
+EnvironmentFile=/etc/trade-ui.env
+StateDirectory=trade-ui
+StateDirectoryMode=0700
+ExecStart=/usr/bin/node /opt/trade-ui/server.mjs
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+# The unlocked key lives in this process's memory: no core dumps of it.
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

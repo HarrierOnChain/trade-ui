@@ -3,9 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Icon } from "../atoms";
 import { TokenRow } from "../TokenRow";
 import { useApp } from "../../contexts/AppContext";
-import { useRegion } from "../../contexts/RegionContext";
 import { useClientNav } from "./ClientPages";
-import { BackendClient, readSession, writeSession } from "../../api/backend";
+import { lockNow } from "./LockGate";
 import { fetchSearchWithMetadataFallback, looksLikeSolanaAddress } from "../../api/search";
 import { useTokenEnrichment } from "../../hooks/useTokenEnrichment";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
@@ -22,7 +21,6 @@ function searchResultToTokenEvent(r: SearchResult): TokenEvent {
     name: r.name,
     symbol: r.symbol,
     dex: r.platform,
-    uri: r.uri ?? null,
     // The API's search rows carry the image, market cap and price already.
     image: r.image ?? null,
     marketCap: r.marketCap,
@@ -32,8 +30,7 @@ function searchResultToTokenEvent(r: SearchResult): TokenEvent {
 }
 
 export function SearchModal() {
-  const { searchOpen, setSearchOpen, searchInitialQuery, setAuthed, pushToast, openWalletModal } = useApp();
-  const { region } = useRegion();
+  const { searchOpen, setSearchOpen, openWalletModal } = useApp();
   const { navigate } = useClientNav();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -44,13 +41,12 @@ export function SearchModal() {
 
   useEffect(() => {
     if (!searchOpen) return;
-    // Honor pre-filled query (e.g. "View deployed tokens" from tracker), then reset.
-    setQ(searchInitialQuery ?? "");
+    setQ("");
     setResults([]);
     setTokens([]);
     setActive(0);
     setTimeout(() => ref.current?.focus(), 50);
-  }, [searchOpen, searchInitialQuery]);
+  }, [searchOpen]);
 
   useEffect(() => {
     if (!q.trim()) { setResults([]); setTokens([]); return; }
@@ -82,23 +78,12 @@ export function SearchModal() {
   useTokenEnrichment(tokens, setTokens, 20);
   const liveMap = useLiveTradePrices(visibleMints);
 
-  function disconnect() {
-    setSearchOpen(false);
-    const session = readSession();
-    if (session?.token) {
-      const client = new BackendClient(region.baseUrl, session.token);
-      void client.logout().catch(() => {});
-    }
-    writeSession(null);
-    setAuthed(false);
-    pushToast({ title: "DISCONNECTED", body: "Session ended", tone: "default" });
-  }
-
   const actions: Array<{ id: string; icon: React.ReactNode; label: string; hint: string; run: () => void }> = [
     { id: "monitor", icon: Icon.deploy(12), label: "Go to Monitor", hint: "G M", run: () => { setSearchOpen(false); navigate("/monitor"); } },
     { id: "portfolio", icon: Icon.portfolio(12), label: "Go to Portfolio", hint: "G P", run: () => { setSearchOpen(false); navigate("/portfolio"); } },
-    { id: "deploy", icon: Icon.rocket(12), label: "Go to Deploy", hint: "G D", run: () => { setSearchOpen(false); navigate("/deploy"); } },
-    { id: "wallet", icon: Icon.wallet(12), label: "Disconnect wallet", hint: "", run: disconnect },
+    { id: "wallets", icon: Icon.wallet(12), label: "Go to Wallets", hint: "G W", run: () => { setSearchOpen(false); navigate("/wallets"); } },
+    { id: "swap", icon: Icon.swap(12), label: "Go to Swap", hint: "G S", run: () => { setSearchOpen(false); navigate("/swap"); } },
+    { id: "lock", icon: Icon.lock(12), label: "Lock Trade UI", hint: "", run: () => { setSearchOpen(false); void lockNow(); } },
   ];
 
   function pick(mint: string) {

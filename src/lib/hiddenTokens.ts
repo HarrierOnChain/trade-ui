@@ -4,8 +4,8 @@
    Global token-hide registry
    A user-owned blocklist of token mints that should be filtered
    out of every list-style surface — Portfolio holdings/activity,
-   Monitor columns (deploys / migrations / trending), Tracker
-   alerts, sidebar mini-feeds, etc.
+   Monitor columns (deploys / migrations / trending), sidebar
+   mini-feeds, etc.
 
    Hidden state lives in localStorage so it survives reloads and
    syncs across browser tabs (via the `storage` event). Within a

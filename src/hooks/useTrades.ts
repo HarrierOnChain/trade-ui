@@ -1,11 +1,10 @@
 "use client";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
 import { num } from "../api/mappers";
 import { addLiveTrade, dropRetracted, mergeTradeBatch } from "../lib/trades";
-import { getPreviewData, isPreviewMint, isStreamOnly, subscribePreview } from "../lib/previewData";
 import type { Trade } from "../types";
 
 const PAGE = 50;
@@ -102,15 +101,6 @@ export function useTrades(
   const timeFilterActive = timeRangeActive(timeRange);
   const serverTimeFilter = timeFilterActive;
 
-  // Preview-mode short-circuit: synthetic trades sourced from the deploy
-  // form (one row per planned wallet buy). Re-subscribes whenever the
-  // registry updates, so adding/removing a wallet in the form re-renders.
-  const previewSnapshot = useSyncExternalStore(
-    (cb) => (mint ? subscribePreview(mint, cb) : () => {}),
-    () => (mint ? getPreviewData(mint) : null),
-    () => null,
-  );
-
   const clearPause = useCallback(() => {
     if (pauseTimer.current) clearTimeout(pauseTimer.current);
     pauseTimer.current = null;
@@ -124,24 +114,6 @@ export function useTrades(
   useEffect(() => {
     clearPause();
     if (!mint) {
-      setTrades([]);
-      setLoading(false);
-      setHasMore(false);
-      setError(null);
-      cursorRef.current = null;
-      return;
-    }
-    if (isPreviewMint(mint)) {
-      setTrades(previewSnapshot?.trades ?? []);
-      setLoading(false);
-      setHasMore(false);
-      setError(null);
-      cursorRef.current = null;
-      return;
-    }
-    // Stream-only (freshly-deployed) mint: no REST history — start empty; the
-    // live WS feed (effect below) fills the table as trades land.
-    if (isStreamOnly(mint)) {
       setTrades([]);
       setLoading(false);
       setHasMore(false);
@@ -170,7 +142,7 @@ export function useTrades(
       })
       .catch((e) => setError(friendlyFetchError(e)))
       .finally(() => setLoading(false));
-  }, [mint, signer, sort, previewSnapshot, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs, clearPause]);
+  }, [mint, signer, sort, serverTimeFilter, timeRange?.fromMs, timeRange?.toMs, clearPause]);
 
   // Page forward with the stored cursor (direction follows current sort)
   const loadMore = useCallback(async () => {
@@ -217,8 +189,7 @@ export function useTrades(
   // WS live updates — only in the default newest-first view, and never
   // when a signer or time filter is applied (historical drill-down).
   useEffect(() => {
-    // Preview mints don't exist on-chain, so no WS subscribe.
-    if (!mint || signer || timeFilterActive || sort !== "desc" || isPreviewMint(mint)) return;
+    if (!mint || signer || timeFilterActive || sort !== "desc") return;
 
     const ws = RazeWebSocket.getInstance();
     ws.connect();
@@ -247,27 +218,6 @@ export function useTrades(
       setTrades((prev) => sortTrades(mergeTradeBatch(prev, incoming), "desc").slice(0, CAP));
     }
 
-    function handleAnalysis(msg: Record<string, unknown>) {
-      const data = (msg.data && typeof msg.data === "object" && !Array.isArray(msg.data))
-        ? (msg.data as Record<string, unknown>)
-        : msg;
-      const sig = String(data.signature ?? msg.signature ?? "");
-      // Flags belong to one wallet's row when the frame names it.
-      const wallet = String(data.wallet ?? data.signer ?? "");
-      const mintStr = String(data.mint ?? "");
-      if (!sig || (mintStr && mintStr !== mint)) return;
-      const isBundle = data.isBundle != null ? Boolean(data.isBundle) : undefined;
-      const isSniper = data.isSniper != null ? Boolean(data.isSniper) : undefined;
-      setTrades((prev) => prev.map((t) => {
-        if (t.signature !== sig || (wallet && t.signer !== wallet)) return t;
-        return {
-          ...t,
-          isBundle: isBundle || t.isBundle,
-          isSniper: isSniper || t.isSniper,
-        };
-      }));
-    }
-
     // Rows of a slot whose fork was lost go; the copy from the slot where
     // the transaction landed, if any, comes as a new trade.
     function handleRetract(msg: Record<string, unknown>) {
@@ -278,13 +228,11 @@ export function useTrades(
 
     const unsub1 = ws.on("trade",          handleTrade);
     const unsub2 = ws.on("trade_snapshot", handleSnapshot);
-    const unsub3 = ws.on("analysis",       handleAnalysis);
     const unsub4 = ws.on("trade_retract",  handleRetract);
 
     return () => {
       unsub1();
       unsub2();
-      unsub3();
       unsub4();
       ws.unsubscribeToken(mint, ["trades"], { sse: true });
       prevMint.current = null;

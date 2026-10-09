@@ -1,57 +1,22 @@
 "use client";
 import React from "react";
 import type { ChainSentiment } from "../../types";
-import { getActiveChain, nativeSymbol } from "../../lib/chains";
 import { useIsPhone } from "../../hooks/useMediaQuery";
 import { viewportMaxWidth } from "../../lib/popover";
 
-export type SentimentTab = "status" | "components";
-
-type SentimentDetails = ChainSentiment & {
-  metrics?: {
-    deployCount?: number;
-    migrationCount?: number;
-    tradeCount?: number;
-    buyCount?: number;
-    volumeSol?: number;
-    proTradeCount?: number;
-    sniperCount?: number;
-    bundleCount?: number;
-    avgHoldingSeconds?: number;
-  };
-  componentScores?: {
-    volume?: number;
-    buyCount?: number;
-    tradeCount?: number;
-    bundleRatio?: number;
-    deployCount?: number;
-    holdingTime?: number;
-    sniperRatio?: number;
-    proTradeRatio?: number;
-    migrationBonus?: number;
-  };
-};
-
 type Props = {
-  activeTab: SentimentTab;
-  onTabChange: (tab: SentimentTab) => void;
   sentiment: ChainSentiment | null;
   placement?: "above" | "below";
 };
 
-export function ChainHealthPopup({
-  activeTab,
-  onTabChange,
-  sentiment,
-  placement = "below",
-}: Props) {
-  const data = sentiment as SentimentDetails | null;
+/** Buy pressure on the chain: buys against sells over the last hour, summed
+ *  across the top 20 trending tokens (fetchChainSentiment). */
+export function ChainHealthPopup({ sentiment, placement = "below" }: Props) {
+  const data = sentiment;
   const isPhone = useIsPhone();
   const score = Number(data?.score ?? 0);
   const tone = getScoreTone(score);
-  const metrics = data?.metrics ?? {};
-  const components = data?.componentScores ?? {};
-  const label = data?.label ?? scoreLabel(score);
+  const label = scoreLabel(score);
   const verticalPosition =
     placement === "above"
       ? { bottom: "calc(100% + 8px)" }
@@ -119,71 +84,20 @@ export function ChainHealthPopup({
         </div>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 0,
-          padding: 6,
-          borderBottom: "1px solid var(--line-soft)",
-          background: "var(--ink-1)",
-        }}
-      >
-        {(["status", "components"] as SentimentTab[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => onTabChange(tab)}
-            style={{
-              flex: 1,
-              height: 26,
-              borderRadius: 4,
-              border: "0",
-              background: activeTab === tab ? "var(--ink-2)" : "transparent",
-              color: activeTab === tab ? "var(--paper)" : "var(--paper-3)",
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-            }}
-          >
-            {tab === "status" ? "Status" : "Components"}
-          </button>
-        ))}
-      </div>
-
       <div style={{ padding: 12 }}>
         <ScoreMeter score={score} tone={tone} disabled={!data} />
 
-        {activeTab === "status" ? (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "0 14px",
-              marginTop: 12,
-            }}
-          >
-            <MetricRow label="Trades" value={formatNumber(metrics.tradeCount)} />
-            <MetricRow label="Volume" value={`${formatNumber(metrics.volumeSol)} ${nativeSymbol(getActiveChain())}`} />
-            <MetricRow label="Buys" value={formatNumber(metrics.buyCount)} />
-            <MetricRow label="Deploys" value={formatNumber(metrics.deployCount)} />
-            <MetricRow label="Pro" value={formatNumber(metrics.proTradeCount)} />
-            <MetricRow label="Avg Hold" value={formatTime(metrics.avgHoldingSeconds)} />
-          </div>
-        ) : (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-              marginTop: 12,
-            }}
-          >
-            <ScoreBar label="Volume" score={components.volume} />
-            <ScoreBar label="Buy Count" score={components.buyCount} />
-            <ScoreBar label="Trade Count" score={components.tradeCount} />
-            <ScoreBar label="Pro Trades" score={components.proTradeRatio} />
-            <ScoreBar label="Deploys" score={components.deployCount} />
-          </div>
-        )}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "0 14px",
+            marginTop: 12,
+          }}
+        >
+          <MetricRow label="Buys" value={data ? `${Math.round(data.buyRatio * 100)}%` : "–"} />
+          <MetricRow label="Trades 1h" value={data ? formatNumber(data.trades) : "–"} />
+        </div>
       </div>
     </div>
   );
@@ -212,32 +126,6 @@ function MetricRow({ label, value }: { label: string; value: string }) {
         {label}
       </div>
       <div style={{ fontSize: 12, color: "var(--paper-2)", textAlign: "right" }}>{value}</div>
-    </div>
-  );
-}
-
-function ScoreBar({ label, score }: { label: string; score?: number }) {
-  const safeScore = Number(score ?? 0);
-  const tone = getScoreTone(safeScore);
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <span style={{ width: 76, flexShrink: 0, fontSize: 10, color: "var(--paper-3)" }}>
-        {label}
-      </span>
-      <div style={{ flex: 1, height: 4, overflow: "hidden", borderRadius: 2, background: "var(--line-soft)" }}>
-        <div
-          style={{
-            width: `${Math.max(0, Math.min(100, safeScore))}%`,
-            height: "100%",
-            borderRadius: 2,
-            background: tone.color,
-          }}
-        />
-      </div>
-      <span style={{ width: 28, textAlign: "right", fontSize: 11, color: tone.color }}>
-        {safeScore.toFixed(0)}
-      </span>
     </div>
   );
 }
@@ -300,12 +188,4 @@ function formatNumber(value: number | undefined) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toFixed(0);
-}
-
-function formatTime(seconds: number | undefined) {
-  const n = Number(seconds ?? 0);
-  if (!Number.isFinite(n)) return "0s";
-  if (n >= 3600) return `${(n / 3600).toFixed(1)}h`;
-  if (n >= 60) return `${(n / 60).toFixed(1)}m`;
-  return `${n.toFixed(0)}s`;
 }

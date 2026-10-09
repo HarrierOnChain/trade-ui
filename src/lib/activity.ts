@@ -3,16 +3,14 @@ import type { LivePrice } from "../hooks/useLiveTradePrices";
 
 /**
  * A token is spam/dead when it has no trading activity of any kind — no trades
- * in REST 24h aggregates, no first-hour stats, and no live WS ticks. Fresh
- * tokens stay hidden until at least one trade arrives.
+ * in REST 24h aggregates and no live WS ticks. Fresh tokens stay hidden until
+ * at least one trade arrives.
  */
 export function isSpamToken(t: TokenEvent, live?: LivePrice): boolean {
   const hasActivity =
     (t.tradeCount ?? 0) > 0 ||
     (t.totalSolVolume ?? 0) > 0 ||
-    (t.firstHourTrades ?? 0) > 0 ||
     (t.volume24h ?? 0) > 0 ||
-    (t.creatorBuySol ?? 0) > 0 ||
     (live?.tradeCount ?? 0) > 0 ||
     (live?.volumeSol ?? 0) > 0;
 
@@ -27,7 +25,6 @@ function volumeScore(t: TokenEvent, live?: LivePrice): number {
   return (
     (t.totalSolVolume ?? 0) +
     (t.volume24h ?? 0) +
-    (t.firstHourVolume ?? 0) +
     (live?.volumeSol ?? 0)
   );
 }

@@ -4,14 +4,13 @@
  * portfolio tab nav. Pure presentation: receives already-shaped data
  * from the page orchestrator and renders.
  *
- * The functional contract (which trades belong, how PnL is reconciled,
- * how demo data is shimmed) lives in page.tsx — these components just
- * project that into rows.
+ * The functional contract (which trades belong, how PnL is reconciled)
+ * lives in page.tsx — these components just project that into rows.
  */
 
 import React, { useMemo, useState } from "react";
 import type { Trade, TokenHolding } from "../../../types";
-import type { TrackerAlert } from "../../../hooks/useTrackerStream";
+import type { WalletTradeAlert } from "../../../hooks/useWalletTradeStream";
 import { TokenIdentity } from "../../../components/atoms";
 import { useSolPrice } from "../../../hooks/useSolPrice";
 import { fmtUsd, fmtMcap } from "../../../lib/format";
@@ -44,7 +43,7 @@ function tradeMarketCap(t: Trade): number | undefined {
     : undefined;
 }
 
-function alertToTrade(a: TrackerAlert): Trade {
+function alertToTrade(a: WalletTradeAlert): Trade {
   return {
     signature: a.signature,
     tokenMint: a.tokenMint,
@@ -133,7 +132,7 @@ export function HoldingsTab({
     return (
       <EmptyHero
         title="No spot holdings."
-        body="Buy a token from the trading panel or fire a sniper. Once a bag opens, it shows up here with live USD value, share-of-portfolio bar, and one-click access to the token page."
+        body="Buy a token from the trading panel or the Swap page. Once a bag opens, it shows up here with live USD value, share-of-portfolio bar, and one-click access to the token page."
       />
     );
   }
@@ -236,7 +235,7 @@ export function ActivityTab({
   onTokenClick,
 }: {
   trades: Trade[];
-  liveAlerts?: TrackerAlert[];
+  liveAlerts?: WalletTradeAlert[];
   solPrice?: number;
   loading: boolean;
   onTokenClick: (mint: string) => void;

@@ -4,22 +4,20 @@
 // stay in sync in the same tab.
 import { useCallback, useEffect, useState } from "react";
 
-export type TickerSource = "watchlist" | "positions" | "recent" | "deployed";
-export type TickerQuickbuy = "never" | "always" | "hover";
-export type TickerSortField = "price" | "name" | "createdAt" | "added";
+export type TickerSource = "watchlist" | "positions" | "recent";
+const SOURCES: readonly TickerSource[] = ["watchlist", "positions", "recent"];
+export type TickerSortField = "price" | "name" | "added";
+const SORT_FIELDS: readonly TickerSortField[] = ["price", "name", "added"];
 export type TickerSortDir = "asc" | "desc";
-export type TickerPnlDisplay = "valuePct" | "valuePnl" | "pnlPct";
 export type TickerNativeCurrency = "sol" | "usd";
 
 interface TickerPrefs {
   enabled: boolean;
   source: TickerSource;
-  quickbuy: TickerQuickbuy;
   // Watchlist sort
   sortField: TickerSortField;
   sortDir: TickerSortDir;
   // Positions
-  pnlDisplay: TickerPnlDisplay;
   showMcaps: boolean;
   showHidden: boolean;
   nativeCurrency: TickerNativeCurrency;
@@ -29,10 +27,8 @@ const KEY = "trade.tickerBar.v1";
 const DEFAULTS: TickerPrefs = {
   enabled: false,
   source: "watchlist",
-  quickbuy: "hover",
   sortField: "added",
   sortDir: "desc",
-  pnlDisplay: "valuePct",
   showMcaps: true,
   showHidden: true,
   nativeCurrency: "usd",
@@ -43,7 +39,11 @@ function read(): TickerPrefs {
   try {
     const raw = window.localStorage.getItem(KEY);
     if (!raw) return DEFAULTS;
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<TickerPrefs>) };
+    const prefs = { ...DEFAULTS, ...(JSON.parse(raw) as Partial<TickerPrefs>) };
+    // A source this build no longer has falls back to the default.
+    if (!SOURCES.includes(prefs.source)) prefs.source = DEFAULTS.source;
+    if (!SORT_FIELDS.includes(prefs.sortField)) prefs.sortField = DEFAULTS.sortField;
+    return prefs;
   } catch {
     return DEFAULTS;
   }
@@ -80,10 +80,8 @@ export function useTickerBar() {
     setEnabled: (v: boolean) => update({ enabled: v }),
     toggleEnabled: () => update({ enabled: !read().enabled }),
     setSource: (s: TickerSource) => update({ source: s }),
-    setQuickbuy: (q: TickerQuickbuy) => update({ quickbuy: q }),
     setSortField: (s: TickerSortField) => update({ sortField: s }),
     setSortDir: (d: TickerSortDir) => update({ sortDir: d }),
-    setPnlDisplay: (p: TickerPnlDisplay) => update({ pnlDisplay: p }),
     setShowMcaps: (v: boolean) => update({ showMcaps: v }),
     setShowHidden: (v: boolean) => update({ showHidden: v }),
     setNativeCurrency: (c: TickerNativeCurrency) => update({ nativeCurrency: c }),

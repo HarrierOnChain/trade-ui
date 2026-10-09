@@ -24,41 +24,26 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
   const volUsd = num(row.volume_24h);
   const volNative = num(row.total_sol_volume);
   const tradeCount = num(row.trade_count);
-  const fees = num(row.fees_total);
   const holders = num(row.holders);
-  const traders = num(row.unique_traders);
   const change = num(row.priceChange);
   const buyCount = num(row.buy_count);
   const sellCount = num(row.sell_count);
-  const deploys = num(row.deploys_by_creator ?? row.creator_deploys ?? row.creatorDeploys);
-  const migrations = num(
-    row.migrations_by_creator ?? row.creator_migrations ?? row.creatorMigrations,
-  );
-  const buySol = num(row.creator_buy_sol ?? row.creatorBuySol);
-  const buyTokens = num(row.creator_buy_tokens ?? row.creatorBuyTokens);
-  const buyPrice = num(row.creator_buy_price ?? row.creatorBuyPrice);
+  const deploys = num(row.creatorDeploys);
 
   if (bundle != null) patch.bundlePercentage = bundle;
   if (sniper != null) patch.sniperPercentage = sniper;
   if (volUsd != null) patch.volume24h = volUsd;
   if (volNative != null) patch.totalSolVolume = volNative;
   if (tradeCount != null) patch.tradeCount = tradeCount;
-  if (fees != null) patch.feesTotal = fees;
   if (holders != null) patch.holders = holders;
-  if (traders != null) patch.uniqueTraders = traders;
   if (change != null) patch.priceChange = change;
   if (buyCount != null) patch.buyCount = buyCount;
   if (sellCount != null) patch.sellCount = sellCount;
   if (deploys != null) patch.creatorDeploys = deploys;
-  if (migrations != null) patch.creatorMigrations = migrations;
-  if (buySol != null) patch.creatorBuySol = buySol;
-  if (buyTokens != null) patch.creatorBuyTokens = buyTokens;
-  if (buyPrice != null) patch.creatorBuyPrice = buyPrice;
   if (row.signer) patch.signer = row.signer;
   if (row.platform) patch.dex = row.platform;
   if (row.name) patch.name = row.name;
   if (row.symbol) patch.symbol = row.symbol;
-  if (row.uri) patch.uri = row.uri;
   return patch;
 }
 
@@ -67,7 +52,6 @@ function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>): TokenEvent 
   return {
     ...t,
     ...patch,
-    uri: t.uri || patch.uri || t.uri,
     name: t.name || patch.name || t.name,
     symbol: t.symbol || patch.symbol || t.symbol,
     // Never relabel a pump-family launchpad (Mayhem) to the pumpfun/pumpswap
@@ -78,8 +62,8 @@ function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>): TokenEvent 
 
 /**
  * Batched stats/volume enrichment only. Images + metadata resolve via
- * `useRowImage` (deferred) so this hook never floods the wire with
- * proxy.uri / raze.get — that was starving raze.feed stream delivery.
+ * `useRowImage` (deferred) so this hook never floods the network with
+ * per-token metadata reads.
  */
 export function useTokenEnrichment(
   tokens: TokenEvent[],

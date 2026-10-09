@@ -41,6 +41,8 @@ export interface RouterQuote {
   contextSlot?: number;
   timeTaken?: number;
   quoteId?: string;
+  /** Trade UI's server keeps every quote it hands out; a swap names it by this. */
+  quoteToken?: string;
   [extra: string]: unknown;
 }
 
@@ -60,19 +62,6 @@ export interface VenueInfo {
 
 /** The unsigned swap transaction for one wallet, built from exactly one quote
  *  (`POST /api/swap/build` → router `/swap-instructions`, serialized). */
-export interface SwapBuild {
-  /** base64, unsigned v1 transaction as the router built it */
-  transaction: string;
-  /** base64, the same instructions as a v0 transaction; null when not asked or it does not fit */
-  transactionV0: string | null;
-  v0Unavailable: string | null;
-  lastValidBlockHeight: number | null;
-  quoteId: string | null;
-  inAmount: string | null;
-  outAmount: string | null;
-  otherAmountThreshold: string | null;
-}
-
 export interface RouteHop {
   dex: string;
   pool: string;
@@ -225,14 +214,6 @@ export function classifyQuoteError(status: number, body: ErrorBody): QuoteFailur
 }
 
 /** A failed build, in words the trader can act on. */
-export function describeBuildError(status: number, j: ErrorBody): string {
-  const why = j.reason || j.reasons?.join("; ") || j.error || `HTTP ${status}`;
-  if (status === 409) return `The route changed since the quote (${why}): try again`;
-  if (status === 503) return `Router not ready (${why}): try again in a moment`;
-  if (j.reason === "dark_trader") return "SolFi V2 would charge this wallet extra: exclude it and retry";
-  return `Could not build the swap: ${why}`;
-}
-
 // The swap program's own errors (`ProgramError::Custom(0x5357_0000 + n)`,
 // swapwire `SwapError`): the floor or cap the quote set was missed, or the
 // quote's deadline passed before the transaction landed.

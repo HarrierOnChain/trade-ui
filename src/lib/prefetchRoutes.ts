@@ -10,13 +10,12 @@ export function prefetchRoutes() {
     import("../components/TradesTable");
     import("../components/HoldersTable");
     import("../components/TopTradersTable");
-    import("../components/BubblemapPanel");
     import("../components/TradingPanel");
     import("../components/PriceChangeStrip");
 
     // Next.js page route JS — prefetch via link tags so the router
     // doesn't need to fetch them on navigation.
-    const routes = ["/monitor", "/portfolio", "/deploy"];
+    const routes = ["/monitor", "/portfolio", "/wallets", "/swap"];
     for (const href of routes) {
       const link = document.createElement("link");
       link.rel = "prefetch";

@@ -1,5 +1,3 @@
-import type { WalletKind } from "../api/backend";
-
 /** Accent palette for wallet avatars — stable per row index. */
 export const WALLET_AVATAR_PALETTE = [
   "#6366f1", "#8b5cf6", "#ec4899", "#f43f5e",
@@ -19,29 +17,11 @@ function isEmojiGrapheme(s: string): boolean {
   return /\p{Extended_Pictographic}/u.test(s);
 }
 
-/** Normalize user input into a stored avatar glyph, or null for auto initials. */
-export function normalizeWalletAvatarInput(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const segments = [...new Intl.Segmenter().segment(trimmed)].map((s) => s.segment);
-  const first = segments[0] ?? "";
-  if (!first) return null;
-  if (isEmojiGrapheme(first)) return first;
-  const letters = trimmed.replace(/[^a-zA-Z0-9]/g, "").slice(0, 2).toUpperCase();
-  return letters || null;
-}
-
-export function walletDisplayGlyph(label: string, customGlyph?: string | null): string {
-  const custom = customGlyph?.trim();
-  if (custom) return custom;
+export function walletDisplayGlyph(label: string): string {
   return walletInitials(label);
 }
 
-export function walletAvatarColor(
-  index: number,
-  kind: WalletKind,
-): string {
-  if (kind === "DEMO") return "#ffb020";
+export function walletAvatarColor(index: number): string {
   return WALLET_AVATAR_PALETTE[index % WALLET_AVATAR_PALETTE.length];
 }
 

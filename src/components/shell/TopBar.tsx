@@ -4,20 +4,16 @@ import { useClientNav } from "./ClientPages";
 import { BrandMark, ChainIcon, Icon, QuoteAssetIcon, Tooltip } from "../atoms";
 import type { BrandMarkHandle } from "../atoms/BrandMark";
 import { useApp } from "../../contexts/AppContext";
-import { useRegion } from "../../contexts/RegionContext";
 import { useChain } from "../../contexts/ChainContext";
-import { BackendClient, useSession, writeSession } from "../../api/backend";
 import { useUserWallets } from "../../hooks/useUserWallets";
 import { useUserPreference } from "../../hooks/useUserPreference";
 import { useIsPhone, useIsMobile } from "../../hooks/useMediaQuery";
 import { useAppZoom } from "../../contexts/AppZoomContext";
 import { quoteMints, defaultQuoteMint, findQuoteMint } from "../../lib/quoteMints";
 import { PREF_KEYS } from "../TradingPanel/presets";
-import { useLiveAlerts } from "../../contexts/LiveAlertsContext";
-import { LiveAlertsPanel } from "./LiveAlertsPanel";
 import { SettingsModal } from "./SettingsModal";
 import { WalletSelectorPopup } from "../TradingPanel/WalletSelectorPopup";
-import { useNotifAlerts } from "../../hooks/useNotifPrefs";
+import { lockNow } from "./LockGate";
 
 function QuoteMintIcon({ label, size }: { label: string; size: number }) {
   return <QuoteAssetIcon label={label} size={size} />;
@@ -35,26 +31,19 @@ const SEARCH_COLLAPSE_WIDTH = 1400;
 // (Sidebar unmounts while closed, so it re-reads this on the next open).
 const SIDEBAR_PAGE_KEY = "spool.sidebar.page";
 
-type NavItem = { id: string; label: string; path: string; icon: React.ReactNode; cta?: boolean };
+type NavItem = { id: string; label: string; path: string; icon: React.ReactNode };
 
 const NAV: NavItem[] = [
   { id: "monitor", label: "Monitor", path: "/monitor", icon: Icon.eyeLine(12) },
   { id: "portfolio", label: "Portfolio", path: "/portfolio", icon: Icon.portfolio(12) },
-  {
-    id: "swap", label: "Swap", path: "/swap",
-    icon: (
-      <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d="M3 5h9l-2.5-2.5M13 11H4l2.5 2.5" />
-      </svg>
-    ),
-  },
-  { id: "deploy", label: "Deploy", path: "/deploy", icon: Icon.rocket(12), cta: true },
+  { id: "wallets", label: "Wallets", path: "/wallets", icon: Icon.wallet(12) },
+  { id: "swap", label: "Swap", path: "/swap", icon: Icon.swap(12) },
 ];
 
 export function TopBar() {
   const { navigate, activePath } = useClientNav();
   const pathname = activePath;
-  const { authed, setSearchOpen, sidebarOpen, toggleSidebar, sysConfig, openAuthModal } = useApp();
+  const { setSearchOpen, sidebarOpen, toggleSidebar } = useApp();
   const headerRef = useRef<HTMLElement>(null);
   const isPhone = useIsPhone();
 
@@ -119,22 +108,9 @@ export function TopBar() {
           <BrandMark ref={brandRef} size={40} ariaLabel="Go to Monitor" onClick={() => navigate("/monitor")} />
           <div style={{ flex: 1, minWidth: 0 }} />
           <HeaderSearchButton onOpen={openSearch} />
-          <AlertBell />
-          {authed ? (
-            <ConnectedMenu />
-          ) : (
-            <button
-              type="button"
-              aria-label="Log in or sign up"
-              onClick={openAuthModal}
-              style={{ ...iconBtn, color: "var(--paper-2)" }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--paper)"; e.currentTarget.style.background = "var(--ink-2)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--paper-2)"; e.currentTarget.style.background = "transparent"; }}
-            >
-              {Icon.userLine(18)}
-            </button>
-          )}
-          {authed && <SettingsButton />}
+          <ConnectedMenu />
+          <LockButton />
+          <SettingsButton />
         </header>
         <MobileNavSheet
           open={navOpen}
@@ -143,7 +119,6 @@ export function TopBar() {
           isActive={isActive}
           pathname={pathname}
           onNavigate={(p) => { navigate(p); setNavOpen(false); }}
-          onDeploy={() => { navigate("/deploy"); setNavOpen(false); }}
           sidebarOpen={sidebarOpen}
           toggleSidebar={toggleSidebar}
         />
@@ -162,8 +137,8 @@ export function TopBar() {
       // visible; the search bar lives in the flexible 1fr column and shrinks to
       // its min before the nav ever has to scroll. The nav gets priority, and
       // the search bar is never removed on desktop — it just narrows.
-      // Nav column is `max-content` so the full tab strip (incl. the Deploy
-      // CTA) NEVER shrinks or scrolls on desktop — the search (the 1fr column,
+      // Nav column is `max-content` so the full tab strip NEVER shrinks or
+      // scrolls on desktop — the search (the 1fr column,
       // min 0) yields first and, once it'd get too small, collapses to the ⌘K
       // icon via `searchCompact`. The nav always wins the space.
       gridTemplateColumns: searchCompact
@@ -197,7 +172,6 @@ export function TopBar() {
           pathname={pathname}
           isActive={isActive}
           onNavigate={navigate}
-          onDeploy={() => navigate("/deploy")}
         />
       </div>
 
@@ -205,8 +179,8 @@ export function TopBar() {
         <div style={{
           display: "flex", alignItems: "center", gap: 10,
           width: "100%", minWidth: 0,
-          // Search hugs the right end of its column, next to the alert bell /
-          // account cluster; the header grid gap keeps the breathing room.
+          // Search hugs the right end of its column, next to the account
+          // cluster; the header grid gap keeps the breathing room.
           justifyContent: "flex-end",
         }}>
           <HeaderSearchBar onOpen={openSearch} />
@@ -215,51 +189,9 @@ export function TopBar() {
 
       <div style={{ display: "flex", alignItems: "center", gap: isPhone ? 4 : 10 }}>
         {searchCompact && <HeaderSearchButton onOpen={openSearch} />}
-        <AlertBell />
-        {!authed && <UnifiedChainBar />}
-        {authed ? (
-          <ConnectedMenu />
-        ) : sysConfig?.publicViewEnabled ? (
-          <>
-            <button
-              type="button"
-              onClick={openAuthModal}
-              className="mono"
-              style={{
-                padding: "0 14px", height: 32, fontSize: 11,
-                letterSpacing: "0.06em", textTransform: "uppercase",
-                color: "var(--paper-2)",
-                background: "transparent",
-                border: "1px solid var(--line-soft)",
-                borderRadius: 4, cursor: "pointer",
-                transition: "border-color 120ms, color 120ms",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--amber)"; e.currentTarget.style.color = "var(--paper)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--line-soft)"; e.currentTarget.style.color = "var(--paper-2)"; }}
-            >
-              Log in
-            </button>
-            <button
-              type="button"
-              onClick={openAuthModal}
-              className="mono"
-              style={{
-                padding: "0 14px", height: 32, fontSize: 11,
-                letterSpacing: "0.06em", textTransform: "uppercase",
-                color: "var(--ink-0)",
-                background: "var(--amber)",
-                border: "1px solid var(--amber)",
-                borderRadius: 4, cursor: "pointer",
-                transition: "opacity 120ms",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-            >
-              Sign up
-            </button>
-          </>
-        ) : null}
-        {authed && <SettingsButton />}
+        <ConnectedMenu />
+        <LockButton />
+        <SettingsButton />
       </div>
     </header>
     <SettingsModal />
@@ -344,10 +276,29 @@ function HeaderSearchButton({ onOpen }: { onOpen: () => void }) {
   );
 }
 
+/** Lock the vault now, for every browser: the page goes back to the lock screen. */
+function LockButton() {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Tooltip content="Lock" placement="bottom">
+      <button
+        type="button"
+        aria-label="Lock Trade UI"
+        disabled={busy}
+        onClick={() => { setBusy(true); void lockNow(); }}
+        style={{ ...iconBtn, color: "var(--paper-3)", background: "transparent", cursor: busy ? "wait" : "pointer" }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "var(--paper)"; e.currentTarget.style.background = "var(--ink-2)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--paper-3)"; e.currentTarget.style.background = "transparent"; }}
+      >
+        {Icon.lock(15)}
+      </button>
+    </Tooltip>
+  );
+}
+
 function SettingsButton() {
-  const { setAuthed, pushToast, openSettings } = useApp();
-  const { region } = useRegion();
-  const session = useSession();
+  const { openSettings } = useApp();
+  const { navigate } = useClientNav();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -364,16 +315,6 @@ function SettingsButton() {
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-
-  async function disconnect() {
-    if (session?.token) {
-      const client = new BackendClient(region.baseUrl, session.token);
-      void client.logout().catch(() => {});
-    }
-    writeSession(null);
-    setAuthed(false);
-    pushToast({ title: "DISCONNECTED", body: "Session ended", tone: "default" });
-  }
 
   return (
     <div ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
@@ -420,16 +361,17 @@ function SettingsButton() {
             label="Settings"
             onClick={() => { setOpen(false); openSettings(); }}
           />
+          <SettingsMenuItem
+            icon={Icon.wallet(14)}
+            label="Wallets & security"
+            onClick={() => { setOpen(false); navigate("/wallets"); }}
+          />
           <div style={{ height: 1, background: "var(--line-soft)", margin: "4px 6px" }} />
           <SettingsMenuItem
             danger
-            icon={
-              <svg width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M5 2H2.5A.5.5 0 0 0 2 2.5v7a.5.5 0 0 0 .5.5H5M8 8.5 10.5 6 8 3.5M4.5 6h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            }
-            label="Log Out"
-            onClick={() => { setOpen(false); void disconnect(); }}
+            icon={Icon.lock(14)}
+            label="Lock now"
+            onClick={() => { setOpen(false); void lockNow(); }}
           />
         </div>
       )}
@@ -479,45 +421,6 @@ function SettingsMenuItem({
   );
 }
 
-function AlertBell() {
-  const { unreadCount, panelOpen, setPanelOpen } = useLiveAlerts();
-  const [alertsEnabled] = useNotifAlerts();
-  if (!alertsEnabled) return null;
-  return (
-    <div style={{ position: "relative" }}>
-      <Tooltip content="Alerts" placement="bottom">
-        <button
-          style={{ ...iconBtn, color: panelOpen ? "var(--paper)" : "var(--paper-3)" }}
-          onClick={() => setPanelOpen(!panelOpen)}
-        >
-          <span style={{ position: "relative" }}>
-            {Icon.bell(14)}
-            {/* Badge only while there are UNREAD items — once the panel has
-                been opened (markRead) the bell goes back to bare. */}
-            {unreadCount > 0 && (
-              <span style={{
-                position: "absolute", top: -4, right: -5,
-                minWidth: 14, height: 14,
-                background: "var(--accent)", color: "var(--ink-0)",
-                borderRadius: 999,
-                fontSize: 8, fontWeight: 700,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                padding: "0 3px",
-                letterSpacing: 0,
-                lineHeight: 1,
-              }}>
-                {unreadCount > 99 ? "99+" : unreadCount}
-              </span>
-            )}
-          </span>
-        </button>
-      </Tooltip>
-      <LiveAlertsPanel />
-    </div>
-  );
-}
-
-
 function formatQuoteBalance(v: number): string {
   if (!isFinite(v)) return "–";
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
@@ -527,20 +430,7 @@ function formatQuoteBalance(v: number): string {
 
 function useActiveWalletBalances() {
   const userWallets = useUserWallets();
-  const phantom = useMemo(
-    () => userWallets.wallets.find((w) => w.isConnected) ?? null,
-    [userWallets.wallets],
-  );
-  const isDemoMode = useMemo(
-    () => userWallets.activeWallets.some((w) => w.kind === "DEMO"),
-    [userWallets.activeWallets],
-  );
-  const activePlatforms = useMemo(
-    () => userWallets.activeWallets.filter((w) => w.kind === "PLATFORM"),
-    [userWallets.activeWallets],
-  );
-  const usingPhantom = !isDemoMode && activePlatforms.length === 0 && !!phantom;
-  const wallets = usingPhantom ? (phantom ? [phantom] : []) : userWallets.activeWallets;
+  const wallets = userWallets.activeWallets;
 
   const { chainId } = useChain();
   const quoteBalances = useMemo(() => {
@@ -566,20 +456,16 @@ function useActiveWalletBalances() {
 }
 
 function UnifiedChainBar({
-  embedded = false,
   anchorRef,
   renderBar,
 }: {
-  embedded?: boolean;
-  anchorRef?: React.RefObject<HTMLDivElement | null>;
-  renderBar?: (segments: React.ReactNode) => React.ReactNode;
+  anchorRef: React.RefObject<HTMLDivElement | null>;
+  renderBar: (segments: React.ReactNode) => React.ReactNode;
 }) {
-  const { authed } = useApp();
   const { chainId, setChain, chains } = useChain();
   const { quoteBalances } = useActiveWalletBalances();
   const [quoteOpen, setQuoteOpen] = useState(false);
-  const innerRef = useRef<HTMLDivElement | null>(null);
-  const rootRef = anchorRef ?? innerRef;
+  const rootRef = anchorRef;
   const [buyInputLabel, setBuyInputLabel] = useUserPreference<string>(PREF_KEYS.buyInputMint, defaultQuoteMint().label);
   const [, setSellOutputLabel] = useUserPreference<string>(PREF_KEYS.sellOutputMint, defaultQuoteMint().label);
   const activeQuote = findQuoteMint(buyInputLabel, chainId);
@@ -620,8 +506,8 @@ function UnifiedChainBar({
   }, [quoteOpen, rootRef]);
 
   const quoteBal = quoteBalances[activeQuote.label];
-  const quoteLoading = authed && !!quoteBal?.loading;
-  const quoteValue = authed ? (quoteBal?.value ?? 0) : 0;
+  const quoteLoading = !!quoteBal?.loading;
+  const quoteValue = quoteBal?.value ?? 0;
 
   const chainSegments = (
     <>
@@ -763,7 +649,7 @@ function UnifiedChainBar({
               {q.label}
             </span>
             <span style={{ color: "var(--paper-3)", fontVariantNumeric: "tabular-nums" }}>
-              {authed && bal?.loading ? "…" : formatQuoteBalance(bal?.value ?? 0)}
+              {bal?.loading ? "…" : formatQuoteBalance(bal?.value ?? 0)}
             </span>
             <span
               aria-hidden="true"
@@ -781,44 +667,11 @@ function UnifiedChainBar({
     </div>
   ) : null;
 
-  if (embedded && renderBar) {
-    return (
-      <>
-        {renderBar(chainSegments)}
-        {quoteDropdown}
-      </>
-    );
-  }
-
-  if (embedded) {
-    return <>{chainSegments}{quoteDropdown}</>;
-  }
-
   return (
-    <div
-      ref={innerRef}
-      style={{ position: "relative", display: "inline-flex" }}
-    >
-      <div
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          height: 32,
-          padding: 0,
-          gap: 0,
-          background: "var(--ink-0)",
-          border: "1px solid var(--line-soft)",
-          borderRadius: 6,
-          flexShrink: 0,
-          transition: "border-color 120ms",
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--line)")}
-        onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--line-soft)")}
-      >
-        {chainSegments}
-      </div>
+    <>
+      {renderBar(chainSegments)}
       {quoteDropdown}
-    </div>
+    </>
   );
 }
 
@@ -826,56 +679,31 @@ function ConnectedMenu() {
   const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const menuRootRef = useRef<HTMLDivElement | null>(null);
   const walletBarRef = useRef<HTMLDivElement | null>(null);
-  const userWallets = useUserWallets();
-
-  const isDemoMode = useMemo(
-    () => userWallets.activeWallets.some((w) => w.kind === "DEMO"),
-    [userWallets.activeWallets],
-  );
-
-  const phantom = useMemo(
-    () => userWallets.wallets.find((w) => w.isConnected) ?? null,
-    [userWallets.wallets],
-  );
-  const activePlatforms = useMemo(
-    () => userWallets.activeWallets.filter((w) => w.kind === "PLATFORM"),
-    [userWallets.activeWallets],
-  );
-  const usingPhantom = !isDemoMode && activePlatforms.length === 0 && !!phantom;
 
   return (
     <div ref={menuRootRef} style={{ position: "relative", display: "inline-block" }}>
       <UnifiedChainBar
-        embedded
         anchorRef={menuRootRef}
         renderBar={(segments) => (
-          <Tooltip
-            content={isDemoMode ? "Demo mode · trades simulate against live prices, no on-chain activity" : null}
-            placement="bottom"
-          >
             <div
               ref={walletBarRef}
               style={{
                 display: "inline-flex", alignItems: "center",
                 height: 32, padding: 0, gap: 0,
                 background: "var(--ink-0)",
-                border: isDemoMode ? "1px solid #ffb020" : "1px solid var(--line-soft)",
+                border: "1px solid var(--line-soft)",
                 borderRadius: 6,
                 transition: "border-color 120ms",
               }}
-              onMouseEnter={(e) => {
-                if (!isDemoMode) e.currentTarget.style.borderColor = "var(--line)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = isDemoMode ? "#ffb020" : "var(--line-soft)";
-              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--line)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--line-soft)"; }}
             >
               {segments}
               <span style={{ width: 1, alignSelf: "stretch", background: "var(--line-soft)", flexShrink: 0, margin: "6px 0" }} />
-              <Tooltip content={usingPhantom ? "Phantom signer · select platform wallets" : "Select wallets"} placement="bottom">
+              <Tooltip content="Wallets that trade" placement="bottom">
                 <button
                   type="button"
-                  aria-label={usingPhantom ? "Phantom signer · open wallet picker" : "Select wallets"}
+                  aria-label="Select the wallets that trade"
                   aria-haspopup="dialog"
                   aria-expanded={walletPickerOpen}
                   onClick={() => setWalletPickerOpen((v) => !v)}
@@ -889,11 +717,10 @@ function ConnectedMenu() {
                   onMouseEnter={(e) => (e.currentTarget.style.color = "var(--paper)")}
                   onMouseLeave={(e) => (e.currentTarget.style.color = "var(--paper-3)")}
                 >
-                  {usingPhantom ? Icon.phantom(13) : Icon.wallet(13)}
+                  {Icon.wallet(13)}
                 </button>
               </Tooltip>
             </div>
-          </Tooltip>
         )}
       />
       {walletPickerOpen && (
@@ -912,13 +739,11 @@ function ScrollableNav({
   pathname,
   isActive,
   onNavigate,
-  onDeploy,
 }: {
   items: typeof NAV;
   pathname: string;
   isActive: (path: string) => boolean;
   onNavigate: (path: string) => void;
-  onDeploy: () => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -970,8 +795,6 @@ function ScrollableNav({
       marginLeft: 8,
     }}>
       <style>{`.topbar-nav-scroll::-webkit-scrollbar{display:none}
-@keyframes razeShineSpin{to{rotate:360deg}}
-@media (prefers-reduced-motion: reduce){.raze-shine-glow{animation:none!important}}
 .raze-navbtn{display:inline-flex;align-items:center;padding:6px 10px;font-size:12px;font-weight:500;color:var(--paper);background:transparent;border:0;border-radius:5px;white-space:nowrap;flex-shrink:0;cursor:pointer;font-family:inherit;transition:color 120ms,background 120ms}
 .raze-navbtn:hover{background:color-mix(in oklch, var(--amber) 15%, transparent);color:var(--amber)}
 .raze-navbtn[data-nav-active="true"]{color:var(--amber)}
@@ -997,24 +820,6 @@ function ScrollableNav({
       >
         {items.map((it) => {
           const active = isActive(it.path);
-          if (it.cta) {
-            return (
-              <div
-                key={it.id}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 10,
-                  margin: "0 4px 0 6px", flexShrink: 0,
-                }}
-              >
-                <NavDivider />
-                <NavCtaButton
-                  item={it}
-                  active={active}
-                  onClick={onDeploy}
-                />
-              </div>
-            );
-          }
           // Hover is CSS-only (`.raze-navbtn:hover`) — NOT imperative
           // onMouseEnter/Leave, which left the tint stuck on multiple tabs when
           // a re-render or a click-driven layout shift ate the mouseleave.
@@ -1047,7 +852,7 @@ function HamburgerIcon() {
 }
 
 // Mobile primary navigation — a ☰ slide-in sheet (left drawer) holding the full
-// tab list + the Deploy CTA, plus deep-links into the Tape/Wallets sidebar. The
+// tab list, plus deep-links into the Tape/Wallets sidebar. The
 // desktop nav strip can't fit on a phone, so it lives here instead.
 function MobileNavSheet({
   open,
@@ -1056,7 +861,6 @@ function MobileNavSheet({
   isActive,
   pathname,
   onNavigate,
-  onDeploy,
   sidebarOpen,
   toggleSidebar,
 }: {
@@ -1066,7 +870,6 @@ function MobileNavSheet({
   isActive: (path: string) => boolean;
   pathname: string;
   onNavigate: (path: string) => void;
-  onDeploy: () => void;
   sidebarOpen: boolean;
   toggleSidebar: () => void;
 }) {
@@ -1084,9 +887,6 @@ function MobileNavSheet({
     if (!sidebarOpen) toggleSidebar();
     onClose();
   };
-
-  const deploy = nav.find((n) => n.cta);
-  const items = nav.filter((n) => !n.cta);
 
   return (
     <>
@@ -1122,29 +922,8 @@ function MobileNavSheet({
           </button>
         </div>
 
-        {deploy && (
-          <div style={{ padding: 12, flexShrink: 0 }}>
-            <button
-              type="button"
-              onClick={onDeploy}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                width: "100%", height: 46,
-                background: "var(--amber)", color: "var(--ink-0)",
-                border: 0, borderRadius: 9,
-                fontSize: 14, fontWeight: 700, letterSpacing: "0.01em",
-                cursor: "pointer",
-                boxShadow: "0 0 16px color-mix(in oklch, var(--amber) 30%, transparent)",
-              }}
-            >
-              {deploy.icon}
-              {deploy.label}
-            </button>
-          </div>
-        )}
-
-        <nav style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "2px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
-          {items.map((it) => {
+        <nav style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 2 }}>
+          {nav.map((it) => {
             const active = isActive(it.path);
             return (
               <button
@@ -1234,114 +1013,6 @@ function MobileSheetSecondary({ label, onClick }: { label: string; onClick: () =
       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--paper-2)"; }}
     >
       {label}
-    </button>
-  );
-}
-
-// Vertical faded divider (SVG gradient, no asset) — sets the Deploy CTA apart
-// from the rest of the nav group. Sized to the 48px header.
-function NavDivider() {
-  return (
-    <svg
-      aria-hidden="true"
-      width="1"
-      height="24"
-      viewBox="0 0 1 54"
-      fill="none"
-      style={{ flexShrink: 0, userSelect: "none", pointerEvents: "none", display: "block" }}
-    >
-      <line x1="0.5" y1="0" x2="0.500002" y2="54" stroke="url(#hdrDivider)" />
-      <defs>
-        <linearGradient id="hdrDivider" x1="-0.5" y1="0" x2="-0.499998" y2="54" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#999999" stopOpacity="0" />
-          <stop offset="0.495192" stopColor="#999999" />
-          <stop offset="1" stopColor="#999999" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
-
-// Primary "Deploy" CTA — animated shine border (rotating conic-gradient arm)
-// so it reads as THE call-to-action in an otherwise monochrome nav. The outer
-// wrap is the border (its padding = border thickness) with a spinning glow
-// clipped by overflow:hidden; the inner sits on top. Colors are Raze accent
-// (amber + white hot-spot) instead of the source purple. When on /deploy the
-// text stays accent so the active state still registers.
-function NavCtaButton({
-  item,
-  active,
-  onClick,
-}: {
-  item: NavItem;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      data-nav-active={active ? "true" : undefined}
-      onClick={onClick}
-      aria-label={item.label}
-      style={{
-        position: "relative",
-        display: "inline-flex",
-        padding: "2px",                // shine border thickness
-        borderRadius: 8,
-        overflow: "hidden",
-        background: "var(--ink-0)",    // base under the glow
-        border: 0,
-        cursor: "pointer",
-        flexShrink: 0,
-        lineHeight: 0,
-      }}
-      onMouseEnter={(e) => {
-        const inner = e.currentTarget.querySelector<HTMLElement>("[data-shine-inner]");
-        if (inner) inner.style.color = "var(--amber)";
-      }}
-      onMouseLeave={(e) => {
-        const inner = e.currentTarget.querySelector<HTMLElement>("[data-shine-inner]");
-        if (inner) inner.style.color = active ? "var(--amber)" : "var(--paper)";
-      }}
-    >
-      <span
-        className="raze-shine-glow"
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          left: "50%",
-          top: "50%",
-          width: "170%",
-          aspectRatio: "1",
-          translate: "-50% -50%",       // stays centered; `rotate` animates on top
-          background:
-            "conic-gradient(from 0deg, transparent 0deg, transparent 250deg, var(--amber) 306deg, #fff 324deg, var(--amber) 342deg, transparent 360deg)",
-          animation: "razeShineSpin 3s linear infinite",
-          pointerEvents: "none",
-        }}
-      />
-      <span
-        data-shine-inner
-        style={{
-          position: "relative",
-          zIndex: 1,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 5,
-          height: 24,
-          padding: "0 13px",
-          borderRadius: 6,
-          background: "var(--ink-1)",
-          color: active ? "var(--amber)" : "var(--paper)",
-          fontSize: 12,
-          fontWeight: 600,
-          letterSpacing: "0.01em",
-          whiteSpace: "nowrap",
-          transition: "color 140ms",
-        }}
-      >
-        {item.icon}
-        {item.label}
-      </span>
     </button>
   );
 }

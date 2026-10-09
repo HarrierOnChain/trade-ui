@@ -2,7 +2,6 @@ import razeCharts, { widget as NamedWidget, formatCompact, formatPrice } from "@
 import type {
   ChartingLibraryWidgetOptions,
   ChartOverrides,
-  EntityId,
   IChartingLibraryWidget,
   ResolutionString,
 } from "@razedotbot/charts";
@@ -90,16 +89,6 @@ export function applyRazeChartChrome(chart: IChartingLibraryWidget): void {
   chart.setCSSCustomProperty("--tv-color-popup-background", "#211f1d");
   chart.setCSSCustomProperty("--tv-color-popup-element-text", "#f4eee1");
   chart.setCSSCustomProperty("--tv-color-popup-element-background-hover", "#272522");
-}
-
-export function subscribeDrawingEvent(
-  chart: IChartingLibraryWidget,
-  handler: (sourceId: EntityId, eventType: string) => void,
-): void {
-  chart.subscribe("drawing_event", ((...args: never[]) => {
-    const [sourceId, eventType] = args as unknown as [EntityId, string];
-    handler(sourceId, eventType);
-  }) as (...args: never[]) => void);
 }
 
 export function razeChartOptions({

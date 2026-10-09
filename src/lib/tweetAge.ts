@@ -1,5 +1,4 @@
-// Tweet freshness — shared by the small X icon (TokenSocialLinks) and the
-// hover preview (XLinkPreview) so both use the exact same age → color mapping.
+// Tweet freshness for the small X icon (TokenSocialLinks): age → color.
 //
 // Twitter/X snowflake IDs encode the post time (epoch 2010-11-04), so we can
 // derive a tweet's age from the ID alone — no fetch. BigInt is required: tweet
@@ -23,13 +22,6 @@ export function tweetAgeMinutesFromId(tweetId: string | null | undefined): numbe
   } catch {
     return null;
   }
-}
-
-export function tweetAgeMinutesFromDate(iso: string | null | undefined): number | null {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return null;
-  return (Date.now() - t) / 60000;
 }
 
 export function tweetFreshnessColor(ageMinutes: number | null | undefined): string {

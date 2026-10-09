@@ -1,12 +1,10 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
-import { TVChart, type TradeMark, type MarkKind, type OrderLine } from "../TVChart";
+import { TVChart, type TradeMark, type MarkKind } from "../TVChart";
 import { prefetchSolanaChartData } from "../SolanaDatafeed";
 import { TokenHeader } from "../TokenHeader";
 import { Icon, Tooltip } from "../atoms";
 import { fetchTokenSupply, fetchTradesBySignerMint } from "../../api/client";
-import { useBackend } from "../../api/backend";
-import { onDemoChanged } from "../../lib/demoEvents";
 import type { Trade } from "../../types";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
@@ -14,14 +12,7 @@ import { useTrades } from "../../hooks/useTrades";
 import { useHolders } from "../../hooks/useHolders";
 import { useUserWallets } from "../../hooks/useUserWallets";
 import { useLastSeen } from "../../contexts/LastSeenContext";
-import { useApp } from "../../contexts/AppContext";
-import { WATCHLIST_STORAGE_KEY, readWatchlist } from "../../lib/trackerWallets";
-import { useLimitOrders } from "../../hooks/useLimitOrders";
-import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
-import { Pill } from "../atoms";
-import { fmtNum } from "../../lib/format";
 import { solPriceToChartAxis } from "../../lib/chartAxis";
-import { computeTop10HolderAvgPrices } from "../../lib/topHolderLines";
 import { mergeTradeLists, tradeLegKey } from "../../lib/trades";
 import { top10HoldPct } from "../../lib/tokenMetrics";
 import { useUserPreference } from "../../hooks/useUserPreference";
@@ -31,7 +22,7 @@ import { TokenTradesSidebar } from "../TokenTradesSidebar";
 import { Modal, Btn, ModalHeader, ModalFooter } from "../atoms";
 import { viewportMaxWidth } from "../../lib/popover";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
-import { getActiveChain, nativeSymbol } from "../../lib/chains";
+import { getActiveChain, nativeSymbol, swapsOn } from "../../lib/chains";
 
 // TVChart is imported eagerly so OHLC prefetch + chart init start with
 // token-info/trades (wire RPCs are concurrent on the backend). Other heavy
@@ -39,71 +30,28 @@ import { getActiveChain, nativeSymbol } from "../../lib/chains";
 const TradesTable = lazy(() => import("../TradesTable").then(m => ({ default: m.TradesTable })));
 const HoldersTable = lazy(() => import("../HoldersTable").then(m => ({ default: m.HoldersTable })));
 const TopTradersTable = lazy(() => import("../TopTradersTable").then(m => ({ default: m.TopTradersTable })));
-const BubblemapPanel = lazy(() => import("../BubblemapPanel").then(m => ({ default: m.BubblemapPanel })));
 const TradingPanel = lazy(() => import("../TradingPanel").then(m => ({ default: m.TradingPanel })));
 const PriceChangeStrip = lazy(() => import("../PriceChangeStrip").then(m => ({ default: m.PriceChangeStrip })));
 
-type Tab = "trades" | "holders" | "traders" | "bubblemap" | "orders";
-type TradeCat = "dev" | "tracked" | "you";
+type Tab = "trades" | "holders" | "traders";
+type TradeCat = "dev" | "you";
 type MobileSection = "chart" | "transactions" | "trading";
 
 const CAT_LABEL: Record<TradeCat, string> = {
   dev: "DEV",
-  tracked: "TRACKED",
   you: "YOU",
 };
 
 interface TokenLayoutProps {
   mint: string;
-  /** When set, replaces the default trading-panel slot. The deploy page
-   *  uses this to inject the create-token form into the same token-page
-   *  chrome — TokenHeader / TVChart / TradesTable / HoldersTable et al.
-   *  are reused verbatim. */
-  sidePanel?: React.ReactNode;
-  /** Default `"right"` (where the trading panel naturally lives). Pass
-   *  `"left"` to mirror the layout so the side panel sits before the chart
-   *  column — used by the `/deploy` page. */
-  sidePanelSide?: "left" | "right";
-  /** Override the side-panel column width (px). Defaults to 304 — the
-   *  trading-panel width — so swapping in something narrower/wider doesn't
-   *  silently push the chart around. */
-  sidePanelWidth?: number;
-  /** Whether to record this mint as "recently seen". Default true. The /deploy
-   *  page passes `false` pre-launch so the throwaway placeholder mint never
-   *  leaks into the Recent-pairs ticker. */
-  recordSeen?: boolean;
-  /** Pre-launch only: replaces the first ("Transactions") tab body with a
-   *  custom node — the /deploy page injects its editable buyers table here so
-   *  wallets/amounts can be edited inline under the chart. When set, the tab
-   *  is relabeled and the trades-only header filters are hidden. */
-  bottomPanel?: { label: string; node: React.ReactNode };
-  /** Hide the header "Clone token" DNA action — the /deploy preview sets this
-   *  (the placeholder token being created can't be cloned). */
-  hideHeaderClone?: boolean;
 }
 
-export function TokenLayout({
-  mint,
-  sidePanel,
-  sidePanelSide = "right",
-  sidePanelWidth,
-  recordSeen = true,
-  bottomPanel,
-  hideHeaderClone = false,
-}: TokenLayoutProps) {
+export function TokenLayout({ mint }: TokenLayoutProps) {
   const isMobile = useIsMobile();
   const isPhone = useIsPhone();
-  const { record, forget } = useLastSeen();
-  useEffect(() => {
-    if (recordSeen) record(mint);
-    // Deploy preview: never leave the throwaway placeholder in Recent — drop it
-    // (also cleans stale entries from before this guard existed).
-    else forget(mint);
-  }, [mint, record, forget, recordSeen]);
+  const { record } = useLastSeen();
+  useEffect(() => { record(mint); }, [mint, record]);
   useEffect(() => { prefetchSolanaChartData(mint); }, [mint]);
-  const { pushToast } = useApp();
-  const limitOrders = useLimitOrders(mint);
-  const livePriceMap = useLiveTradePrices(useMemo(() => [mint], [mint]));
 
   const [tab, setTab] = useState<Tab>("trades");
   const [mobileSection, setMobileSection] = useState<MobileSection>("chart");
@@ -118,21 +66,10 @@ export function TokenLayout({
   const CHART_MIN = 220;
   const CHART_MAX_VH_FRAC = 0.8;
   const TRADING_PANEL_WIDTH = 304; // 320 − 5%
-  // Width of the side-panel column. Desktop is byte-identical to the old fixed
-  // px (`sidePanelWidth ?? TRADING_PANEL_WIDTH` = 304); on mobile the panel
-  // stacks below the chart and spans the full row. The celebration overlay
-  // still reserves the literal px number (`TRADING_PANEL_WIDTH`).
-  const sidePanelColWidth: React.CSSProperties["width"] = isMobile
-    ? "100%"
-    : (sidePanelWidth ?? TRADING_PANEL_WIDTH);
-  // Chart sizing: fixed, non-resizable on mobile (drag handle hidden); the
-  // persisted/resizable height stays exactly as before on desktop.
-  const MOBILE_CHART_HEIGHT = 320;
   // SSR-stable default. The persisted value loads in the useEffect below.
   // Initializing from localStorage here would diverge between SSR and the
   // first client render and trigger React #418 (hydration text mismatch).
   const [chartHeight, setChartHeight] = useState<number>(420);
-  const effectiveChartHeight = isMobile ? MOBILE_CHART_HEIGHT : chartHeight;
   const [chartHeightHydrated, setChartHeightHydrated] = useState(false);
   const leftColRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ startY: number; startHeight: number } | null>(null);
@@ -205,73 +142,21 @@ export function TokenLayout({
       .catch(() => {});
   }, [mint]);
 
-  // Page-level fetches feed chart marks (trades) and the bubblemap / top-10 %
-  // (holders). The corresponding tables run their own copies of these hooks;
+  // Page-level fetches feed chart marks (trades) and the top-10 % (holders). The corresponding tables run their own copies of these hooks;
   // REST duplication is collapsed by the cachedRazeGet wrapper in
   // src/api/client.ts, and WS subscriptions are ref-counted in websocket.ts,
   // so the on-the-wire cost is a single fetch + a single subscribe per mint.
   const { trades, loading: tradesLoading } = useTrades(mint);
   const { holders } = useHolders(mint);
 
-  // ── Chart marks: dev / tracked / own-wallet trades ──────────────────────
+  // ── Chart marks: dev / own-wallet trades ────────────────────────────────
   const { info } = useTokenInfo(mint);
-  const activeOrderLines = useMemo<OrderLine[]>(
-    () =>
-      limitOrders.orders
-        .filter((o) => o.status === "active")
-        .map((o) => ({
-          id: o.id,
-          side: o.side as "buy" | "sell",
-          targetMcapUsd: o.limitConfig.targetMcapUsd,
-          quantity: o.side === "buy" ? `${o.amount} SOL` : `${o.amount}%`,
-        })),
-    [limitOrders.orders],
-  );
-
-  const handleOrderLineDrag = useCallback((id: string, newTargetMcapUsd: number) => {
-    // Optimistic update so the line stays put visually.
-    limitOrders.update(id, newTargetMcapUsd).catch((err) => {
-      pushToast({
-        title: "ORDER UPDATE FAILED",
-        body: err instanceof Error ? err.message : String(err),
-        tone: "sell",
-      });
-    });
-  }, [limitOrders, pushToast]);
-
-  const handleOrderLineCancel = useCallback((id: string) => {
-    limitOrders.cancel(id).catch((err) => {
-      pushToast({
-        title: "CANCEL FAILED",
-        body: err instanceof Error ? err.message : String(err),
-        tone: "sell",
-      });
-    });
-  }, [limitOrders, pushToast]);
-
-  const liveMarketCap = useMemo(() => {
-    const liveSol = livePriceMap.get(mint)?.price ?? 0;
-    const sp = solPrice ?? 0;
-    const live = liveSol > 0 && sp > 0 ? liveSol * sp * supply : 0;
-    return live > 0 ? live : (info?.marketCap ?? null);
-  }, [livePriceMap, mint, solPrice, supply, info?.marketCap]);
   const devSigner = info?.signer ?? null;
   const userWallets = useUserWallets();
   const userAddrs = useMemo(
     () => new Set(userWallets.wallets.map((w) => w.pubkey)),
     [userWallets.wallets],
   );
-  const [watchAddrs, setWatchAddrs] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    const sync = () => setWatchAddrs(new Set(readWatchlist().map((w) => w.address)));
-    sync();
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === WATCHLIST_STORAGE_KEY) sync();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
   // Dev trades usually sit at deploy time and fall outside the default
   // 50-trade live feed. Fetch them by signer directly so the "Dev" marks
   // show up regardless of token age or activity.
@@ -297,30 +182,23 @@ export function TokenLayout({
   // returns the latest 50 trades, so user trades older than that window
   // would never produce "my wallets" marks/lines without an explicit fetch
   // per wallet — same pattern as devTrades/filteredTrades.
-  const userPubkeysKey = useMemo(
-    () => [...userAddrs].sort().join(","),
-    [userAddrs],
-  );
   const [userTrades, setUserTrades] = useState<Trade[]>([]);
-  // Real (on-chain) user wallets only — demo wallets have synthetic
-  // pubkeys that 4xx out of fetchTradesBySignerMint. Demo trades are
-  // pulled separately below from wallets.demoSummary.
-  const realUserPubkeys = useMemo(
-    () => userWallets.wallets.filter((w) => w.kind !== "DEMO").map((w) => w.pubkey),
+  const userPubkeys = useMemo(
+    () => userWallets.wallets.map((w) => w.pubkey),
     [userWallets.wallets],
   );
-  const realUserPubkeysKey = useMemo(
-    () => [...realUserPubkeys].sort().join(","),
-    [realUserPubkeys],
+  const userPubkeysKey = useMemo(
+    () => [...userPubkeys].sort().join(","),
+    [userPubkeys],
   );
   useEffect(() => {
-    if (!mint || realUserPubkeys.length === 0) {
+    if (!mint || userPubkeys.length === 0) {
       setUserTrades([]);
       return;
     }
     let cancelled = false;
     Promise.all(
-      realUserPubkeys.map((pubkey) =>
+      userPubkeys.map((pubkey) =>
         fetchTradesBySignerMint(pubkey, mint, 100)
           .then((res) => (Array.isArray(res?.data) ? res.data : []))
           .catch(() => [] as Trade[]),
@@ -330,74 +208,7 @@ export function TokenLayout({
       setUserTrades(lists.flat());
     });
     return () => { cancelled = true; };
-  }, [mint, realUserPubkeysKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Demo wallet trades on this mint. Sourced from wallets.demoSummary
-  // (DB-backed) and converted to the Trade shape so they merge into the
-  // chartMarks and TradesTable pipelines uniformly with real fills.
-  const backendClientForDemo = useBackend();
-  const activeDemoWallet = useMemo(
-    () => userWallets.activeWallets.find((w) => w.kind === "DEMO") ?? null,
-    [userWallets.activeWallets],
-  );
-  const [demoTrades, setDemoTrades] = useState<Trade[]>([]);
-  useEffect(() => {
-    if (!mint || !activeDemoWallet) { setDemoTrades([]); return; }
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const s = await backendClientForDemo.demoSummary(activeDemoWallet.id);
-        if (cancelled) return;
-        // Demo executions now carry per-fill tokensAmount + priceSolPerToken
-        // (populated at execute time). Use those directly so the row
-        // numbers reflect the actual fill, not the current holding state.
-        // Falls back to back-computing for any legacy executions written
-        // before the snapshot fields landed.
-        const holding = s.holdings.find((h) => h.mint === mint);
-        const fallbackEntry = holding?.entryPriceSol ?? 0;
-        const fallbackTotal = holding?.tokens ?? 0;
-        const out: Trade[] = [];
-        for (const t of s.trades) {
-          if (t.mint !== mint) continue;
-          const fillPrice = t.priceSolPerToken ?? fallbackEntry;
-          let tokensAmount = t.tokensAmount ?? 0;
-          let solAmount = 0;
-          if (t.side === "buy") {
-            solAmount = t.amountSol ?? 0;
-            if (tokensAmount <= 0) {
-              tokensAmount = fillPrice > 0 ? solAmount / fillPrice : 0;
-            }
-          } else {
-            if (t.amountSol != null) {
-              solAmount = t.amountSol;
-            }
-            if (tokensAmount <= 0) {
-              const pct = (t.sellPct ?? 0) / 100;
-              tokensAmount = fallbackTotal * pct;
-            }
-            if (solAmount <= 0) {
-              solAmount = tokensAmount * fillPrice;
-            }
-          }
-          out.push({
-            signature: t.signature ?? t.id,
-            tokenMint: t.mint,
-            signer: activeDemoWallet.pubkey,
-            transactionType: t.side,
-            tokensAmount,
-            avgPrice: fillPrice,
-            solAmount,
-            timestamp: Date.parse(t.createdAt),
-          });
-        }
-        setDemoTrades(out);
-      } catch { /* swallow — next tick retries */ }
-    };
-    void refresh();
-    const offEvent = onDemoChanged(() => { if (!cancelled) void refresh(); });
-    const iv = setInterval(refresh, 6_000);
-    return () => { cancelled = true; offEvent(); clearInterval(iv); };
-  }, [mint, activeDemoWallet, backendClientForDemo]);
+  }, [mint, userPubkeysKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Trades for the wallet currently driving the Transactions filter. Cleared
   // when the filter is cleared; refetched when it changes. Classified as
@@ -424,8 +235,8 @@ export function TokenLayout({
     // Merge the live trade feed with the dev-specific and filtered-wallet
     // histories (a row held by an earlier list, same signature and wallet, is
     // taken from it), then classify each trade. Filter wins over
-    // dev/user/tracked so the active filter stands out visually.
-    const merged = mergeTradeLists(trades, devTrades, userTrades, demoTrades, filteredTrades);
+    // dev/user so the active filter stands out visually.
+    const merged = mergeTradeLists(trades, devTrades, userTrades, filteredTrades);
 
     const out: TradeMark[] = [];
     for (const t of merged) {
@@ -433,7 +244,6 @@ export function TokenLayout({
       if (filterSigner && t.signer === filterSigner) kind = "filtered";
       else if (devSigner && t.signer === devSigner) kind = "dev";
       else if (userAddrs.has(t.signer)) kind = "user";
-      else if (watchAddrs.has(t.signer)) kind = "tracked";
       if (!kind) continue;
       const raw = t.timestamp;
       const ts =
@@ -468,26 +278,14 @@ export function TokenLayout({
     }
     return out;
   }, [
-    trades, devTrades, userTrades, demoTrades, filteredTrades,
-    devSigner, filterSigner, userAddrs, watchAddrs,
+    trades, devTrades, userTrades, filteredTrades,
+    devSigner, filterSigner, userAddrs,
     solPrice, supply, chartCurrency, chartDisplay,
   ]);
 
-  const topHolderChartLines = useMemo(() => {
-    const { avgBuySol, avgSellSol } = computeTop10HolderAvgPrices(holders);
-    const solPx = solPrice ?? 0;
-    const sup = supply || 1;
-    const axisOpts = {
-      currency: chartCurrency,
-      display: chartDisplay,
-      solPrice: solPx,
-      supply: sup,
-    };
-    const buy = avgBuySol != null ? solPriceToChartAxis(avgBuySol, axisOpts) : undefined;
-    const sell = avgSellSol != null ? solPriceToChartAxis(avgSellSol, axisOpts) : undefined;
-    if (buy == null && sell == null) return undefined;
-    return { buy, sell };
-  }, [holders, solPrice, supply, chartCurrency, chartDisplay]);
+  // The Migration Threshold line is Pump.fun's graduation level: only drawn
+  // while the token is still on its bonding curve.
+  const onBondingCurve = getActiveChain() === "sol" && info?.dex === "Pumpfun" && info?.graduated === false;
 
   const top10Pct = top10HoldPct(holders, supply > 0 ? supply : undefined);
 
@@ -583,7 +381,7 @@ export function TokenLayout({
     [],
   );
 
-  // DEV / TRACKED / YOU — single-select dropdown on the Transactions tab.
+  // DEV / YOU — single-select dropdown on the Transactions tab.
   // One category at a time; union of that category's signers is applied
   // client-side on top of whatever TradesTable has fetched.
   const [activeCat, setActiveCat] = useState<TradeCat | null>(null);
@@ -598,10 +396,9 @@ export function TokenLayout({
     if (!activeCat) return null;
     const s = new Set<string>();
     if (activeCat === "dev" && devSigner) s.add(devSigner);
-    else if (activeCat === "tracked") watchAddrs.forEach((a) => s.add(a));
     else if (activeCat === "you") userAddrs.forEach((a) => s.add(a));
     return s.size > 0 ? s : null;
-  }, [activeCat, devSigner, watchAddrs, userAddrs]);
+  }, [activeCat, devSigner, userAddrs]);
 
   // When the category selection narrows to exactly one wallet (the common
   // case for DEV) switch TradesTable's server fetch to that signer. The
@@ -742,14 +539,10 @@ export function TokenLayout({
     </form>
   );
 
-  // The /deploy preview (signalled by bottomPanel) is a token that doesn't exist
-  // yet, so "My Orders" and "Top Traders" have nothing to show — drop them there.
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: "trades", label: bottomPanel?.label ?? "Transactions" },
-    ...(bottomPanel ? [] : [{ id: "orders" as Tab, label: "My Orders" }]),
+    { id: "trades", label: "Transactions" },
     { id: "holders", label: "Top Holders" },
-    ...(bottomPanel ? [] : [{ id: "traders" as Tab, label: "Top Traders" }]),
-    { id: "bubblemap", label: "Bubblemap" },
+    { id: "traders", label: "Top Traders" },
   ];
 
   // ── Shared sub-panel: transaction tabs + content ─────────────────────────
@@ -813,8 +606,7 @@ export function TokenLayout({
             </button>
           );
         })}
-        {/* Instant Trade — hidden on /deploy preview */}
-        {!bottomPanel && !isMobile && (
+        {!isMobile && swapsOn() && (
         <button
           type="button"
           onClick={() => setInstantTradeOpen(!instantTradeOpen)}
@@ -850,23 +642,22 @@ export function TokenLayout({
           <span>Instant Trade</span>
         </button>
         )}
-        {tab === "trades" && !bottomPanel && (
+        {tab === "trades" && (
           <div style={{ marginLeft: "auto" }}>
             <TradeCategoryFilter
-              categories={["dev", "tracked", "you"] as const}
+              categories={["dev", "you"] as const}
               labels={CAT_LABEL}
               active={activeCat}
               onChange={selectCat}
               isDisabled={(c) =>
                 (c === "dev" && !devSigner) ||
-                (c === "tracked" && watchAddrs.size === 0) ||
                 (c === "you" && userAddrs.size === 0)
               }
             />
           </div>
         )}
-        {tab === "trades" && !bottomPanel && !isPhone && renderWalletFilterForm(false)}
-        {tab === "trades" && !bottomPanel && isPhone && (
+        {tab === "trades" && !isPhone && renderWalletFilterForm(false)}
+        {tab === "trades" && isPhone && (
           <button
             type="button"
             onClick={() => setWalletFilterModalOpen(true)}
@@ -897,8 +688,7 @@ export function TokenLayout({
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <Suspense fallback={<LazyFallback />}>
-        {tab === "trades" && bottomPanel && bottomPanel.node}
-        {tab === "trades" && !bottomPanel && (
+        {tab === "trades" && (
           <TradesTable
             solPrice={solPrice ?? 0}
             supply={supply}
@@ -914,7 +704,6 @@ export function TokenLayout({
             timestampMinMs={timestampMinMs}
             timestampMaxMs={timestampMaxMs}
             onTimestampRangeChange={handleTimestampRangeChange}
-            extraTrades={demoTrades}
             renderTotalHeaderSlot={() => (
               <span ref={amountFilterRef} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
                 <button
@@ -1078,26 +867,8 @@ export function TokenLayout({
         )}
         {tab === "traders" && (
           <TopTradersTable
-            solPrice={solPrice ?? 0}
             supply={supply}
             onAddressClick={handleAddressClick}
-          />
-        )}
-        {tab === "orders" && (
-          <MyOrdersTab
-            orders={limitOrders.orders}
-            loading={limitOrders.loading}
-            error={limitOrders.error}
-            marketCap={liveMarketCap}
-            onCancel={handleOrderLineCancel}
-          />
-        )}
-        {tab === "bubblemap" && (
-          <BubblemapPanel
-            addresses={holders.slice(0, 100).map((h) => h.address)}
-            holders={holders.slice(0, 100)}
-            mint={mint}
-            onWalletClick={handleAddressClick}
           />
         )}
         </Suspense>
@@ -1156,11 +927,7 @@ export function TokenLayout({
           top10Pct={top10Pct > 0 ? top10Pct : undefined}
           solPrice={solPrice ?? 0}
           supply={supply}
-          showClone={!hideHeaderClone}
-          celebrationReserveSidePanel={{
-            side: sidePanelSide,
-            width: sidePanelWidth ?? TRADING_PANEL_WIDTH,
-          }}
+          celebrationReserveSidePanel={{ side: "right", width: TRADING_PANEL_WIDTH }}
         />
 
         {/* Section area — fills between header and bottom tab bar */}
@@ -1179,19 +946,16 @@ export function TokenLayout({
                   migratedAt={info?.migrated_at ?? null}
                   solPrice={solPrice}
                   supply={supply}
-                  orderLines={activeOrderLines}
-                  onOrderLineDrag={handleOrderLineDrag}
-                  onOrderLineCancel={handleOrderLineCancel}
-                  topHolderLines={topHolderChartLines}
+                  onBondingCurve={onBondingCurve}
                   onFilterTimestamp={(range) => {
                     handleFilterTimestampFromChart(range);
                     setMobileSection("transactions");
                   }}
                   rightPanelVisible={mobileTradesSidebarOpen}
-                  onToggleRightPanel={sidePanel ? undefined : toggleMobileTradesSidebar}
+                  onToggleRightPanel={toggleMobileTradesSidebar}
                 />
               </div>
-              {!sidePanel && mobileTradesSidebarOpen && (
+              {mobileTradesSidebarOpen && (
                 <div style={{ maxHeight: 280, display: "flex", borderTop: "1px solid var(--line-soft)", flexShrink: 0 }}>
                   <TokenTradesSidebar
                     trades={trades}
@@ -1215,7 +979,7 @@ export function TokenLayout({
               <Suspense fallback={<LazyFallback />}>
                 <PriceChangeStrip mint={mint} />
                 <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                  {sidePanel ?? <TradingPanel mint={mint} />}
+                  <TradingPanel mint={mint} />
                 </div>
               </Suspense>
             </div>
@@ -1322,16 +1086,12 @@ export function TokenLayout({
         top10Pct={top10Pct > 0 ? top10Pct : undefined}
         solPrice={solPrice ?? 0}
         supply={supply}
-        showClone={!hideHeaderClone}
-        celebrationReserveSidePanel={{
-          side: sidePanelSide,
-          width: sidePanelWidth ?? TRADING_PANEL_WIDTH,
-        }}
+        celebrationReserveSidePanel={{ side: "right", width: TRADING_PANEL_WIDTH }}
       />
 
       <div style={{
         display: "flex", flex: 1,
-        flexDirection: sidePanelSide === "left" ? "row-reverse" : "row",
+        flexDirection: "row",
         overflow: "hidden", minHeight: 0,
       }}>
         <div
@@ -1356,16 +1116,13 @@ export function TokenLayout({
                 migratedAt={info?.migrated_at ?? null}
                 solPrice={solPrice}
                 supply={supply}
-                orderLines={activeOrderLines}
-                onOrderLineDrag={handleOrderLineDrag}
-                onOrderLineCancel={handleOrderLineCancel}
-                topHolderLines={topHolderChartLines}
+                onBondingCurve={onBondingCurve}
                 onFilterTimestamp={handleFilterTimestampFromChart}
                 rightPanelVisible={tradesSidebarVisible}
-                onToggleRightPanel={sidePanel ? undefined : toggleTradesSidebar}
+                onToggleRightPanel={toggleTradesSidebar}
               />
             </div>
-            {!sidePanel && tradesSidebarVisible && (
+            {tradesSidebarVisible && (
               <>
                 <div style={{ width: 1, background: "var(--line-soft)", flexShrink: 0 }} />
                 <TokenTradesSidebar
@@ -1410,18 +1167,14 @@ export function TokenLayout({
 
         <div style={{
           display: "flex", flexDirection: "column",
-          width: sidePanelWidth ?? TRADING_PANEL_WIDTH, flexShrink: 0, minHeight: 0,
+          width: TRADING_PANEL_WIDTH, flexShrink: 0, minHeight: 0,
         }}>
-          {sidePanel ? (
-            sidePanel
-          ) : (
-            <Suspense fallback={<LazyFallback />}>
-              <PriceChangeStrip mint={mint} />
-              <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-                <TradingPanel mint={mint} />
-              </div>
-            </Suspense>
-          )}
+          <Suspense fallback={<LazyFallback />}>
+            <PriceChangeStrip mint={mint} />
+            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+              <TradingPanel mint={mint} />
+            </div>
+          </Suspense>
         </div>
       </div>
 
@@ -1448,8 +1201,6 @@ export function TokenLayout({
     </div>
   );
 }
-
-import type { LimitOrderView } from "../../hooks/useLimitOrders";
 
 function LazyFallback() {
   return (
@@ -1497,137 +1248,3 @@ const amountFieldInputStyle: React.CSSProperties = {
   outline: "none",
   fontFamily: "var(--font-mono, inherit)",
 };
-
-function MyOrdersTab({
-  orders,
-  loading,
-  error,
-  marketCap,
-  onCancel,
-}: {
-  orders: LimitOrderView[];
-  loading: boolean;
-  error: string | null;
-  marketCap: number | null;
-  onCancel: (id: string) => void;
-}) {
-  if (loading && orders.length === 0) {
-    return (
-      <div style={{
-        padding: 24, textAlign: "center",
-        fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--paper-4)",
-      }}>
-        Loading orders…
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div style={{
-        padding: 24, textAlign: "center",
-        fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--sell)",
-      }}>
-        {error}
-      </div>
-    );
-  }
-  if (orders.length === 0) {
-    return (
-      <div style={{
-        padding: 24, textAlign: "center",
-        fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--paper-4)",
-      }}>
-        No limit orders for this token.
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-      {/* header row */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "44px 1fr 1fr 1fr 60px 28px",
-        gap: 0,
-        padding: "5px 12px",
-        borderBottom: "1px solid var(--line-soft)",
-        fontSize: 10, fontFamily: "var(--font-mono)",
-        color: "var(--paper-4)", fontWeight: 600, letterSpacing: 0.3,
-      }}>
-        <span>SIDE</span>
-        <span>TARGET MC</span>
-        <span>DISTANCE</span>
-        <span>AMOUNT</span>
-        <span>STATUS</span>
-        <span />
-      </div>
-
-      {orders.map((o) => {
-        const pending = o.status === "active";
-        const color = o.side === "buy" ? "var(--buy)" : "var(--sell)";
-        const target = o.limitConfig.targetMcapUsd;
-        const distance =
-          marketCap && marketCap > 0
-            ? `${((target / marketCap - 1) * 100).toFixed(1)}%`
-            : "—";
-        const amountLabel =
-          o.side === "buy" ? `${o.amount}◎` : `${o.amount}%`;
-
-        return (
-          <div
-            key={o.id}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "44px 1fr 1fr 1fr 60px 28px",
-              gap: 0,
-              alignItems: "center",
-              padding: "7px 12px",
-              borderBottom: "1px solid var(--line-soft)",
-              fontSize: 11, fontFamily: "var(--font-mono)",
-              color: "var(--paper-2)",
-              opacity: pending ? 1 : 0.55,
-            }}
-          >
-            <span style={{ color, fontWeight: 700 }}>{o.side.toUpperCase()}</span>
-            <span style={{ color: "var(--paper-3)" }}>${fmtNum(target)}</span>
-            <span style={{
-              color: pending
-                ? parseFloat(distance) > 0 ? "var(--buy)" : "var(--sell)"
-                : "var(--paper-4)",
-            }}>
-              {pending ? distance : "—"}
-            </span>
-            <span style={{ color: "var(--paper-3)" }}>{amountLabel}</span>
-            <span>
-              <Pill
-                tone={
-                  o.status === "filled" ? "buy"
-                    : o.status === "failed" || o.status === "cancelled" || o.status === "expired" ? "sell"
-                    : "default"
-                }
-                size="xs"
-              >
-                {o.status}
-              </Pill>
-            </span>
-            <span>
-              {pending && (
-                <Tooltip content="Cancel order">
-                  <button
-                    onClick={() => onCancel(o.id)}
-                    style={{
-                      background: "transparent", border: 0,
-                      color: "var(--paper-4)", cursor: "pointer",
-                      fontSize: 14, lineHeight: 1, padding: 2,
-                    }}
-                    aria-label="Cancel"
-                  >×</button>
-                </Tooltip>
-              )}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}

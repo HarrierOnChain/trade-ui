@@ -78,7 +78,6 @@ export function passesFilters(
   if (!inRange(t.bundlePercentage, f.bundlePercentage)) return false;
   if (!inRange(t.sniperPercentage, f.sniperPercentage)) return false;
   if (!inRange(t.creatorDeploys,   f.creatorDeploys))   return false;
-  if (!inRange(t.creatorMigrations,f.creatorMigrations))return false;
 
   // $ Metrics — prefer live where the WS delta has ticked
   const effTradeCount = (t.tradeCount ?? 0) + (live?.tradeCount ?? 0);
@@ -92,8 +91,6 @@ export function passesFilters(
   if (!inRange(t.priceChange,     f.priceChange))     return false;
   if (!inRange(effTradeCount,     f.tradeCount))      return false;
   if (!inRange(t.holders,         f.holders))         return false;
-  if (!inRange(t.firstHourVolume, f.firstHourVolume)) return false;
-  if (!inRange(t.firstHourTrades, f.firstHourTrades)) return false;
 
   // Age (minutes since created_at)
   if (f.ageMinutes.min != null || f.ageMinutes.max != null) {

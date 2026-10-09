@@ -22,11 +22,9 @@ const SUB_TABS: Array<{ id: SubTab; label: string }> = [
 
 interface Props {
   column: ColumnKey;
-  /** When true, the modal omits the column-switching segmented control and only edits this column. */
-  solo?: boolean;
 }
 
-export function ColumnConfig({ column, solo = false }: Props) {
+export function ColumnConfig({ column }: Props) {
   const [open, setOpen] = useState(false);
   const { get } = useFilters();
   const active = countActive(get(column));
@@ -59,7 +57,6 @@ export function ColumnConfig({ column, solo = false }: Props) {
         open={open}
         onClose={() => setOpen(false)}
         initialColumn={column}
-        solo={solo}
       />
     </>
   );
@@ -71,12 +68,10 @@ function FiltersModal({
   open,
   onClose,
   initialColumn,
-  solo = false,
 }: {
   open: boolean;
   onClose: () => void;
   initialColumn: ColumnKey;
-  solo?: boolean;
 }) {
   const { get, update, reset, filters } = useFilters();
   const [activeCol, setActiveCol] = useState<ColumnKey>(initialColumn);
@@ -87,11 +82,9 @@ function FiltersModal({
   const f = get(activeCol);
   const patch = (p: Partial<ColumnFilters>) => update(activeCol, p);
   const totalActive = useMemo(
-    () => (solo
-      ? [activeCol]
-      : (["trending", "deploy", "migrating", "migration"] as ColumnKey[])
-    ).reduce((sum, k) => sum + countActive(filters[k]), 0),
-    [filters, solo, activeCol],
+    () => (["trending", "deploy", "migrating", "migration"] as ColumnKey[])
+      .reduce((sum, k) => sum + countActive(filters[k]), 0),
+    [filters],
   );
 
   return (
@@ -109,7 +102,7 @@ function FiltersModal({
       />
 
       {/* ── column tabs (segmented) ──────────────────────────────── */}
-      {!solo && <ColumnSegmented active={activeCol} onChange={setActiveCol} />}
+      <ColumnSegmented active={activeCol} onChange={setActiveCol} />
 
       {/* ── body ─────────────────────────────────────────────────── */}
       <div style={{
@@ -430,11 +423,11 @@ function subTabCounts(f: ColumnFilters): Record<SubTab, number> {
     protocols: f.platforms.length !== platforms().length ? 1 : 0,
     audit:
       rangeN(f.bundlePercentage) + rangeN(f.sniperPercentage) +
-      rangeN(f.creatorDeploys) + rangeN(f.creatorMigrations),
+      rangeN(f.creatorDeploys),
     metrics:
       rangeN(f.marketCap) + rangeN(f.volume24h) + rangeN(f.liquidity) +
       rangeN(f.priceChange) + rangeN(f.tradeCount) + rangeN(f.holders) +
-      rangeN(f.firstHourVolume) + rangeN(f.firstHourTrades) + rangeN(f.ageMinutes),
+      rangeN(f.ageMinutes),
     socials:
       (f.requireTwitter ? 1 : 0) + (f.requireWebsite ? 1 : 0) + (f.requireTelegram ? 1 : 0),
   };
@@ -541,8 +534,6 @@ function AuditPanel({
         r={filters.sniperPercentage}   onChange={(r) => patch({ sniperPercentage: r })} />
       <RangeField label="Dev Deploys"               hint="How many tokens this dev has launched"
         r={filters.creatorDeploys}     onChange={(r) => patch({ creatorDeploys: r })} />
-      <RangeField label="Dev Migrations"            hint="Of those, how many reached migration"
-        r={filters.creatorMigrations}  onChange={(r) => patch({ creatorMigrations: r })} />
     </div>
   );
 }
@@ -556,12 +547,10 @@ function MetricsPanel({
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <RangeField label="Market Cap"        prefix="$"        r={filters.marketCap}       onChange={(r) => patch({ marketCap: r })} />
       <RangeField label="Volume 24h"        suffix={<SolSymbol size={10} />} r={filters.volume24h}       onChange={(r) => patch({ volume24h: r })} />
-      <RangeField label="Liquidity"         suffix={<SolSymbol size={10} />} r={filters.liquidity}       onChange={(r) => patch({ liquidity: r })} />
+      <RangeField label="Liquidity"         prefix="$"        r={filters.liquidity}       onChange={(r) => patch({ liquidity: r })} />
       <RangeField label="Price Change"      suffix="%"        r={filters.priceChange}     onChange={(r) => patch({ priceChange: r })} />
       <RangeField label="Trades"                              r={filters.tradeCount}      onChange={(r) => patch({ tradeCount: r })} />
       <RangeField label="Holders"                             r={filters.holders}         onChange={(r) => patch({ holders: r })} />
-      <RangeField label="1st Hour Volume"   suffix={<SolSymbol size={10} />} r={filters.firstHourVolume} onChange={(r) => patch({ firstHourVolume: r })} />
-      <RangeField label="1st Hour Trades"                     r={filters.firstHourTrades} onChange={(r) => patch({ firstHourTrades: r })} />
       <RangeField label="Age"               suffix="min"      r={filters.ageMinutes}      onChange={(r) => patch({ ageMinutes: r })} />
     </div>
   );

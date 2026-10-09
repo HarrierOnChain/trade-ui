@@ -4,7 +4,6 @@ import { useClientNav } from "../../components/shell/ClientPages";
 import { useIsPhone } from "../../hooks/useMediaQuery";
 import { fetchPublicMetadata, seedPublicMetadata } from "../../api/metadata";
 import { useApp } from "../../contexts/AppContext";
-import { useCloneToken } from "../../hooks/useCloneToken";
 import { useHiddenTokens } from "../../lib/hiddenTokens";
 import { useWatchlist } from "../../lib/watchlist";
 import { shortAddr } from "../../lib/format";
@@ -30,8 +29,6 @@ interface Props {
   showHide?: boolean;
   /** Watchlist star toggle. Off by default; the token page turns it on. */
   showWatch?: boolean;
-  /** "Clone token" DNA action — on by default so every card can relaunch. */
-  showClone?: boolean;
   compact?: boolean;
   /** Show ticker first and token name second. Defaults on for app-wide identity rows. */
   symbolFirst?: boolean;
@@ -66,7 +63,6 @@ export function TokenIdentity({
   showCopy = true,
   showHide = true,
   showWatch = false,
-  showClone = true,
   compact = false,
   symbolFirst = true,
   mutedName = false,
@@ -170,8 +166,7 @@ export function TokenIdentity({
   // We still need the column to exist when either the copy or hide button is
   // shown — once it does, both icon-buttons live inside a single inline-flex
   // wrapper so the grid never has to track two separate trailing cells.
-  const cloneToken = useCloneToken();
-  const hasActions = Boolean(cleanMint) && (showCopy || showHide || showWatch || showClone);
+  const hasActions = Boolean(cleanMint) && (showCopy || showHide || showWatch);
   const inner = (
     <div
       className={chartToken ? undefined : className}
@@ -324,21 +319,6 @@ export function TokenIdentity({
               symbol={display.symbol}
               name={display.name}
             />
-          )}
-          {showClone && (
-            <button
-              type="button"
-              aria-label="Clone token"
-              title="Clone — relaunch this token"
-              onClick={() => cloneToken({ name: display.name, symbol: display.symbol, image: display.image })}
-              style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 22, height: 22, borderRadius: 4, border: 0, background: "transparent",
-                color: "#2f9bff", cursor: "pointer", padding: 0, lineHeight: 0,
-              }}
-            >
-              {Icon.dna(12)}
-            </button>
           )}
         </span>
       )}

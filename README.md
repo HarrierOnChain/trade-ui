@@ -1,111 +1,313 @@
-# Trade UI
+# Raze Trade UI
 
-Self-hosted desktop/browser terminal for [api.raze.bot](https://api.raze.bot). Same Monitor, Token, and Portfolio chrome as app.raze.bot, wired to the public multi-chain market-data API, with Solana swaps on the Raze router. No hosted app backend is required — you run this locally and bring your own API key.
+A self-hosted trading terminal for [Raze](https://raze.bot): live launchpads,
+token pages with charts, trades and holders, a portfolio, and Solana swaps on
+the Raze router — signed by wallets that live encrypted on **your** machine or
+server, behind a password, like a hardware wallet.
 
-## What it talks to
+Run it in the browser from a server you own (a VPS), or as a desktop app on
+Windows, macOS and Linux. There is no account and no third-party login: one
+Raze API key in the server's configuration, and one password for the vault.
 
-- **REST:** the market-data API's routes (contract: `GET /openapi.yaml` on the API). The Next.js process proxies `/api/raze/*` → `${RAZE_API_BASE}/*`, so the browser never hits CORS and never sees the key.
-- **Live:** one WebSocket, `/ws`, carrying every channel the UI uses: `launchpad` (the New / Migrating / Migrated columns), `trades`, `candles` and `token` (the token page), `prices` (SOL/ETH/BNB), `wallet` (the tracker, Solana). Nothing live is polled; REST only primes a view. If no socket can be opened, the columns and the open token fall back to Server-Sent Events (`/stream/{channel}`) through the proxy.
-- **Auth:** your key, as `x-api-key`, added server-side. An API running without keys needs none.
-- **Swaps (Solana):** the Raze router (`RAZE_ROUTER_BASE`, keyless) quotes and builds; the wallet signs; an RPC (`SOLANA_RPC_URL`) sends and confirms. See [Swaps](#swaps).
-- **Wallets:** local wallets stored on this machine (watch addresses or locally generated / imported keys), and a browser wallet (Phantom, Solflare, Backpack, … through the Wallet Standard).
+| Lock screen | Wallets |
+| --- | --- |
+| ![The lock screen](.github/assets/lock.png) | ![The wallet page](.github/assets/wallets.png) |
 
-## Setup
+## Contents
+
+- [How it works](#how-it-works)
+- [Run it on your computer](#run-it-on-your-computer)
+- [Host it on a server](#host-it-on-a-server)
+- [Desktop app](#desktop-app)
+- [Configuration](#configuration)
+- [The lock and the wallets](#the-lock-and-the-wallets)
+- [Swaps](#swaps)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Security](SECURITY.md) · [License](LICENSE)
+
+## How it works
+
+```
+ browser ──────────────► Trade UI server (server.mjs) ──────► api.raze.bot   market data, REST + WebSocket
+  │ pages, charts,         │ the lock: password → session          (RAZE_API_KEY added here)
+  │ addresses only         │ the vault: encrypted keys      ──────► router.raze.bot  quotes, swap builds
+  │                        │ signs swaps and transfers      ──────► Solana RPC       send, confirm, balances
+  └─ never sees a key      └─ data/vault.json (0600)
+```
+
+- **One server process** serves the app and holds everything secret: the Raze
+  API key (from its environment) and the vault of wallet keys (in its data
+  folder). The browser gets addresses, balances and charts.
+- **Everything under `/api/` is locked** until the password is entered. The
+  password unlocks the vault; locking forgets the key.
+- **Swaps:** the server asks the router for a quote and keeps it; the browser
+  shows it and, to trade, names it. The server builds exactly that quote on
+  the router for your wallet, signs it with the vault's key and sends it; the
+  browser waits for the confirmation.
+
+The full security model, and what it does not cover, is in
+[SECURITY.md](SECURITY.md).
+
+## Run it on your computer
+
+Requirements: Node.js 22.18 or newer (24 recommended), and a Raze API key from
+[raze.bot](https://raze.bot).
 
 ```bash
-git clone <this-repo> trade-ui
+git clone <this repository> trade-ui
 cd trade-ui
-npm install
-cp .env.example .env.local
+npm ci
+cp .env.example .env        # put your key in RAZE_API_KEY
+npm run build
+npm start
 ```
 
-Put a key from [raze.bot/pricing](https://raze.bot/pricing) in `.env.local`:
+The server prints a link on its first start:
 
 ```
-RAZE_API_KEY=your_key
-RAZE_API_BASE=https://api.raze.bot
+> trade-ui 0.2.0 on http://127.0.0.1:3000
+  First run: choose your password at
+    http://127.0.0.1:3000/?setup=Xq3…
 ```
 
-| Variable | |
-| --- | --- |
-| `RAZE_API_BASE` | The API's host root: `https://api.raze.bot`, or a local API such as `http://localhost:8810`. |
-| `RAZE_API_KEY` | Sent as `x-api-key` by the proxies. Empty for an API without keys. |
-| `RAZE_ROUTER_BASE` | The Solana router: quotes, venues, swap builds. Default `https://router.raze.bot`. |
-| `SOLANA_RPC_URL` | Sends and confirms swaps, reads balances. Must accept v1 transactions (SIMD-0385). Default `https://api.mainnet-beta.solana.com` (rate-limited: use your own for real volume). |
-| `SOLANA_WS_URL` | The RPC's WebSocket, for confirmations. Default: `SOLANA_RPC_URL` with `ws(s)://`. |
-| `SWAP_PRIORITY_MAX_LAMPORTS` | Cap of the router's own priority-fee estimate when no fee is set (the `/swap` page). Default `500000`. |
-| `SWAP_ALLOW_SPLIT` | `1` lets a quote split across two routes. Off by default. |
+Open it and choose a password. Trade UI then shows your **recovery key** once:
+nine groups of four characters. Write it down and keep it offline; if you ever
+forget the password, it sets a new one and your wallets stay. From then on
+every visit asks for the password. The setup code in the link proves you run
+the server; without it nobody can set the first password.
 
-Or leave `.env.local` empty and paste the key on first launch (it is kept in an httpOnly cookie for the proxy).
+Prefer a window of its own? See [Desktop app](#desktop-app).
 
-## Run
+## Host it on a server
 
-Browser:
+Trade UI on a VPS is the same server, reached through **HTTPS**: over plain
+HTTP your password would cross the network readable.
+
+### With Docker
 
 ```bash
-npm run dev          # http://127.0.0.1:3000, hot reload: server.cjs --dev
-npm run build && npm start   # production: server.cjs
+cp .env.example .env
+# RAZE_API_KEY=…
+# TRADE_UI_PUBLIC_URL=https://trade.example.com
+docker compose up -d
+docker compose logs trade-ui     # the first-run link with the setup code
 ```
 
-Both run `server.cjs`, also what the desktop app starts: the browser opens same-origin `/api/ws`, which `server.cjs` forwards to `${RAZE_API_BASE}/ws` (ws or wss by the base's scheme) with the key from `.env.local`. With plain `next dev` (no upgrade handler) the browser opens the API's `/ws` directly instead — keyless, or with the key typed in Settings (`?apiKey=`) — and otherwise streams over SSE through the proxy.
+[docker-compose.yml](docker-compose.yml) publishes the port on 127.0.0.1 only;
+the vault is in the `trade-ui-data` volume. Put a reverse proxy in front, for
+example [Caddy](deploy/Caddyfile), which gets the certificate and passes
+WebSockets as they are:
 
-Desktop (Electron, starts the same Next server in production):
+```
+trade.example.com {
+	reverse_proxy 127.0.0.1:3000
+}
+```
+
+### With systemd
 
 ```bash
-npm run electron:dev     # Next + Electron together
-npm run build && npm start & npm run electron
+npm ci && npm run build && npm run bundle   # dist/server: the server and what it needs
+sudo mkdir -p /opt/trade-ui && sudo cp -r dist/server/. /opt/trade-ui/
+sudo useradd --system --home /var/lib/trade-ui tradeui
+sudo install -m 600 .env /etc/trade-ui.env
+sudo cp deploy/trade-ui.service /etc/systemd/system/
+sudo systemctl enable --now trade-ui
+journalctl -u trade-ui                       # the first-run link
 ```
 
-## Pages
+The [unit](deploy/trade-ui.service) runs it as its own user, listening on
+127.0.0.1, with the vault in `/var/lib/trade-ui`.
 
-| Route | Data |
-| --- | --- |
-| `/monitor` | New / launchpad / trending columns, live deploys + migrations |
-| `/token/{chain}/{address}` | Header, TradingView chart, trades, holders, traders |
-| `/portfolio` | Local wallets + holdings / PnL / activity from `/wallets/{chain}/{address}` |
-| `/swap` | Any pair of Solana tokens on the router: live quote, route and split, DEX filter, slippage |
+### Checklist
 
-Chain switcher: `sol`, `eth`, `bsc`, `base`, `robinhood`.
+- HTTPS in front, and `TRADE_UI_PUBLIC_URL` set to its address: Trade UI
+  answers `localhost` and IP addresses, and a domain only once it is told
+  about it (protection against DNS rebinding); with an `https://` address it
+  also marks its cookie `Secure` and sends HSTS.
+- Nginx instead of Caddy: pass `Host`, `X-Forwarded-Proto`, and the WebSocket
+  upgrade (`proxy_http_version 1.1`, `Upgrade`, `Connection`).
+- Choose a long password: the server can be reached by anyone who finds it.
+  Wrong passwords slow down for the address that typed them (up to 5 minutes
+  between attempts), so a guesser elsewhere cannot lock you out. Behind a
+  reverse proxy on the same machine the address is taken from the proxy's
+  `X-Forwarded-For` (Caddy and Nginx set it).
+- Back up the data folder and keep the recovery key offline: without the
+  password or the recovery key, the vault cannot be opened.
 
-## Notes
+## Desktop app
 
-- The UI keeps prices in the chain's native coin (SOL/ETH/BNB): every `…Usd` field from the API is divided by the live native price at the API layer (`src/api/mappers.ts`), so components did not change units.
-- Token images: the row's own URL first, then `/tokens/{chain}/{address}/image` (a 302) through the proxy.
-- Candle and trade times are Unix milliseconds. Charts page back with `to`.
-- Not served by the API, so hidden or shown as `–`: dev buy, launch market cap, fees, creator graduations, 4h/12h changes, DexScreener-paid, holders' first-trade time.
-- After first run, change the key under Settings → Network.
-- Extra original routes (`/trending`, `/deploy`, …) may still exist in the tree; they are not in the nav and are not wired to evmapi.
+Installers are attached to each [release](../../releases): `.exe` (installer
+or portable) for Windows, `.dmg` for macOS (Intel and Apple Silicon),
+`.AppImage`, `.deb` and `.tar.gz` for Linux.
+
+On first launch the app asks for your Raze API key (and, optionally, your own
+Solana RPC), then for the vault password. It runs the same server inside,
+listening on 127.0.0.1 only.
+
+- Settings: menu **Trade UI → Settings…** (API key, RPC). **Lock** is
+  Ctrl/Cmd+L.
+- Data: **Trade UI → Open data folder** — `config.env` (the API key) and
+  `data/vault.json`. On Linux `~/.config/Raze Trade UI`, on macOS
+  `~/Library/Application Support/Raze Trade UI`, on Windows
+  `%APPDATA%\Raze Trade UI`.
+
+### Build it yourself
+
+```bash
+npm ci
+npm run dist          # this OS; or dist:linux, dist:win, dist:mac
+ls release/
+```
+
+Each OS builds best on itself; [the workflow](.github/workflows/release.yml)
+builds all three on GitHub Actions and attaches them to a draft release when a
+`v*` tag is pushed.
+
+### Signing
+
+Unsigned builds work, with a warning: Windows SmartScreen ("More info → Run
+anyway"), macOS Gatekeeper (right-click → Open). To sign in CI, set these
+repository secrets: `CSC_LINK` and `CSC_KEY_PASSWORD` (Apple Developer ID
+certificate), `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID`
+(notarization), `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` (Windows).
+
+## Configuration
+
+All of it lives in the server's environment or `.env` (desktop: `config.env`).
+None of it reaches the browser.
+
+| Variable | Default | |
+| --- | --- | --- |
+| `RAZE_API_KEY` | — | Your Raze key. Sent as `x-api-key` to the API and the router. |
+| `RAZE_API_BASE` | `https://api.raze.bot` | The market-data API. |
+| `RAZE_ROUTER_BASE` | `https://router.raze.bot` | The Solana router: quotes and builds. |
+| `SOLANA_RPC_URL` | `https://api.mainnet-beta.solana.com` | Sends and confirms, reads balances. Must accept v1 transactions (SIMD-0385). Use your own for real volume; a key in the URL stays on the server. |
+| `SOLANA_WS_URL` | the RPC URL with `ws(s)://` | Confirmations. |
+| `SWAP_PRIORITY_MAX_LAMPORTS` | `500000` | Cap of the router's priority-fee estimate when you set none. |
+| `SWAP_ALLOW_SPLIT` | off | `1` lets a quote split across two routes. |
+| `SWAP_MAX_SLIPPAGE_BPS` | `5000` | The most slippage a quote may ask for (5000 = 50 %). |
+| `HOST` | `127.0.0.1` | Where to listen. |
+| `PORT` | `3000` | |
+| `TRADE_UI_DATA_DIR` | `./data` | The vault's folder. |
+| `TRADE_UI_PUBLIC_URL` | — | The address you open it at, when it is a domain name (needed then). |
+| `TRADE_UI_ALLOWED_HOSTS` | — | More host names to answer for, comma-separated. |
+| `TRADE_UI_SETUP_TOKEN` | random | A fixed first-run setup code (automation). |
+
+## The lock and the wallets
+
+**The password** is chosen on the first run and asked on every visit, by every
+browser. Wrong passwords slow down. **Lock** (the padlock in the top bar, or
+Ctrl/Cmd+L on desktop) ends every session at once, with every stream and
+WebSocket they had open; so does the idle delay (Wallets → Lock
+automatically: 5 minutes to 4 hours, or never) and a restart.
+Change the password from the same panel; the recovery key keeps working.
+
+**Forgot the password?** On the lock screen, *Forgot your password?* → enter
+the recovery key and a new password. The wallets stay as they are; every other
+open Trade UI goes back to the lock screen. The recovery key keeps working
+afterwards, like a hardware wallet's recovery phrase. Lost it, or think
+someone saw it? Wallets → Security → *New recovery key* (asks the password)
+retires the old one. Without both the password and the recovery key the vault
+stays closed: keep exported keys as a last backup.
+
+**The Wallets page** (top bar → Wallets):
+
+- **New wallet** — Solana or EVM; several at once, numbered.
+- **Import key** — Solana: base58 (Phantom, Solflare, Backpack export) or a
+  keypair file (`solana-keygen`, `id.json`). EVM: the hex key (MetaMask,
+  Rabby). One per line for many, or load a file. Seed phrases are not
+  supported: export the account's private key from your wallet.
+- **Watch address** — balances and holdings of an address you do not hold the
+  key of. It never trades.
+- **Export key** (password) — base58 and the keypair JSON, or EVM hex.
+- **Send SOL** (password) — to any address, or everything ("Max").
+- **Delete** (password, for a wallet with a key) — the key leaves the vault for
+  good.
+- **Trading switch** — which wallets the panels and quick buys trade with
+  (also in the top bar's wallet picker). Several at once: one trade each.
+
+One EVM key is the same address on Ethereum, BNB Chain, Base and Robinhood.
+EVM trading waits for the EVM router; balances already show.
+
+Upgrading from a version that kept wallets in the browser (unencrypted, in
+`localStorage`): the Wallets page offers to move them into the vault and then
+erases the browser copy. An entry the vault refuses stays in the browser, with
+the reason, until you discard it. The desktop app starts from an empty
+browser: import those keys by hand.
 
 ## Swaps
 
-Solana only for now: the EVM router (`router/evm`) does not quote yet, so on ETH / BSC / Base / Robinhood the trading panel says so and does not trade.
+Solana only for now: on ETH / BSC / Base / Robinhood the trading panel says so.
 
-Where you trade:
+Where you trade: the token page's panel (market buy and sell, presets, the
+floating Instant Trade panel), the ⚡ quick buy on monitor rows and the
+sidebar's quick buy / sell, and `/swap` for any pair.
 
-- the token page's panel (market buy and sell, the presets, the floating Instant Trade panel), one trade per selected wallet, all at once;
-- the ⚡ quick buy on monitor rows and the sidebar's quick buy / sell;
-- `/swap`, any pair.
+Every trade is the same path:
 
-Every trade is the same path (`src/lib/swap/`):
+1. **Quote** — `GET /api/swap/quote` → router `GET /quote`, shown under the
+   amount (output, impact, venues). The server keeps the router's answer for a
+   minute and hands the browser a `quoteToken` with it. `/swap` refreshes it
+   every 800 ms while visible: the router has no push stream.
+2. **Build, sign, send** — `POST /api/wallets/{id}/swap` with that token: the
+   server asks the router to build the quote it kept, as the router gave it,
+   for the wallet (`/swap-instructions`, so the floor shown is the floor the
+   program enforces), checks the wallet is the only signer, signs with the
+   vault's key and sends with preflight: a swap that would fail is refused
+   before it costs a fee. Nothing the browser sends can change the route, the
+   amounts or the minimum received.
+3. **Confirm** — `signatureSubscribe` on `/api/solana/ws`, which the server
+   forwards to the RPC's WebSocket.
 
-1. **Quote:** `GET /api/swap/quote` → router `GET /quote`. The panel shows it under the amount (output, impact, venues). `/swap` refreshes it every 800 ms while the page is visible: the router has no push stream.
-2. **Build:** `POST /api/swap/build` → router `POST /swap-instructions` with that quote, so the floor shown is the floor the program enforces. The router builds **v1** transactions only.
-3. **Sign:**
-   - a local wallet signs here, with its key (ed25519 over the v1 message);
-   - a browser wallet gets the raw bytes through `solana:signAndSendTransaction`. A wallet that does not declare v1 gets the same instructions re-assembled as **v0** by the server (`src/lib/swap/v0.ts`), quoted with `reserveKeys=39` so the route fits 1,232 bytes.
-4. **Send:** `POST /api/solana/rpc` (only `sendTransaction`, `getSignatureStatuses`, `getBalance`, `getTokenAccountsByOwner`, `getAccountInfo`), with preflight. A swap that would fail is refused before it costs a fee.
-5. **Confirm:** `signatureSubscribe` on `/api/solana/ws`, which `server.cjs` forwards to the RPC's WebSocket. Under plain `next dev` (no socket) it falls back to reading the status every 1.5 s.
+The priority fee is the panel's ⛽ value (total lamports); slippage is the 🔥
+value, up to `SWAP_MAX_SLIPPAGE_BPS` (50 % unless you set it). A sell by % reads the exact token balance: 100% sells every last unit.
+Market orders only: a trade is swapped on the router when you press the button.
+Trade UI has no limit orders, no automations (TP/SL ladders, market making), no
+wallet or X trackers, and it does not launch tokens.
 
-Notes:
+Swaps run on Solana. On the EVM chains (Ethereum, BNB Chain, Base, Robinhood)
+Trade UI shows market data and balances, without trade buttons: the EVM router
+does not quote yet.
 
-- The priority fee is the panel's ⛽ value (total lamports). Slippage is the panel's 🔥 value; `/swap` has its own.
-- A sell by % reads the exact token balance from the RPC: 100% sells every last unit.
-- Market orders only. Limit orders, the Adv. automations, MEV relays and the platform fee need a server that is not part of Trade UI.
-- Demo wallets do not trade on chain. Watch-only wallets cannot sign.
-- Local keys live in this browser's `localStorage`, unencrypted, like the rest of the local wallet store. Keep only trading balances in them.
-
-## Tests
+## Development
 
 ```bash
-npm test     # node --test: trade lists, and the swap path (quote, forwarding, v0, local signing, trade → swap)
+npm ci
+cp .env.example .env
+npm run dev               # http://127.0.0.1:3000, hot reload (setup link in the log)
+npm test                  # server: vault, lock, quotes, signing, the gate; browser: trades, key import
+npm run typecheck
+npm run electron:dev      # the desktop shell around the dev server
 ```
+
+Always start it through `server.mjs` (`npm run dev` / `npm start`), not `next`
+directly: the API routes refuse to serve without the lock in front of them.
+
+| Path | |
+| --- | --- |
+| `server.mjs` | The server: Next.js behind the gate. |
+| `server/` | The lock (`auth.mjs`), the vault (`vault.mjs`, `keys.mjs`), the routes (`api.mjs`), the gate (`gate.mjs`), kept quotes (`quotes.mjs`), swaps and transfers (`solana.mjs`), the WebSocket proxies. |
+| `src/app/` | Pages (`monitor`, `token`, `portfolio`, `wallets`, `swap`) and the proxy routes under `api/`. |
+| `src/components/shell/LockGate.tsx` | The lock screen and first run. |
+| `src/lib/vault/` | The browser's client for the lock and the wallets. |
+| `electron/` | The desktop shell and its first-run window. |
+| `scripts/bundle-server.mjs` | `dist/server` (self-contained server) and `dist/app` (desktop). |
+| `test/` | Server tests (`node --test`). |
+
+## Troubleshooting
+
+- **"Trade UI does not answer for this host name"** — you opened it at an
+  address it was not told about. Set `TRADE_UI_PUBLIC_URL` (or
+  `TRADE_UI_ALLOWED_HOSTS`) and restart.
+- **"No Raze API key on this server"** — `RAZE_API_KEY` is empty: set it in
+  `.env` (desktop: Settings…) and restart.
+- **"Wrong setup code"** — copy the code from the server's log of *this* start;
+  a fixed one can be set with `TRADE_UI_SETUP_TOKEN`.
+- **Forgot the password** — lock screen → *Forgot your password?*, with the
+  recovery key. Lost that too: stop Trade UI, move `vault.json` out of the
+  data folder, start again: a new vault, into which you import the keys you
+  exported.
+- **"Start Trade UI with npm run dev or npm start"** — the API routes were
+  reached without `server.mjs` in front (plain `next dev`/`next start`).

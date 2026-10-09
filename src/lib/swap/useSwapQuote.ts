@@ -27,7 +27,6 @@ export interface SwapQuoteParams {
   swapMode?: "ExactIn" | "ExactOut";
   slippageBps: number;
   excludeDexes?: string[];
-  reserveKeys?: number;
   /** stop refreshing (hidden tab, panel not in use) */
   paused?: boolean;
   /** refresh period, ms */
@@ -55,7 +54,7 @@ export function useSwapQuote(params: SwapQuoteParams): SwapQuoteState {
   const prevPairRef = useRef<string | null>(null);
   const pollMs = params.pollMs ?? QUOTE_POLL_MS;
   const excludeKey = (params.excludeDexes ?? []).join(",");
-  const key = `${params.inputMint}|${params.outputMint}|${params.amount ?? ""}|${params.swapMode ?? "ExactIn"}|${params.slippageBps}|${excludeKey}|${params.reserveKeys ?? ""}|${pollMs}`;
+  const key = `${params.inputMint}|${params.outputMint}|${params.amount ?? ""}|${params.swapMode ?? "ExactIn"}|${params.slippageBps}|${excludeKey}|${pollMs}`;
 
   useEffect(() => {
     // A pair change invalidates the displayed quote outright: the old amounts
@@ -83,7 +82,6 @@ export function useSwapQuote(params: SwapQuoteParams): SwapQuoteState {
       swapMode: params.swapMode,
       slippageBps: params.slippageBps,
       excludeDexes: params.excludeDexes,
-      reserveKeys: params.reserveKeys,
     };
     let cancelled = false;
     let inFlight: AbortController | null = null;

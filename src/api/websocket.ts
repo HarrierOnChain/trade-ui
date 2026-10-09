@@ -1,10 +1,9 @@
 "use client";
 
 import { CHAIN_CHANGED_EVENT, getActiveChain } from "../lib/chains";
-import { notifyWireOpen } from "../lib/wire/singleton";
+import { markStreamOpen } from "../lib/streamSettle";
 import { apiCandle, apiTokenToEvent, apiTradeToTrade, asRecord, num, type Rec } from "./mappers";
 import { fetchNativePrices, nativeUsdSync, setNativePrices } from "./native";
-import { readApiSettings } from "./settings";
 
 /**
  * Events the UI listens to. Every live source is one channel of the API's
@@ -23,8 +22,6 @@ import { readApiSettings } from "./settings";
  * | `tick`           | token                      | `{tokenMint, time, priceUsd, marketCapUsd, liquidityUsd, lastPrice}` |
  * | `prices`         | prices                     | `{sol, eth, bnb}` USD                                |
  * | `wallet_trade`   | wallet (Solana)            | `{wallet, trade}` or `{wallet, snapshot, trades}`    |
- *
- * The remaining names are kept so older listeners compile; nothing sends them.
  */
 export type WsEventType =
   | "deploy"
@@ -37,14 +34,7 @@ export type WsEventType =
   | "token"
   | "tick"
   | "prices"
-  | "priceInfo"
-  | "wallet_trade"
-  | "transaction"
-  | "analysis"
-  | "alert"
-  | "dex_paid"
-  | "raze_listeners"
-  | "ohlcv";
+  | "wallet_trade";
 
 export type WsHandler = (data: Record<string, unknown>) => void;
 
@@ -71,8 +61,6 @@ interface Sub {
    *  the proxy's stream budget. */
   sse: number;
 }
-
-interface Session { wsProxy: boolean; wsUrl: string | null }
 
 const BOARD_OF: Partial<Record<WsEventType, "new" | "graduating" | "graduated">> = {
   deploy: "new",
@@ -142,7 +130,6 @@ export class RazeWebSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private opening = false;
   private attempts = 0;
-  private session: Session | null = null;
   private pricesHeld = false;
   private overCapWarned = false;
 
@@ -180,7 +167,6 @@ export class RazeWebSocket {
   }
 
   private resetConnection(): void {
-    this.session = null;
     this.closeSocket();
     this.attempts = 0;
     this.ensureSocket();
@@ -196,48 +182,16 @@ export class RazeWebSocket {
     void this.openLive().finally(() => { this.opening = false; });
   }
 
-  private async loadSession(): Promise<Session> {
-    if (this.session) return this.session;
-    try {
-      const r = await fetch("/api/session", { signal: AbortSignal.timeout(5_000), cache: "no-store" });
-      const j = await r.json() as { wsProxy?: boolean; wsUrl?: string | null };
-      this.session = { wsProxy: j.wsProxy === true, wsUrl: j.wsUrl ?? null };
-    } catch {
-      // No session route (static host): assume a same-origin proxy.
-      return { wsProxy: true, wsUrl: null };
-    }
-    return this.session;
-  }
-
-  /**
-   * server.cjs serves same-origin `/api/ws` and adds the key itself. Under
-   * `next dev` there is no upgrade handler, so the browser opens the API's
-   * socket directly — keyless, or with the key the user typed in Settings.
-   */
-  private socketUrl(session: Session): string | null {
-    if (session.wsProxy) return sameOriginWsUrl();
-    if (!session.wsUrl) return null;
-    const { apiKey } = readApiSettings();
-    if (!apiKey) return session.wsUrl;
-    try {
-      const u = new URL(session.wsUrl);
-      u.searchParams.set("apiKey", apiKey);
-      return u.toString();
-    } catch {
-      return session.wsUrl;
-    }
-  }
-
   private async openLive(): Promise<void> {
-    const session = await this.loadSession();
     // Prime native prices so the first snapshots convert; the `prices`
     // channel keeps them current from then on.
     const primed = fetchNativePrices().catch(() => null);
-    const url = this.socketUrl(session);
+    // server.mjs serves same-origin `/api/ws` and adds the key itself.
+    const url = sameOriginWsUrl();
     const socket = url ? await this.tryWs(url, 6_000) : null;
     await Promise.race([primed, new Promise((r) => setTimeout(r, 1_500))]);
     if (socket) {
-      this.bindSocket(socket, url!);
+      this.bindSocket(socket);
       return;
     }
     // No socket: stream the channels that asked for it over SSE (through
@@ -284,13 +238,13 @@ export class RazeWebSocket {
     });
   }
 
-  private bindSocket(socket: WebSocket, url: string): void {
+  private bindSocket(socket: WebSocket): void {
     socket.onopen = null;
     socket.onerror = null;
     this.abortAllSse();
     this.socket = socket;
     this.attempts = 0;
-    notifyWireOpen(url);
+    markStreamOpen();
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = setInterval(() => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ op: "ping" }));
@@ -470,8 +424,6 @@ export class RazeWebSocket {
   private async readSse(sid: string, path: string, ac: AbortController): Promise<void> {
     let attempt = 0;
     const headers: Record<string, string> = { accept: "text/event-stream" };
-    const { apiKey } = readApiSettings();
-    if (apiKey) headers["x-trade-ui-key"] = apiKey;
     while (!ac.signal.aborted) {
       try {
         const res = await fetch(path, { headers, signal: ac.signal, cache: "no-store" });
@@ -540,10 +492,6 @@ export class RazeWebSocket {
         setNativePrices(f.data);
         const p = asRecord(f.data) ?? {};
         this.dispatch("prices", { type: "prices", ...p });
-        const solPrice = nativeUsdSync();
-        if (solPrice > 0) {
-          this.dispatch("priceInfo", { type: "priceInfo", priceInfo: { solPrice }, solPrice });
-        }
         return;
       }
       case "launchpad": {
@@ -667,7 +615,7 @@ export class RazeWebSocket {
     this.connect();
     for (const t of types) {
       const spec = this.boardSpec(t);
-      if (!spec) continue; // no live channel behind it (e.g. `alert`)
+      if (!spec) continue; // not a board
       const cur = this.boardSubs.get(t);
       if (cur) {
         cur.rc += 1;

@@ -1,8 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { RazeWebSocket } from "../api/websocket";
-import { toArray } from "../api/normalize";
-import { getPreviewData, isPreviewMint, subscribePreview } from "../lib/previewData";
 import { despikeSeries } from "../lib/candleDespike";
 
 export interface LivePrice {
@@ -134,38 +132,6 @@ export function useLiveTradePrices(
   const initialPricesRef = useRef(initialPrices);
   initialPricesRef.current = initialPrices;
 
-  // Preview-mode short-circuit: any mint registered in the preview registry
-  // gets its livePrice injected statically into the returned map; the live
-  // WS path below skips them (their on-chain tokenMint doesn't exist).
-  useEffect(() => {
-    if (mints.length === 0) return;
-    const previewMints = mints.filter((m) => m && isPreviewMint(m));
-    if (previewMints.length === 0) return;
-
-    const sync = () => {
-      setMap((prev) => {
-        let next = prev;
-        let mutated = false;
-        for (const m of previewMints) {
-          const snap = getPreviewData(m);
-          if (!snap || !snap.livePrice) continue;
-          if (next.get(m) === snap.livePrice) continue;
-          if (!mutated) {
-            next = new Map(prev);
-            mutated = true;
-          }
-          next.set(m, snap.livePrice);
-        }
-        return mutated ? next : prev;
-      });
-    };
-    sync();
-    const unsubs = previewMints.map((m) => subscribePreview(m, sync));
-    return () => {
-      for (const u of unsubs) u();
-    };
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     const ws = RazeWebSocket.getInstance();
     ws.connect();
@@ -285,91 +251,6 @@ export function useLiveTradePrices(
       }, FLUSH_MS);
     });
 
-    // Parallel subscriber for the dedicated "analysis" event — same bundle/sniper
-    // semantics as trades but arrives separately on the Raze WS.
-    const unsubAnalysis = ws.on("analysis", (msg) => {
-      const raw = msg as Record<string, unknown>;
-      const data = (
-        typeof raw.data === "object" && raw.data !== null
-          ? (raw.data as Record<string, unknown>)
-          : raw
-      ) as Record<string, unknown>;
-
-      const mint = String(data.mint ?? data.tokenMint ?? raw.tokenMint ?? "");
-      if (!mint) return;
-      if (!wantedRef.current.has(mint)) return;
-
-      const isBundle = Boolean(data.isBundle ?? data.is_bundle);
-      const isSniper = Boolean(data.isSniper ?? data.is_sniper);
-      if (!isBundle && !isSniper) return;
-
-      const tokenAmount = extractTokenAmount(data.tokenAmount ?? data.token_amount);
-      const type = String(data.type ?? "BUY");
-      const bundleAddDelta = analysisDelta(isBundle, tokenAmount, type);
-      const sniperAddDelta = analysisDelta(isSniper, tokenAmount, type);
-      if (bundleAddDelta === 0 && sniperAddDelta === 0) return;
-
-      const existing = pendingRef.current.get(mint);
-      pendingRef.current.set(mint, {
-        // Analysis events don't carry price/sol info — preserve existing pending values.
-        price: existing?.price ?? 0,
-        ts: existing?.ts ?? Date.now(),
-        volumeSolAdd: existing?.volumeSolAdd ?? 0,
-        feesSolAdd: existing?.feesSolAdd ?? 0,
-        tradeCountAdd: existing?.tradeCountAdd ?? 0,
-        newSigners: existing?.newSigners ?? [],
-        bundleAddDelta: (existing?.bundleAddDelta ?? 0) + bundleAddDelta,
-        sniperAddDelta: (existing?.sniperAddDelta ?? 0) + sniperAddDelta,
-      });
-
-      if (flushRef.current !== null) return;
-      flushRef.current = setTimeout(() => {
-        flushRef.current = null;
-        if (pendingRef.current.size === 0) return;
-        setMap((prev) => {
-          const next = new Map(prev);
-          pendingRef.current.forEach((p, m) => {
-            const cur = next.get(m);
-            if (!cur && p.price <= 0) {
-              // No existing entry and this is an analysis-only event — stash deltas
-              // under an empty LivePrice so they aren't lost before the first trade.
-              next.set(m, {
-                ...emptyMetrics(),
-                price: 0,
-                prices: [],
-                ts: p.ts,
-                bundleAdd: p.bundleAddDelta,
-                sniperAdd: p.sniperAddDelta,
-              });
-              return;
-            }
-            // Same raw-buffer + despiked-view treatment as the trade flush.
-            let newBuf = cur?.prices ?? [];
-            if (p.price > 0) {
-              const raw = [...(rawBufRef.current.get(m) ?? cur?.prices ?? []), p.price]
-                .slice(-BUFFER_SIZE);
-              rawBufRef.current.set(m, raw);
-              newBuf = despikeSeries(raw);
-            }
-            next.set(m, {
-              price: p.price > 0 ? p.price : cur?.price ?? 0,
-              prices: newBuf,
-              ts: p.ts,
-              flash: cur?.flash,
-              volumeSol: (cur?.volumeSol ?? 0) + p.volumeSolAdd,
-              feesSol: (cur?.feesSol ?? 0) + p.feesSolAdd,
-              tradeCount: (cur?.tradeCount ?? 0) + p.tradeCountAdd,
-              uniqueTraders: (cur?.uniqueTraders ?? 0) + p.newSigners.length,
-              bundleAdd: (cur?.bundleAdd ?? 0) + p.bundleAddDelta,
-              sniperAdd: (cur?.sniperAdd ?? 0) + p.sniperAddDelta,
-            });
-          });
-          pendingRef.current.clear();
-          return next;
-        });
-      }, FLUSH_MS);
-    });
-
     // The trades channel's snapshot (recent trades, newest first) seeds the
     // sparkline and the price before the first live print. Running totals
     // (volume, trades, traders) stay "since subscribe": the snapshot is history.
@@ -402,7 +283,6 @@ export function useLiveTradePrices(
 
     return () => {
       unsub();
-      unsubAnalysis();
       unsubSnapshot();
       if (flushRef.current != null) {
         clearTimeout(flushRef.current);
@@ -415,10 +295,7 @@ export function useLiveTradePrices(
 
   useEffect(() => {
     const ws = RazeWebSocket.getInstance();
-    // Preview mints are served from the registry above; exclude them from
-    // the WS / OHLC seed path so we don't subscribe to a tokenMint that
-    // doesn't exist on-chain.
-    const wanted = new Set(mints.filter((m) => m && !isPreviewMint(m)));
+    const wanted = new Set(mints.filter((m) => m));
     wantedRef.current = wanted;
 
     wanted.forEach((m) => {

@@ -1,21 +1,18 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useHolders } from "../../hooks/useHolders";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { useSelectedToken } from "../../contexts/SelectedTokenContext";
 import { useApp } from "../../contexts/AppContext";
-import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
-import { fmtMcap, fmtNum, fmtUsd } from "../../lib/format";
+import { fmtNum, fmtUsd } from "../../lib/format";
 import { Icon, SolSymbol, Tooltip } from "../atoms";
 import { WalletLabel } from "../../hooks/useWalletLabels";
-import { FundingBadge } from "../FundingBadge";
-import { useFunding } from "../../hooks/useFunding";
 import type { Holder } from "../../types";
 import styles from "./styles.module.css";
 
 const CHUNK = 30;
-const COL_COUNT = 8;
+const COL_COUNT = 6;
 
 interface Props {
   mint?: string | null;
@@ -34,7 +31,7 @@ export function HoldersTable({
 }: Props) {
   const { selectedMint } = useSelectedToken();
   const mint = mintProp ?? selectedMint;
-  const { holders, currentPriceSol, supply, loading, error } = useHolders(mint);
+  const { holders, currentPriceSol, loading, error } = useHolders(mint);
   const { info } = useTokenInfo(mint);
   const mcap      = info?.marketCap ?? 0;
   const lastPrice = currentPriceSol > 0 ? currentPriceSol : (info?.lastPrice ?? 0);
@@ -44,9 +41,6 @@ export function HoldersTable({
 
   const sliced = useMemo(() => holders.slice(0, visible), [holders, visible]);
   const hasMore = visible < holders.length;
-
-  const visibleAddrs = useMemo(() => sliced.map((h) => h.address), [sliced]);
-  useFunding(visibleAddrs);
 
   const { sentinelRef, rootRef } = useInfiniteScroll<HTMLTableRowElement, HTMLDivElement>(
     () => setVisible((v) => Math.min(v + CHUNK, holders.length)),
@@ -60,23 +54,19 @@ export function HoldersTable({
           <colgroup>
             <col className={styles.cRank} />
             <col className={styles.cWallet} />
-            <col className={styles.cFunding} />
             <col className={styles.cNum} />
             <col className={styles.cNum} />
             <col className={styles.cPnl} />
             <col className={styles.cHeld} />
-            <col className={styles.cAge} />
           </colgroup>
           <thead>
             <tr>
               <th className={styles.thLeft}>#</th>
               <th className={styles.thLeft}>Wallet</th>
-              <th className={styles.thLeft}>Funding</th>
               <th className={styles.thRight}>Bought</th>
               <th className={styles.thRight}>Sold</th>
               <th className={styles.thRight}>U. PnL</th>
               <th className={styles.thRight}>Held</th>
-              <th className={styles.thRight}>Age</th>
             </tr>
           </thead>
           <tbody>
@@ -105,7 +95,6 @@ export function HoldersTable({
                 mcap={mcap}
                 lastPrice={lastPrice}
                 solPrice={solPrice}
-                supply={supply}
                 isBundle={bundleSigners?.has(h.address) ?? false}
                 isSniper={sniperSigners?.has(h.address) ?? false}
                 onAddressClick={onAddressClick}
@@ -128,7 +117,6 @@ const HolderRow = React.memo(function HolderRow({
   mcap,
   lastPrice,
   solPrice,
-  supply,
   isBundle,
   isSniper,
   onAddressClick,
@@ -137,7 +125,6 @@ const HolderRow = React.memo(function HolderRow({
   mcap: number;
   lastPrice: number;
   solPrice: number;
-  supply: number;
   isBundle: boolean;
   isSniper: boolean;
   onAddressClick?: (a: string) => void;
@@ -159,9 +146,6 @@ const HolderRow = React.memo(function HolderRow({
 
   const buySol    = holder.buySol    ?? 0;
   const sellSol   = holder.sellSol   ?? 0;
-  const bought    = holder.bought    ?? 0;
-  const sold      = holder.sold      ?? 0;
-  const trades    = holder.trades    ?? 0;
   const buyCount  = holder.buyCount  ?? 0;
   const sellCount = holder.sellCount ?? 0;
 
@@ -171,16 +155,9 @@ const HolderRow = React.memo(function HolderRow({
       : mcap > 0
       ? (mcap * pct) / 100
       : holder.valueUsd ?? 0;
-  const avgBuyPriceSol  = bought > 0 ? buySol / bought : 0;
-  const costBasisRemUsd = avgBuyPriceSol * holder.amount * solPrice;
-  // Tokens bought are not in the API's holder rows; its own unrealized PnL
-  // stands in for the cost-basis math then.
-  const apiPnlUsd       = bought > 0 ? undefined : holder.unrealizedPnlUsd;
-  const pnlUsd          = apiPnlUsd ?? currentValueUsd - costBasisRemUsd;
-  const pnlKnown        = apiPnlUsd != null || (solPrice > 0 && currentValueUsd > 0 && bought > 0);
-
-  const avgBuyMcap  = bought > 0 && solPrice > 0 ? (buySol  * solPrice / bought) * supply : 0;
-  const avgSellMcap = sold   > 0 && solPrice > 0 ? (sellSol * solPrice / sold  ) * supply : 0;
+  // The API's unrealized PnL for the holding (no per-holder cost basis here).
+  const pnlUsd   = holder.unrealizedPnlUsd ?? 0;
+  const pnlKnown = holder.unrealizedPnlUsd != null;
 
   const isProfit = pnlUsd >= 0;
 
@@ -243,30 +220,18 @@ const HolderRow = React.memo(function HolderRow({
         </div>
       </td>
 
-      <td data-label="Funding" className={styles.tdLeft}>
-        <div className={styles.fundingCell}>
-          <FundingBadge address={holder.address} size="xs" />
-        </div>
-      </td>
-
       <td data-label="Bought" className={styles.tdRight}>
         <div className={styles.stack}>
           <span className={styles.primary}>
-            {bought > 0 && buySol > 0 ? (
-              <>{fmtNum(bought)} / <span className={styles.sol}><SolSymbol size={10} /></span>{buySol.toFixed(2)}</>
-            ) : bought > 0 ? (
-              fmtNum(bought)
-            ) : buySol > 0 ? (
+            {buySol > 0 ? (
               <><span className={styles.sol}><SolSymbol size={10} /></span>{buySol.toFixed(2)}</>
             ) : (
               <span className={styles.dim}>–</span>
             )}
           </span>
-          {(buyCount > 0 || avgBuyMcap > 0) && (
+          {buyCount > 0 && (
             <span className={styles.sub}>
-              {buyCount > 0 && <><span className={styles.buyCount}>{buyCount}</span> buys</>}
-              {buyCount > 0 && avgBuyMcap > 0 && <> · </>}
-              {avgBuyMcap > 0 && <>{fmtMcap(avgBuyMcap)}</>}
+              <span className={styles.buyCount}>{buyCount}</span> buys
             </span>
           )}
         </div>
@@ -275,21 +240,15 @@ const HolderRow = React.memo(function HolderRow({
       <td data-label="Sold" className={styles.tdRight}>
         <div className={styles.stack}>
           <span className={styles.primary}>
-            {sold > 0 && sellSol > 0 ? (
-              <>{fmtNum(sold)} / <span className={styles.sol}><SolSymbol size={10} /></span>{sellSol.toFixed(2)}</>
-            ) : sold > 0 ? (
-              fmtNum(sold)
-            ) : sellSol > 0 ? (
+            {sellSol > 0 ? (
               <><span className={styles.sol}><SolSymbol size={10} /></span>{sellSol.toFixed(2)}</>
             ) : (
               <span className={styles.dim}>–</span>
             )}
           </span>
-          {(sellCount > 0 || avgSellMcap > 0) && (
+          {sellCount > 0 && (
             <span className={styles.sub}>
-              {sellCount > 0 && <><span className={styles.sellCount}>{sellCount}</span> sells</>}
-              {sellCount > 0 && avgSellMcap > 0 && <> · </>}
-              {avgSellMcap > 0 && <>{fmtMcap(avgSellMcap)}</>}
+              <span className={styles.sellCount}>{sellCount}</span> sells
             </span>
           )}
         </div>
@@ -317,27 +276,6 @@ const HolderRow = React.memo(function HolderRow({
           </div>
         </div>
       </td>
-
-      <td data-label="Age" className={`${styles.tdRight} ${styles.mono}`}>
-        {holder.firstTrade ? <AgeInline ts={holder.firstTrade} /> : <span className={styles.dim}>–</span>}
-      </td>
     </tr>
   );
 });
-
-function AgeInline({ ts, className }: { ts: string | number; className?: string }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const tsMs = typeof ts === "number" ? ts : new Date(ts).getTime();
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !isFinite(tsMs)) return;
-    el.textContent = formatAge(tsMs);
-    registerAge(el, tsMs);
-    return () => unregisterAge(el);
-  }, [tsMs]);
-  return (
-    <span ref={ref} className={className}>
-      {isFinite(tsMs) ? formatAge(tsMs) : "–"}
-    </span>
-  );
-}

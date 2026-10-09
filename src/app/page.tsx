@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const VALID_ROUTES = ["/monitor", "/portfolio", "/deploy"];
+const VALID_ROUTES = ["/monitor", "/portfolio", "/wallets", "/swap"];
 
 export default function HomePage() {
   const router = useRouter();

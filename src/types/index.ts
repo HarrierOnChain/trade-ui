@@ -9,22 +9,14 @@ export interface TokenEvent {
   name: string;
   symbol: string;
   dex: string;
-  uri?: string | null;
   image?: string | null;
   marketCap?: number;
-  initialMarketCap?: number;
   lastPrice?: number;
   bundlePercentage?: number;
   sniperPercentage?: number;
   creatorDeploys?: number;
-  creatorMigrations?: number;
-  creatorBuySol?: number;
-  creatorBuyPrice?: number;
-  creatorBuyTokens?: number;
   signer?: string;
   slot?: number;
-  firstHourTrades?: number;
-  firstHourVolume?: number;
   priceChange?: number;
   /** Bonding-curve completion, 0-100 (the API's launchpad.progressPercent). */
   graduationPercent?: number;
@@ -36,19 +28,14 @@ export interface TokenEvent {
   holders?: number;
   tradeCount?: number;
   totalSolVolume?: number;
-  feesTotal?: number;
   buyCount?: number;
   sellCount?: number;
-  uniqueTraders?: number;
   website?: string | null;
   twitter?: string | null;
   telegram?: string | null;
   created_at: string;
   migrated_at?: string;
   isNew?: boolean;
-  /** Bonding-curve / pool cashback flag (Pump.fun byte 82 / PumpSwap byte 244).
-   *  Orthogonal to `dex` — both Pump.fun and Mayhem tokens can be cashback. */
-  hasCashback?: boolean;
   /** Quote mint the token is paired against (Pump.fun enabled USDC quotes
    *  2026-05-21; SOL pairs report wrapped-SOL). */
   quoteMint?: string;
@@ -87,14 +74,11 @@ export interface Holder {
   amount: number;
   percentage: number;
   rank: number;
-  bought?: number;
-  sold?: number;
   buySol?: number;
   sellSol?: number;
   trades?: number;
   buyCount?: number;
   sellCount?: number;
-  firstTrade?: string;
   lastTrade?: string;
   isLiquidityPool?: boolean;
   /** Pump.fun system PDA — excluded from concentration metrics. */
@@ -117,41 +101,20 @@ export interface TopTrader {
   totalVolume: number;    // USD
   totalPnL: number;       // USD
   pnlSol: number;         // SOL
-  avgTradeSize: number;
-  winRate: number;
   buySol: number;         // SOL spent on buys
   sellSol: number;        // SOL received from sells
   boughtTokens: number;
   soldTokens: number;
-  avgBuyPrice: number;    // SOL per token
-  avgSellPrice: number;   // SOL per token
   isHolding: boolean;
-  firstTrade?: string;
   lastTrade?: string;
+  /** 1 when the API tags the wallet a bundler, else 0. */
   bundleTrades?: number;
+  /** 1 when the API tags the wallet a sniper, else 0. */
   sniperTrades?: number;
-  proTrades?: number;
-  entryDelaySeconds?: number | null;
-  largestTrade?: number;
   /** Tokens held now (the API reports the balance, not bought − sold). */
   heldTokens?: number;
   /** totalPnL came from the API (realized + unrealized): live trades keep it. */
   pnlFromApi?: boolean;
-}
-
-export interface TrendingToken {
-  mint: string;
-  name?: string;
-  symbol?: string;
-  image?: string | null;
-  score?: number;
-  tradeCount?: number;
-  uniqueTraders?: number;
-  marketCap?: number;
-  volume?: number;
-  priceChange?: number;
-  // Raw API fields
-  [key: string]: unknown;
 }
 
 export interface SearchResult {
@@ -160,7 +123,6 @@ export interface SearchResult {
   symbol: string;
   name: string;
   platform: string;
-  uri?: string;
   time?: string;
   created_at?: string;
   image?: string | null;
@@ -211,20 +173,12 @@ export interface WalletSummaryItem {
   totalVolumeUsd: number;
   avgTradeSizeSol: number;
   avgTradeSizeUsd: number;
-  largestTradeSol: number;
-  largestTradeUsd: number;
-  totalFees: number;
   realizedPnlSol: number;
   realizedPnlUsd: number;
   realizedPnlPct?: number | null;
   uniqueTokensTraded: number;
-  winningTokens: number;
   winRate: number;
-  firstTradeAt?: string | null;
   lastTradeAt?: string | null;
-  proTradeCount: number;
-  sniperCount: number;
-  bundleCount: number;
 }
 
 export interface WalletSummaryResponse {
@@ -235,103 +189,6 @@ export interface WalletSummaryResponse {
   solPriceUsd?: number;
   from?: string | null;
   to?: string | null;
-  timestamp?: string;
-}
-
-export type LeaderboardPeriod = "daily" | "weekly" | "monthly";
-
-export interface PnlLeaderboardWallet {
-  signer: string;
-  pnlSol: number;
-  pnlUsd: number;
-  trades: number;
-}
-
-export interface PnlLeaderboardResponse {
-  success: boolean;
-  period: LeaderboardPeriod;
-  platform: string;
-  wallets: PnlLeaderboardWallet[];
-  limit: number;
-  offset: number;
-  solPriceUsd?: number;
-  timestamp?: string;
-  error?: string;
-}
-
-export interface PnlSummaryResponse {
-  success: boolean;
-  period: LeaderboardPeriod;
-  platform: string;
-  totalProfitableWallets: number;
-  totalPnlSol: number;
-  totalPnlUsd: number;
-  avgPnlSol: number;
-  avgPnlUsd: number;
-  medianPnlSol: number;
-  medianPnlUsd: number;
-  p90PnlSol: number;
-  p90PnlUsd: number;
-  p99PnlSol: number;
-  p99PnlUsd: number;
-  maxPnlSol: number;
-  maxPnlUsd: number;
-  solPriceUsd?: number;
-  timestamp?: string;
-  error?: string;
-}
-
-export interface WalletPerformanceDataPoint {
-  timestamp: string;
-  trades: number;
-  buys: number;
-  sells: number;
-  volumeSol: number;
-  volumeUsd: number;
-  realizedPnlSol: number;
-  realizedPnlUsd: number;
-  uniqueTokens: number;
-}
-
-export interface WalletPerformanceResponse {
-  success: boolean;
-  address: string;
-  startTime: string;
-  endTime: string;
-  resolution: "1h" | "1d";
-  data: WalletPerformanceDataPoint[];
-  count: number;
-  solPriceUsd?: number;
-  timestamp?: string;
-}
-
-export interface FifoTokenPnl {
-  mint: string;
-  realizedPnlSol: number;
-  totalCostBasis: number;
-  unrealizedCostSol: number;
-  unrealizedTokens: number;
-  unrealizedLots: number;
-  totalBuys: number;
-  totalSells: number;
-}
-
-export interface WalletFifoPnlTotals {
-  totalRealizedPnlSol: number;
-  totalRealizedPnlUsd: number;
-  totalUnrealizedCostSol: number;
-  totalUnrealizedCostUsd: number;
-  tokenCount: number;
-  tokens: FifoTokenPnl[];
-}
-
-export interface WalletFifoPnlResponse {
-  success: boolean;
-  address: string;
-  data: WalletFifoPnlTotals;
-  tradesProcessed: number;
-  truncated: boolean;
-  solPriceUsd?: number;
   timestamp?: string;
 }
 
@@ -355,47 +212,11 @@ export interface WalletPnlHistoryResponse {
   timestamp?: string;
 }
 
-export interface WalletTokenBreakdown {
-  mint: string;
-  totalTrades: number;
-  buys: number;
-  sells: number;
-  totalVolumeSol: number;
-  totalVolumeUsd: number;
-  buyVolumeSol: number;
-  buyVolumeUsd: number;
-  sellVolumeSol: number;
-  sellVolumeUsd: number;
-  realizedPnlSol: number;
-  realizedPnlUsd: number;
-  firstTrade?: string | null;
-  lastTrade?: string | null;
-  totalFees: number;
-  name?: string;
-  symbol?: string;
-  platform?: string;
-  positionStatus?: "open" | "closed";
-  holdDurationSeconds?: number;
-}
-
-export interface WalletTokensResponse {
-  success: boolean;
-  address: string;
-  data: WalletTokenBreakdown[];
-  count: number;
-  limit: number;
-  offset: number;
-  sort: "volume" | "pnl" | "trades" | "recent";
-  hasMore: boolean;
-  solPriceUsd?: number;
-  timestamp?: string;
-}
-
 export interface ChainSentiment {
+  /** Buy share of the last hour's trades on the top trending tokens, 0-100. */
   score: number;
-  label?: string;
-  timestamp?: string;
-  [key: string]: unknown;
+  buyRatio: number;
+  trades: number;
 }
 
 export interface PriceChangePeriod {
@@ -423,23 +244,4 @@ export interface TokenPriceChanges {
   solPriceUSD?: number;
 }
 
-export interface CandleData {
-  time: number; // unix seconds
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
 export type Timeframe = "1s" | "5s" | "30s" | "1m" | "5m" | "15m" | "1h";
-
-export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
-  "1s": 1,
-  "5s": 5,
-  "30s": 30,
-  "1m": 60,
-  "5m": 300,
-  "15m": 900,
-  "1h": 3600,
-};

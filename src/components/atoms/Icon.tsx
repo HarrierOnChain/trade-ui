@@ -22,6 +22,47 @@ function SolanaMark({ s = 12 }: { s?: number }) {
 }
 
 export const Icon = {
+  lock: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="8" cy="10.5" r="0.9" fill="currentColor" />
+    </svg>
+  ),
+  unlock: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="3" y="7" width="10" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5.5 7V5a2.5 2.5 0 0 1 4.8-1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="8" cy="10.5" r="0.9" fill="currentColor" />
+    </svg>
+  ),
+  key: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="5" cy="10.5" r="2.8" stroke="currentColor" strokeWidth="1.3" />
+      <path d="m7 8.5 6-6M11 4.5l1.6 1.6M9.4 6.1l1.2 1.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  ),
+  shield: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 1.8 13 3.6v4c0 3.1-2.1 5.4-5 6.6-2.9-1.2-5-3.5-5-6.6v-4L8 1.8Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="m5.8 8 1.6 1.6L10.4 6.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+  send: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M14 2 7 9M14 2l-4.5 12L7 9 2 6.5 14 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
+  ),
+  plus: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  ),
+  trash: (s = 14) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
   search: (s = 14) => (
     <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
       <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.3" />
@@ -384,6 +425,11 @@ export const Icon = {
       <path d="M3 4v3h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  swap: (s = 12) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 5h9l-2.5-2.5M13 11H4l2.5 2.5" />
+    </svg>
+  ),
   arrowUp: (s = 10) => (
     <svg width={s} height={s} viewBox="0 0 10 10">
       <path d="M5 2v6M2.5 4.5 5 2l2.5 2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
@@ -392,32 +438,6 @@ export const Icon = {
   arrowDown: (s = 10) => (
     <svg width={s} height={s} viewBox="0 0 10 10">
       <path d="M5 8V2M2.5 5.5 5 8l2.5-2.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  ),
-  // Remix-style "line" icons for the post-launch automation cards.
-  autobuy: (s = 18) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 16V8M8.5 11.5 12 8l3.5 3.5" />
-    </svg>
-  ),
-  autosell: (s = 18) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8v8M8.5 12.5 12 16l3.5-3.5" />
-    </svg>
-  ),
-  volumeBot: (s = 18) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 20h16" />
-      <path d="M6.5 20v-5M12 20v-11M17.5 20v-8" />
-    </svg>
-  ),
-  autoclean: (s = 18) => (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5.5 8.5A7.5 7.5 0 0 1 18 6.2" />
-      <path d="M18.5 15.5A7.5 7.5 0 0 1 6 17.8" />
-      <path d="M18 3v3.5h-3.5M6 21v-3.5h3.5" />
     </svg>
   ),
   rocketSharp: (s = 14) => (

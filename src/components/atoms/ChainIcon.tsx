@@ -1,5 +1,4 @@
 "use client";
-import React from "react";
 import { type ChainId } from "../../lib/chains";
 import { Icon } from "./Icon";
 

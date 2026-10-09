@@ -6,7 +6,7 @@
  * snake-ish legacy field names, so the conversion happens here, once, for REST
  * and live frames alike. Unknown stays `undefined` — never a made-up 0.
  */
-import { getActiveChain, type ChainId } from "../lib/chains";
+import { getActiveChain } from "../lib/chains";
 import { imageSrc } from "./evmapi";
 import type { Holder, TokenEvent, TopTrader, Trade } from "../types";
 
@@ -112,7 +112,6 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     // The launchpad names the platform the columns filter on; a graduated or
     // never-launched token falls back to its main pool's DEX.
     dex: platformName(launchpad?.name) || String(pool?.dex ?? ""),
-    uri: null,
     image: imageSrc(str(row.image) ?? null),
     website: str(socials.website) ?? null,
     twitter: str(socials.twitter) ?? null,
@@ -230,14 +229,10 @@ export function apiHolderToTrader(row: Rec, native: number): TopTrader {
     totalPnL: pnlUsd ?? soldUsd - boughtUsd,
     // The table's column is realized PnL.
     pnlSol: usdToNative(realizedUsd ?? soldUsd - boughtUsd, native) ?? 0,
-    avgTradeSize: buys + sells > 0 ? (boughtUsd + soldUsd) / (buys + sells) : 0,
-    winRate: 0,
     buySol: usdToNative(boughtUsd, native) ?? 0,
     sellSol: usdToNative(soldUsd, native) ?? 0,
     boughtTokens: 0,
     soldTokens: 0,
-    avgBuyPrice: 0,
-    avgSellPrice: 0,
     isHolding: (num(row.amount) ?? 0) > 0,
     heldTokens: num(row.amount),
     lastTrade: msToIso(row.lastActiveAt),
@@ -260,8 +255,4 @@ export function apiCandle(row: Rec): { time: number; open: number; high: number;
     close,
     volume: num(row.volume) ?? 0,
   };
-}
-
-export function chainOf(row: Rec | null | undefined, fallback: ChainId | string = getActiveChain()): string {
-  return str(row?.chain) ?? String(fallback);
 }

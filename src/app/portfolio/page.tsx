@@ -5,55 +5,40 @@
  * Design intent (rewritten 2026-06): the dashboard is ALWAYS the sum of every
  * wallet you manage. There is no per-wallet "scope" selection — that used to
  * double as the global trading set and quietly re-scope the whole page, which
- * nobody could follow. The only switch is Live ↔ Demo (real money vs paper),
- * and it only appears when you actually own a demo wallet.
+ * nobody could follow.
  *
  *   • Hero        — title + balance summary + realized-PnL chart
- *   • Mode toggle — Live / Demo (conditional)
- *   • Tabs        — Wallets · Holdings · Activity
+ *   • Tabs        — Holdings · Activity
  *
- * Trading scope (which wallets sign orders) lives in the top-bar wallet popup.
- * We only reflect it, read-only, as a "Trading" badge in the Wallets tab.
+ * Wallets themselves are managed on the Wallets page (keys, watch addresses,
+ * export, send); which wallets trade is picked in the top-bar wallet popup.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useClientNav } from "../../components/shell/ClientPages";
-import { Btn } from "../../components/atoms";
+import { Btn, Icon } from "../../components/atoms";
 import { useApp } from "../../contexts/AppContext";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import { usePortfolioScope } from "../../hooks/usePortfolioScope";
-import { useWalletSummaryBatch } from "../../hooks/useWalletSummaryBatch";
-import { useTrackerStream, type TrackedWallet } from "../../hooks/useTrackerStream";
-import { useUserWallets, type UserWallet, type BulkWalletResult } from "../../hooks/useUserWallets";
-import { useBackend } from "../../api/backend";
-import { type DemoWalletSummary } from "../../api/backend";
-import { onDemoChanged } from "../../lib/demoEvents";
+import { useWalletTradeStream, type StreamWallet } from "../../hooks/useWalletTradeStream";
+import { useUserWallets, type UserWallet } from "../../hooks/useUserWallets";
 import { useHiddenTokens } from "../../lib/hiddenTokens";
 import { shortAddr } from "../../lib/format";
 import { tokenHref } from "../../lib/tokenHref";
-import { findQuoteMint, isStableQuoteMint, stableQuoteMintAddresses } from "../../lib/quoteMints";
-import type { Trade, TokenHolding } from "../../types";
+import { findQuoteMint, isStableQuoteMint } from "../../lib/quoteMints";
+import type { TokenHolding } from "../../types";
 
 import {
   TabBar, EmptyHero,
 } from "./_components/atoms";
-import { WalletsTab } from "./_components/WalletsTab";
 import { HoldingsTab, ActivityTab } from "./_components/tabs";
 import { SpotSummary } from "./_components/SpotSummary";
-import { aggregateDemoScopes } from "./_components/demoScope";
-import {
-  CreateWalletModal, ImportWalletModal, CreateDemoWalletModal,
-  RenameWalletModal, SendModal, ReceiveModal, BurnModal,
-  ConsolidateModal, ClaimFeesModal, ExportKeyModal,
-  FundModal,
-  DeleteWalletModal, ResetDemoModal,
-} from "./_components/modals";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
-type Tab = "wallets" | "holdings" | "activity";
+type Tab = "holdings" | "activity";
 
 /* ── Page ────────────────────────────────────────────────────────────── */
 
@@ -70,138 +55,31 @@ export default function PortfolioPage() {
   const { pushToast } = useApp();
   const isMobile = useIsMobile();
   const solPrice = useSolPrice() ?? 0;
-  const client = useBackend();
 
   const userWallets = useUserWallets();
-  const {
-    activeIds: tradingIds,   // read-only here — drives the "Trading" badge only
-    setActive: setTradingWallets,
-    balances: liveBalances,
-  } = userWallets;
+  const { balances: liveBalances } = userWallets;
 
-  // Modal + view state
-  const [tab, setTab] = useState<Tab>("wallets");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
-  const [demoOpen, setDemoOpen] = useState(false);
-  const [renameWallet, setRenameWallet] = useState<UserWallet | null>(null);
-  const [sendWallet, setSendWallet] = useState<UserWallet | null>(null);
-  const [receiveWallet, setReceiveWallet] = useState<UserWallet | null>(null);
-  const [fundWallet, setFundWallet] = useState<UserWallet | null>(null);
-  const [burnWallet, setBurnWallet] = useState<UserWallet | null>(null);
-  const [consolidateWallet, setConsolidateWallet] = useState<UserWallet | null>(null);
-  const [claimFeesWallet, setClaimFeesWallet] = useState<UserWallet | null>(null);
-  const [exportKeyWallet, setExportKeyWallet] = useState<UserWallet | null>(null);
-  const [deleteWallet, setDeleteWallet] = useState<UserWallet | null>(null);
-  const [resetDemoWallet, setResetDemoWallet] = useState<UserWallet | null>(null);
-  const [refreshTick, setRefreshTick] = useState(0);
+  const [tab, setTab] = useState<Tab>("holdings");
 
-  // Portfolio surfaces managed wallets only. Phantom is the login identity
-  // (shown in the TopBar), not a tradeable wallet here.
-  const wallets: UserWallet[] = useMemo(
-    () => userWallets.wallets.filter((w) => !w.isConnected),
-    [userWallets.wallets],
-  );
-  const onChainWallets = useMemo(() => wallets.filter((w) => w.kind !== "DEMO"), [wallets]);
-  const demoWallets = useMemo(() => wallets.filter((w) => w.kind === "DEMO"), [wallets]);
+  // Every wallet of the vault on this chain: keys and watch-only addresses.
+  const wallets: UserWallet[] = userWallets.wallets;
+  const onChainWallets = wallets;
   const liveAddresses = useMemo(() => onChainWallets.map((w) => w.pubkey), [onChainWallets]);
-
-  // Live ↔ Demo (paper) view. Demo is only reachable once the user owns a demo
-  // wallet — the Hero mode toggle and the Wallets-tab "Demo" button both gate on
-  // that. There is exactly one demo wallet per user (enforced backend-side), so
-  // the Demo view is a single paper account, not an aggregate.
-  const [usingDemo, setUsingDemo] = useState(false);
-
-  // The "Demo" button is dual-purpose: with no paper wallet yet it opens the
-  // create modal; once one exists it switches the dashboard into the Demo view.
-  function openDemo() {
-    if (demoWallets.length > 0) setUsingDemo(true);
-    else setDemoOpen(true);
-  }
-
-  // If the demo wallet is deleted while we're viewing it, fall back to Live so
-  // the dashboard never sits on an empty paper scope.
-  useEffect(() => {
-    if (usingDemo && demoWallets.length === 0) setUsingDemo(false);
-  }, [usingDemo, demoWallets.length]);
-
-  // 30-day window — covers the longest PnL/performance range we display
-  const range = useMemo(() => {
-    const now = Date.now();
-    const from = now - 30 * 86_400 * 1000;
-    return {
-      fromMs: from, toMs: now,
-      fromSec: Math.floor(from / 1000), toSec: Math.floor(now / 1000),
-      resolution: "1d" as const,
-    };
-  }, []);
-
-  // One-shot batch summary for every on-chain wallet
-  const summary = useWalletSummaryBatch(
-    liveAddresses,
-    { from: range.fromMs, to: range.toMs },
-    refreshTick,
-  );
-  const summaryByAddr = useMemo(() => {
-    const m = new Map<string, (typeof summary.summaries)[number]>();
-    for (const s of summary.summaries) m.set(s.address, s);
-    return m;
-  }, [summary.summaries]);
-
-  /* ── Demo data — fetched for ALL demo wallets, then aggregated ──────── */
-
-  const [demoSummaries, setDemoSummaries] = useState<Record<string, DemoWalletSummary>>({});
-  const demoKey = useMemo(() => demoWallets.map((w) => w.id).join(","), [demoWallets]);
-  useEffect(() => {
-    if (demoWallets.length === 0) { setDemoSummaries({}); return; }
-    let cancelled = false;
-    const fetchAll = async () => {
-      const entries = await Promise.all(
-        demoWallets.map(async (w) => {
-          try { return [w.id, await client.demoSummary(w.id)] as const; }
-          catch { return null; }
-        }),
-      );
-      if (cancelled) return;
-      const map: Record<string, DemoWalletSummary> = {};
-      for (const e of entries) if (e) map[e[0]] = e[1];
-      setDemoSummaries(map);
-    };
-    void fetchAll();
-    const off = onDemoChanged(() => { if (!cancelled) void fetchAll(); });
-    const iv = setInterval(fetchAll, 8_000);
-    return () => { cancelled = true; off(); clearInterval(iv); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, demoKey, refreshTick]);
-
-  const demoScope = useMemo(() => {
-    if (demoWallets.length === 0) return null;
-    const parts = demoWallets
-      .map((w) => { const s = demoSummaries[w.id]; return s ? { summary: s, pubkey: w.pubkey } : null; })
-      .filter((p): p is { summary: DemoWalletSummary; pubkey: string } => p != null);
-    return parts.length ? aggregateDemoScopes(parts) : null;
-  }, [demoWallets, demoSummaries]);
-  const demoReady = demoScope != null;
 
   /* ── Live scope — always every on-chain wallet ─────────────────────── */
 
-  const scope = usePortfolioScope(
-    liveAddresses,
-    { from: range.fromSec, to: range.toSec, resolution: range.resolution },
-    refreshTick,
-  );
+  const scope = usePortfolioScope(liveAddresses);
 
-  // Tracker stream — live alerts for every on-chain wallet
-  const trackedWallets: TrackedWallet[] = useMemo(
+  // Live trade alerts for every on-chain wallet
+  const streamWallets: StreamWallet[] = useMemo(
     () => onChainWallets.map((w) => ({
       id: `user:${w.id}`,
       address: w.pubkey,
       label: w.displayLabel,
-      source: "user" as const,
     })),
     [onChainWallets],
   );
-  const stream = useTrackerStream(trackedWallets, {
+  const stream = useWalletTradeStream(streamWallets, {
     maxAlerts: 80,
     seedLimit: 0,
     onLive: (a) => {
@@ -224,29 +102,7 @@ export default function PortfolioPage() {
     [scope.trades, hiddenMints],
   );
 
-  // Stats roll-up across every on-chain wallet
-  const stats = useMemo(() => {
-    const holdings = scope.holdings.filter(
-      (h) => !h.isNative && ((h.usdValue ?? 0) > 0 || h.amount > 0)
-        && !hiddenMints.has(h.mint) && !isStableQuoteMint(h.mint),
-    );
-    const nativeSol = scope.walletSnapshots.reduce((s, w) => s + w.nativeSol, 0);
-    const activeAddresses = scope.walletSnapshots.filter(
-      (w) => w.holdingsCount > 0 || w.nativeSol > 0 || w.recentTrades > 0,
-    ).length;
-
-    let trades = 0, pnlUsd = 0, volumeUsd = 0;
-    for (const a of liveAddresses) {
-      const s = summaryByAddr.get(a);
-      if (!s) continue;
-      trades += s.totalTrades ?? 0;
-      pnlUsd += s.realizedPnlUsd ?? 0;
-      volumeUsd += s.totalVolumeUsd ?? 0;
-    }
-    return { holdings, nativeSol, activeAddresses, trades, pnlUsd, volumeUsd };
-  }, [scope, summaryByAddr, liveAddresses, hiddenMints]);
-
-  /* ── Effective (mode-aware) data feeding the dashboard ─────────────── */
+  /* ── Data feeding the dashboard ─────────────────────────────────────── */
 
   // Live token holdings, sourced from the stream-fed balance cache (current
   // on-chain amounts — the reliable source the Wallets tab uses) and enriched
@@ -279,38 +135,11 @@ export default function PortfolioPage() {
     });
   }, [onChainWallets, liveBalances, hiddenMints, holdingMeta]);
 
-  // Per-wallet live balances for the action modals. Receive / Withdraw /
-  // Distribute / Consolidate / Burn each act on ONE specific wallet, so they
-  // must reflect that wallet's balance — not the aggregate roll-up. Both pull
-  // from the stream-fed cache (keyed by wallet id), the same reliable source
-  // the wallet rows + KPIs read; the REST scope is frequently empty/stale.
-  const solForWallet = useCallback(
-    (w: UserWallet): number =>
-      w.kind === "DEMO" ? (w.solBalance ?? 0) : (liveBalances[w.id]?.sol ?? 0),
-    [liveBalances],
-  );
-  const holdingsForWallet = useCallback(
-    (w: UserWallet): TokenHolding[] => {
-      const toks = liveBalances[w.id]?.tokens;
-      if (!toks) return [];
-      const out: TokenHolding[] = [];
-      for (const [mint, amount] of Object.entries(toks)) {
-        if (!(amount > 0) || hiddenMints.has(mint)) continue;
-        const md = holdingMeta.get(mint);
-        out.push({ mint, amount, decimals: md?.decimals ?? 0, symbol: md?.symbol, name: md?.name, image: md?.image, usdValue: apiValueFor(md, amount) });
-      }
-      return out;
-    },
-    [liveBalances, hiddenMints, holdingMeta],
-  );
-
-  const effectiveHoldings = usingDemo ? (demoScope?.holdings ?? []) : liveHoldings;
   // USDC / USD1 are cash quotes — show in Available, not the holdings table or uPnL.
   const spotHoldings = useMemo(
-    () => effectiveHoldings.filter((h) => !isStableQuoteMint(h.mint)),
-    [effectiveHoldings],
+    () => liveHoldings.filter((h) => !isStableQuoteMint(h.mint)),
+    [liveHoldings],
   );
-  const effectiveTrades = usingDemo ? (demoScope?.trades ?? []) : visibleTrades;
 
   // Live price map for tradable spot mints only (no stable-quote streaming).
   const spotMints = useMemo(() => spotHoldings.map((h) => h.mint), [spotHoldings]);
@@ -335,15 +164,6 @@ export default function PortfolioPage() {
   const usdcMint = findQuoteMint("USDC").mint!;
   const usd1Mint = findQuoteMint("USD1").mint!;
   const quoteBalances = useMemo(() => {
-    if (usingDemo) {
-      const usd1FromHoldings = (demoScope?.holdings ?? [])
-        .find((h) => h.mint === usd1Mint)?.amount ?? 0;
-      return {
-        sol: demoScope?.solBalance ?? 0,
-        usdc: demoScope?.usdcBalance ?? 0,
-        usd1: usd1FromHoldings,
-      };
-    }
     let sol = 0;
     let usdc = 0;
     let usd1 = 0;
@@ -355,30 +175,9 @@ export default function PortfolioPage() {
       usd1 += b.tokens?.[usd1Mint] ?? 0;
     }
     return { sol, usdc, usd1 };
-  }, [usingDemo, demoScope, onChainWallets, liveBalances, usdcMint, usd1Mint]);
+  }, [onChainWallets, liveBalances, usdcMint, usd1Mint]);
 
   const stableCashUsd = quoteBalances.usdc + quoteBalances.usd1;
-
-  // Spot unrealized PnL = tradable holdings mark-to-market − FIFO cost basis.
-  // FIFO must use full trade history (no time window) — a windowed fetch only
-  // sees recent buys and leaves unrealizedCostSol at 0 for older bags.
-  const spotUnrealizedUsd = useMemo<number | null>(() => {
-    if (usingDemo) return null;
-    if (scope.loading && !scope.pnl) return null;
-    const pnlData = scope.pnl?.data;
-    if (!pnlData) return null;
-    // No cost basis per token (the API reports none): unknown, not "+value".
-    if (pnlData.tokens.length === 0) return null;
-    if (solPrice <= 0) return null;
-
-    const heldMints = new Set(spotHoldings.map((h) => h.mint));
-    const stableMints = new Set(stableQuoteMintAddresses());
-    const costSol = pnlData.tokens
-      .filter((t) => !stableMints.has(t.mint) && heldMints.has(t.mint))
-      .reduce((s, t) => s + t.unrealizedCostSol, 0);
-
-    return liveValueUsd - costSol * solPrice;
-  }, [usingDemo, scope.loading, scope.pnl, spotHoldings, liveValueUsd, solPrice]);
 
   /* ── KPI values ────────────────────────────────────────────────────── */
 
@@ -392,127 +191,13 @@ export default function PortfolioPage() {
   );
 
   // Portfolio value = SOL + tradable tokens (stream-priced) + stables at face value.
-  const totalValueUsd = usingDemo
-    ? ((demoScope?.solBalance ?? 0) * solPrice + liveValueUsd + stableCashUsd)
-    : (cacheNativeSol * solPrice + liveValueUsd + stableCashUsd);
-  const pnlUsd = usingDemo ? ((demoScope?.realizedPnlSol ?? 0) * solPrice) : stats.pnlUsd;
-
-  /* ── Actions ───────────────────────────────────────────────────────── */
-
-  function refresh() {
-    setRefreshTick((n) => n + 1);
-    pushToast({ title: "REFRESHING", body: "Resyncing wallets", tone: "default" });
-  }
-
-  async function copyAddr(addr: string) {
-    try {
-      await navigator.clipboard.writeText(addr);
-      pushToast({ title: "COPIED", body: shortAddr(addr, 6), tone: "buy" });
-    } catch { /* ignore */ }
-  }
-
-  async function handleRename(id: string, label: string) {
-    try { await userWallets.rename(id, label); }
-    catch (err) {
-      pushToast({ title: "RENAME FAILED", body: err instanceof Error ? err.message : String(err), tone: "sell" });
-      throw err;
-    }
-  }
-
-  async function handleDelete() {
-    if (!deleteWallet) return;
-    const target = deleteWallet;
-    try {
-      await userWallets.remove(target.id);
-      pushToast({ title: "WALLET REMOVED", body: target.displayLabel, tone: "default" });
-      setDeleteWallet(null);
-    } catch (err) {
-      pushToast({ title: "REMOVE FAILED", body: err instanceof Error ? err.message : String(err), tone: "sell" });
-    }
-  }
-
-  async function handleResetDemo() {
-    if (!resetDemoWallet) return;
-    try {
-      await userWallets.resetDemo(resetDemoWallet.id);
-      setResetDemoWallet(null);
-    } catch (err) {
-      pushToast({ title: "RESET FAILED", body: err instanceof Error ? err.message : String(err), tone: "sell" });
-    }
-  }
-
-  async function handleCreate(
-    label: string,
-    count: number,
-    onProgress: (done: number, total: number) => void,
-  ) {
-    const res = await userWallets.createPlatformBulk(count, { labelPrefix: label || undefined, onProgress });
-    // Trade with the first new wallet; the modal owns closing (it may stay open
-    // to show a partial-run summary).
-    if (res.created[0]) setTradingWallets([res.created[0].id]);
-    return res;
-  }
-
-  async function handleImport(
-    entries: Array<{ secret: string; label?: string }>,
-    onProgress: (done: number, total: number) => void,
-  ) {
-    const res = await userWallets.importPlatformBulk(entries, { onProgress });
-    if (res.created[0]) setTradingWallets([res.created[0].id]);
-    return res;
-  }
-
-  async function handleCreateDemo(args: { label?: string; initialSol: number; initialUsdc: number }) {
-    const created = await userWallets.createDemo(args);
-    setTradingWallets([created.id]); // make the new paper wallet the active trader
-    setDemoOpen(false);
-    setUsingDemo(true); // land straight in the Demo view with the new paper wallet
-  }
+  const totalValueUsd = cacheNativeSol * solPrice + liveValueUsd + stableCashUsd;
 
   /* ── Render ────────────────────────────────────────────────────────── */
 
   const tabCounts: Record<Tab, number> = {
-    wallets: (usingDemo ? demoWallets : onChainWallets).length,
     holdings: spotHoldings.length,
-    activity: usingDemo ? effectiveTrades.length : visibleTrades.length + liveAlerts.length,
-  };
-
-  const modalCtx = {
-    client,
-    allWallets: wallets,
-    solForWallet,
-    holdingsForWallet,
-    // Keyed by pubkey for ConsolidateModal (it looks balances up by address).
-    // liveBalances is keyed by wallet id — index by w.id, not w.pubkey.
-    balancesByAddr: Object.fromEntries(
-      wallets.map((w) => [w.pubkey, liveBalances[w.id]?.sol ?? 0]),
-    ),
-    // Wallet cap, surfaced to the create/import modals for the "N of LIMIT used"
-    // note and to pre-cap bulk quantity.
-    walletLimit: userWallets.walletLimit,
-    walletCount: userWallets.walletCount,
-    walletsRemaining: userWallets.walletsRemaining,
-  };
-  const modalState = {
-    createOpen, importOpen, demoOpen,
-    renameWallet, sendWallet, receiveWallet, fundWallet, burnWallet,
-    consolidateWallet, claimFeesWallet, exportKeyWallet,
-    deleteWallet, resetDemoWallet,
-  };
-  const modalSetters = {
-    setCreateOpen, setImportOpen, setDemoOpen,
-    setRenameWallet, setSendWallet, setReceiveWallet, setFundWallet, setBurnWallet,
-    setConsolidateWallet, setClaimFeesWallet, setExportKeyWallet,
-    setDeleteWallet, setResetDemoWallet,
-  };
-  const modalHandlers = {
-    handleCreate, handleImport, handleCreateDemo,
-    handleRename: async (label: string) => {
-      if (!renameWallet) return;
-      await handleRename(renameWallet.id, label);
-      setRenameWallet(null);
-    },
-    handleDelete, handleResetDemo,
+    activity: visibleTrades.length + liveAlerts.length,
   };
 
   const pageStyle: React.CSSProperties = {
@@ -532,24 +217,19 @@ export default function PortfolioPage() {
     display: "block",
   };
 
-  // First-run / no wallets at all
+  // First run / no wallets on this chain
   if (!userWallets.loading && wallets.length === 0) {
     return (
       <div style={pageStyle}>
-        <Hero />
+        <Hero modeControl={<ManageWalletsButton onClick={() => clientNav("/wallets")} />} />
         <EmptyHero
           title="Set up your first wallet."
-          body="Platform wallets are managed by Raze — they sign automatically for ladders, snipers and limit orders. Import an existing keypair, or try a demo wallet to paper-trade with live prices. (Phantom is your connect identity, shown in the top bar.)"
+          body="Create a wallet, import a key you already have, or watch any address. Keys stay in the encrypted vault of this Trade UI and sign here, without a prompt."
           icon="◎"
           cta={
-            <>
-              <Btn size="sm" tone="primary" onClick={() => setCreateOpen(true)}>+ Create wallet</Btn>
-              <Btn size="sm" tone="ghost"   onClick={() => setImportOpen(true)}>Import keypair</Btn>
-              <Btn size="sm" tone="ghost"   onClick={() => setDemoOpen(true)}>Try demo wallet</Btn>
-            </>
+            <Btn size="sm" tone="primary" onClick={() => clientNav("/wallets")}>+ Add a wallet</Btn>
           }
         />
-        <Modals state={modalState} setters={modalSetters} handlers={modalHandlers} ctx={modalCtx} />
       </div>
     );
   }
@@ -559,70 +239,27 @@ export default function PortfolioPage() {
       <SpotSummary
         addresses={liveAddresses}
         solPrice={solPrice}
-        refreshKey={refreshTick}
         totalValueUsd={totalValueUsd}
-        unrealizedUsd={spotUnrealizedUsd}
         quoteBalances={quoteBalances}
-        usingDemo={usingDemo}
-        modeControl={
-          demoWallets.length > 0 ? (
-            <ModeToggle
-              value={usingDemo ? "demo" : "live"}
-              onChange={(m) => setUsingDemo(m === "demo")}
-            />
-          ) : (
-            <DemoCreateButton onClick={openDemo} />
-          )
-        }
+        modeControl={<ManageWalletsButton onClick={() => clientNav("/wallets")} />}
       />
 
       <TabBar
         value={tab}
         onChange={setTab}
         tabs={[
-          { value: "wallets",  label: "Wallets",  count: tabCounts.wallets },
           { value: "holdings", label: "Holdings", count: tabCounts.holdings },
           { value: "activity", label: "Activity", count: tabCounts.activity },
         ]}
       />
 
       <div style={tabBodyStyle}>
-      {tab === "wallets" && (
-        <WalletsTab
-          // Demo view lists the paper wallet (so it can be reset/managed); Live
-          // view lists the on-chain wallets.
-          wallets={usingDemo ? demoWallets : onChainWallets}
-          tradingIds={tradingIds}
-          summaryByAddr={summaryByAddr}
-          liveBalances={liveBalances}
-          solPrice={solPrice}
-          loading={userWallets.loading}
-          onRename={handleRename}
-          onCreate={() => setCreateOpen(true)}
-          onImport={() => setImportOpen(true)}
-          onCreateDemo={openDemo}
-          actions={{
-            send: setSendWallet,
-            receive: setReceiveWallet,
-            fund: setFundWallet,
-            burn: setBurnWallet,
-            consolidate: setConsolidateWallet,
-            claimFees: setClaimFeesWallet,
-            exportKey: setExportKeyWallet,
-            rename: setRenameWallet,
-            delete: setDeleteWallet,
-            resetDemo: setResetDemoWallet,
-            copyAddr,
-          }}
-        />
-      )}
-
       {tab === "holdings" && (
         <div style={{ flexShrink: 0 }}>
           <HoldingsTab
             holdings={spotHoldings}
             liveMap={liveMap}
-            loading={usingDemo ? !demoReady : (scope.loading && !scope.holdings.length)}
+            loading={scope.loading && !scope.holdings.length}
             onTokenClick={(mint) => clientNav(tokenHref(mint))}
           />
         </div>
@@ -631,21 +268,15 @@ export default function PortfolioPage() {
       {tab === "activity" && (
         <div style={{ flexShrink: 0 }}>
           <ActivityTab
-            trades={effectiveTrades}
-            liveAlerts={usingDemo ? [] : liveAlerts}
+            trades={visibleTrades}
+            liveAlerts={liveAlerts}
             solPrice={solPrice}
-            loading={
-              usingDemo
-                ? !demoReady
-                : (scope.loading && !visibleTrades.length && liveAlerts.length === 0)
-            }
+            loading={scope.loading && !visibleTrades.length && liveAlerts.length === 0}
             onTokenClick={(mint) => clientNav(tokenHref(mint))}
           />
         </div>
       )}
       </div>
-
-      <Modals state={modalState} setters={modalSetters} handlers={modalHandlers} ctx={modalCtx} />
     </div>
   );
 }
@@ -679,215 +310,24 @@ function Hero({ modeControl }: { modeControl?: React.ReactNode }) {
   );
 }
 
-/* ── Live / Demo mode toggle ─────────────────────────────────────────── */
+/* ── Header actions ──────────────────────────────────────────────────── */
 
-function DemoCreateButton({ onClick }: { onClick: () => void }) {
+function ManageWalletsButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title="Create a paper-trading wallet"
       style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
+        display: "inline-flex", alignItems: "center", gap: 7,
         padding: "6px 14px", borderRadius: 999,
         background: "var(--ink-2)", border: "1px solid var(--line-soft)",
-        cursor: "pointer",
-        fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase",
-        fontFamily: "var(--font-mono)", color: "var(--gold)",
-        transition: "background 120ms, border-color 120ms, color 120ms",
+        cursor: "pointer", fontSize: 12, fontWeight: 500, color: "var(--paper-2)",
+        transition: "border-color 120ms, color 120ms",
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "color-mix(in oklch, var(--gold) 12%, var(--ink-2))";
-        e.currentTarget.style.borderColor = "color-mix(in oklch, var(--gold) 35%, var(--line-soft))";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "var(--ink-2)";
-        e.currentTarget.style.borderColor = "var(--line-soft)";
-      }}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--accent)"; e.currentTarget.style.color = "var(--paper)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--line-soft)"; e.currentTarget.style.color = "var(--paper-2)"; }}
     >
-      <span style={{ fontSize: 12, lineHeight: 1 }}>+</span>
-      Demo
+      {Icon.key(12)} Manage wallets
     </button>
-  );
-}
-
-function ModeToggle({
-  value, onChange,
-}: {
-  value: "live" | "demo";
-  onChange: (m: "live" | "demo") => void;
-}) {
-  const opts: Array<{ key: "live" | "demo"; label: string; accent: string }> = [
-    { key: "live", label: "Live", accent: "var(--accent)" },
-    { key: "demo", label: "Demo", accent: "var(--gold)" },
-  ];
-  return (
-    <div
-      role="tablist"
-      aria-label="Portfolio mode"
-      style={{
-        display: "inline-flex", gap: 3, padding: 3, borderRadius: 999,
-        background: "var(--ink-2)", border: "1px solid var(--line-soft)",
-      }}
-    >
-      {opts.map((o) => {
-        const on = value === o.key;
-        return (
-          <button
-            key={o.key}
-            role="tab"
-            aria-selected={on}
-            onClick={() => onChange(o.key)}
-            title={o.key === "demo" ? "Paper-trading view — simulated fills against live prices" : "Real on-chain wallets"}
-            style={{
-              padding: "4px 16px", borderRadius: 999, border: "none", cursor: "pointer",
-              fontSize: 11, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase",
-              fontFamily: "var(--font-mono)",
-              background: on ? o.accent : "transparent",
-              color: on ? "var(--ink-0)" : "var(--paper-4)",
-              transition: "background 120ms, color 120ms",
-            }}
-          >
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ── Modal aggregator (declutters the orchestrator) ──────────────────── */
-
-function Modals({
-  state, setters, handlers, ctx,
-}: {
-  state: {
-    createOpen: boolean; importOpen: boolean; demoOpen: boolean;
-    renameWallet: UserWallet | null;
-    sendWallet: UserWallet | null;
-    receiveWallet: UserWallet | null;
-    fundWallet: UserWallet | null;
-    burnWallet: UserWallet | null;
-    consolidateWallet: UserWallet | null;
-    claimFeesWallet: UserWallet | null;
-    exportKeyWallet: UserWallet | null;
-    deleteWallet: UserWallet | null;
-    resetDemoWallet: UserWallet | null;
-  };
-  setters: {
-    setCreateOpen: (b: boolean) => void;
-    setImportOpen: (b: boolean) => void;
-    setDemoOpen: (b: boolean) => void;
-    setRenameWallet: (w: UserWallet | null) => void;
-    setSendWallet: (w: UserWallet | null) => void;
-    setReceiveWallet: (w: UserWallet | null) => void;
-    setFundWallet: (w: UserWallet | null) => void;
-    setBurnWallet: (w: UserWallet | null) => void;
-    setConsolidateWallet: (w: UserWallet | null) => void;
-    setClaimFeesWallet: (w: UserWallet | null) => void;
-    setExportKeyWallet: (w: UserWallet | null) => void;
-    setDeleteWallet: (w: UserWallet | null) => void;
-    setResetDemoWallet: (w: UserWallet | null) => void;
-  };
-  handlers: {
-    handleCreate: (label: string, count: number, onProgress: (done: number, total: number) => void) => Promise<BulkWalletResult>;
-    handleImport: (entries: Array<{ secret: string; label?: string }>, onProgress: (done: number, total: number) => void) => Promise<BulkWalletResult>;
-    handleCreateDemo: (args: { label?: string; initialSol: number; initialUsdc: number }) => Promise<void>;
-    handleRename: (label: string) => Promise<void>;
-    handleDelete: () => Promise<void>;
-    handleResetDemo: () => Promise<void>;
-  };
-  ctx: {
-    client: ReturnType<typeof useBackend>;
-    allWallets: UserWallet[];
-    solForWallet: (w: UserWallet) => number;
-    holdingsForWallet: (w: UserWallet) => TokenHolding[];
-    balancesByAddr: Record<string, number>;
-    walletLimit: number;
-    walletCount: number;
-    walletsRemaining: number;
-  };
-}) {
-  return (
-    <>
-      <CreateWalletModal
-        open={state.createOpen}
-        onClose={() => setters.setCreateOpen(false)}
-        onSubmit={handlers.handleCreate}
-        limit={ctx.walletLimit}
-        used={ctx.walletCount}
-        remaining={ctx.walletsRemaining}
-      />
-      <ImportWalletModal
-        open={state.importOpen}
-        onClose={() => setters.setImportOpen(false)}
-        onSubmit={handlers.handleImport}
-        limit={ctx.walletLimit}
-        used={ctx.walletCount}
-        remaining={ctx.walletsRemaining}
-      />
-      <CreateDemoWalletModal
-        open={state.demoOpen}
-        onClose={() => setters.setDemoOpen(false)}
-        onSubmit={handlers.handleCreateDemo}
-      />
-      <RenameWalletModal
-        wallet={state.renameWallet}
-        onClose={() => setters.setRenameWallet(null)}
-        onSubmit={handlers.handleRename}
-      />
-      <SendModal
-        wallet={state.sendWallet}
-        holdings={state.sendWallet ? ctx.holdingsForWallet(state.sendWallet) : []}
-        allWallets={ctx.allWallets}
-        nativeBal={state.sendWallet ? ctx.solForWallet(state.sendWallet) : 0}
-        client={ctx.client}
-        onClose={() => setters.setSendWallet(null)}
-      />
-      <ReceiveModal
-        wallet={state.receiveWallet}
-        nativeBal={state.receiveWallet ? ctx.solForWallet(state.receiveWallet) : 0}
-        onClose={() => setters.setReceiveWallet(null)}
-      />
-      <FundModal
-        wallet={state.fundWallet}
-        allWallets={ctx.allWallets}
-        client={ctx.client}
-        onClose={() => setters.setFundWallet(null)}
-      />
-      <BurnModal
-        wallet={state.burnWallet}
-        holdings={state.burnWallet ? ctx.holdingsForWallet(state.burnWallet) : []}
-        client={ctx.client}
-        onClose={() => setters.setBurnWallet(null)}
-      />
-      <ConsolidateModal
-        wallet={state.consolidateWallet}
-        allWallets={ctx.allWallets}
-        balancesByAddr={ctx.balancesByAddr}
-        client={ctx.client}
-        onClose={() => setters.setConsolidateWallet(null)}
-      />
-      <ClaimFeesModal
-        wallet={state.claimFeesWallet}
-        client={ctx.client}
-        onClose={() => setters.setClaimFeesWallet(null)}
-      />
-      <ExportKeyModal
-        wallet={state.exportKeyWallet}
-        client={ctx.client}
-        onClose={() => setters.setExportKeyWallet(null)}
-      />
-      <DeleteWalletModal
-        wallet={state.deleteWallet}
-        onClose={() => setters.setDeleteWallet(null)}
-        onSubmit={handlers.handleDelete}
-      />
-      <ResetDemoModal
-        wallet={state.resetDemoWallet}
-        onClose={() => setters.setResetDemoWallet(null)}
-        onSubmit={handlers.handleResetDemo}
-      />
-    </>
   );
 }

@@ -9,17 +9,11 @@ interface LastSeenValue {
   lastSeen: Record<string, number>;
   /** Record a view. Call this whenever a user opens / clicks a token. */
   record: (mint: string) => void;
-  /** Drop a single mint (e.g. a deploy preview placeholder that leaked in). */
-  forget: (mint: string) => void;
-  /** Clear all history (utility for settings panel). */
-  clear: () => void;
 }
 
 const Ctx = createContext<LastSeenValue>({
   lastSeen: {},
   record: () => {},
-  forget: () => {},
-  clear: () => {},
 });
 
 export function LastSeenProvider({ children }: { children: React.ReactNode }) {
@@ -56,23 +50,7 @@ export function LastSeenProvider({ children }: { children: React.ReactNode }) {
     });
   }, [persist]);
 
-  const forget = useCallback((mint: string) => {
-    if (!mint) return;
-    setLastSeen((prev) => {
-      if (!(mint in prev)) return prev;
-      const next = { ...prev };
-      delete next[mint];
-      persist(next);
-      return next;
-    });
-  }, [persist]);
-
-  const clear = useCallback(() => {
-    setLastSeen({});
-    persist({});
-  }, [persist]);
-
-  return <Ctx.Provider value={{ lastSeen, record, forget, clear }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ lastSeen, record }}>{children}</Ctx.Provider>;
 }
 
 export function useLastSeen() {

@@ -3,14 +3,13 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { defaultPlatformFilter, platforms } from "../components/PlatformFilter";
 import { CHAIN_CHANGED_EVENT } from "../lib/chains";
 
-export type ColumnKey = "trending" | "deploy" | "migrating" | "migration" | "trendingPage";
+export type ColumnKey = "trending" | "deploy" | "migrating" | "migration";
 
 export const COLUMN_META: Record<ColumnKey, { label: string }> = {
   trending:     { label: "Trending" },
   deploy:       { label: "New Deploys" },
   migrating:    { label: "Migrating" },
   migration:    { label: "Migrated" },
-  trendingPage: { label: "Trending Page" },
 };
 
 export interface Range {
@@ -28,7 +27,6 @@ export interface ColumnFilters {
   bundlePercentage: Range;
   sniperPercentage: Range;
   creatorDeploys: Range;
-  creatorMigrations: Range;
 
   // $ Metrics
   marketCap: Range;
@@ -37,8 +35,6 @@ export interface ColumnFilters {
   priceChange: Range;
   tradeCount: Range;
   holders: Range;
-  firstHourVolume: Range;
-  firstHourTrades: Range;
   ageMinutes: Range;
 
   // Socials
@@ -61,15 +57,12 @@ export function defaultFilters(): ColumnFilters {
     bundlePercentage: {},
     sniperPercentage: {},
     creatorDeploys: {},
-    creatorMigrations: {},
     marketCap: {},
     volume24h: {},
     liquidity: {},
     priceChange: {},
     tradeCount: {},
     holders: {},
-    firstHourVolume: {},
-    firstHourTrades: {},
     ageMinutes: {},
     requireTwitter: false,
     requireWebsite: false,
@@ -85,7 +78,6 @@ function initialState(): AllFilters {
     deploy:       defaultFilters(),
     migrating:    defaultFilters(),
     migration:    defaultFilters(),
-    trendingPage: defaultFilters(),
   };
 }
 
@@ -97,9 +89,9 @@ export function countActive(f: ColumnFilters): number {
   if (f.search.trim()) n++;
   if (f.exclude.trim()) n++;
   const ranges: Range[] = [
-    f.bundlePercentage, f.sniperPercentage, f.creatorDeploys, f.creatorMigrations,
+    f.bundlePercentage, f.sniperPercentage, f.creatorDeploys,
     f.marketCap, f.volume24h, f.liquidity, f.priceChange,
-    f.tradeCount, f.holders, f.firstHourVolume, f.firstHourTrades, f.ageMinutes,
+    f.tradeCount, f.holders, f.ageMinutes,
   ];
   ranges.forEach((r) => { if (r.min != null || r.max != null) n++; });
   if (f.requireTwitter) n++;

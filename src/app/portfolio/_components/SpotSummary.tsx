@@ -18,14 +18,6 @@ export interface QuoteBalances {
   usd1: number;
 }
 
-type Tone = "buy" | "sell" | "neutral";
-
-function toneColor(t: Tone): string {
-  if (t === "buy") return "var(--buy)";
-  if (t === "sell") return "var(--sell)";
-  return "var(--paper-3)";
-}
-
 function fmtHeroUsd(v: number): string {
   if (!(v > 0)) return "—";
   return fmtUsd(v);
@@ -72,17 +64,14 @@ function QuoteAmount({ label, amount, kind }: {
 }
 
 export function SpotSummary({
-  addresses, solPrice, refreshKey,
-  totalValueUsd, unrealizedUsd, quoteBalances, usingDemo,
+  addresses, solPrice,
+  totalValueUsd, quoteBalances,
   modeControl,
 }: {
   addresses: string[];
   solPrice: number;
-  refreshKey: number;
   totalValueUsd: number;
-  unrealizedUsd: number | null;
   quoteBalances: QuoteBalances;
-  usingDemo: boolean;
   modeControl?: React.ReactNode;
 }) {
   const [timeframe, setTimeframe] = useState<PnlTimeframe>("24H");
@@ -90,16 +79,10 @@ export function SpotSummary({
   const isMobile = useIsMobile();
   const isPhone = useIsPhone();
 
-  const chart = usePnlSeries(usingDemo ? [] : addresses, timeframe, solPrice, refreshKey);
+  const chart = usePnlSeries(addresses, timeframe, solPrice);
   const pct = chart.realizedUsd === 0
     ? 0
     : (chart.realizedUsd / Math.max(Math.abs(totalValueUsd - chart.realizedUsd), 1)) * 100;
-
-  const unrealTone: Tone = unrealizedUsd == null ? "neutral"
-    : unrealizedUsd > 0 ? "buy" : unrealizedUsd < 0 ? "sell" : "neutral";
-  const unrealText = unrealizedUsd == null ? "—"
-    : unrealizedUsd === 0 ? fmtUsd(0)
-    : `${unrealizedUsd > 0 ? "+" : "−"}${fmtUsd(Math.abs(unrealizedUsd))}`;
 
   const hasQuotes = quoteBalances.sol > 0 || quoteBalances.usdc > 0 || quoteBalances.usd1 > 0;
 
@@ -156,16 +139,6 @@ export function SpotSummary({
               {fmtHeroUsd(totalValueUsd)}
             </div>
 
-            <MetricCell label="Unrealized PnL">
-              <span className="mono" style={{
-                fontSize: 15, fontWeight: 600, lineHeight: 1,
-                color: toneColor(unrealTone),
-                fontVariantNumeric: "tabular-nums",
-              }}>
-                {unrealText}
-              </span>
-            </MetricCell>
-
             <MetricCell label="Available">
               {hasQuotes ? (
                 <div style={{
@@ -209,9 +182,8 @@ export function SpotSummary({
       <PnlCalendarModal
         open={calendarOpen}
         onClose={() => setCalendarOpen(false)}
-        addresses={usingDemo ? [] : addresses}
+        addresses={addresses}
         solPrice={solPrice}
-        refreshKey={refreshKey}
       />
     </>
   );

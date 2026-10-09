@@ -1,32 +1,26 @@
 /**
- * `trade.execute` in Trade UI: the swap runs on the Raze Solana router from
- * this machine. The router quotes and builds; the wallet's own key (a local
- * wallet) or the browser wallet signs; the RPC behind `/api/solana/*` sends
- * and confirms. Resolves once the transaction is confirmed.
+ * `trade.execute` in Trade UI: the swap runs on the Raze Solana router. The
+ * router quotes, the server builds that quote for the wallet, signs it with
+ * the key in the vault and sends it; the browser confirms. Resolves once the
+ * transaction is confirmed.
  */
-import { getActiveChain } from "../lib/chains";
-import { BROWSER_WALLET_ID, getBrowserWallet } from "../lib/swap/browserWallet";
+import { swapsOn } from "../lib/chains";
 import { mintDecimals, tokenBalanceRaw } from "../lib/swap/client";
 import { executeSwap, swapErrorText, type SwapSigner } from "../lib/swap/execute";
 import { planTrade, type TradeBody } from "../lib/swap/plan";
-import { localSolanaSigner } from "./localWallets";
+import { solanaWallet } from "./vaultWallets";
 
 export type { TradeBody };
 
 const DEFAULT_SLIPPAGE_BPS = 100;
 
 export function solanaSigner(walletId: string): SwapSigner {
-  if (walletId === BROWSER_WALLET_ID) {
-    const b = getBrowserWallet();
-    if (!b) throw new Error("Connect your wallet first");
-    return { kind: "browser", owner: b.address, wallet: b.wallet };
-  }
-  const { pubkey, secretKey } = localSolanaSigner(walletId);
-  return { kind: "local", owner: pubkey, secretKey };
+  const w = solanaWallet(walletId);
+  return { kind: "vault", walletId: w.id, owner: w.address };
 }
 
 export async function executeLocalTrade(body: TradeBody): Promise<{ signature: string; region: string }> {
-  if (getActiveChain() !== "sol") {
+  if (!swapsOn()) {
     throw new Error("Swaps run on Solana for now: the EVM router does not quote yet");
   }
   const signer = solanaSigner(body.walletId);

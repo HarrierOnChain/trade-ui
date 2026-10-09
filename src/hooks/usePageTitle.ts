@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 
 /**
- * Sets the browser tab title to `"<label> | Raze Terminal"` while the page is
+ * Sets the browser tab title to `"<label> | Trade UI"` while the page is
  * mounted, so a backgrounded tab shows which surface is open (Axiom-style).
  *
  * Token surfaces manage their own live title (ticker + market cap) inside
@@ -10,6 +10,6 @@ import { useEffect } from "react";
  */
 export function usePageTitle(label: string): void {
   useEffect(() => {
-    document.title = label ? `${label} | Raze Terminal` : "Raze Terminal";
+    document.title = label ? `${label} | Trade UI` : "Trade UI";
   }, [label]);
 }

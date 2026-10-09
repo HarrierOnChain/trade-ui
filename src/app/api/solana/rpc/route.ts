@@ -1,14 +1,18 @@
 import { NextRequest } from "next/server";
 import { rpcRequest } from "../../../../lib/swap/validate";
 import { fail, rpcUrl } from "../../../../lib/swap/upstream";
+import { gateClosed } from "../../../../lib/server/gate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** → SOLANA_RPC_URL, one JSON-RPC call at a time and only the methods a swap
- *  needs (send, confirm, the balance and decimals reads). The RPC URL, and any
- *  key in it, stays on this side. */
+/** → SOLANA_RPC_URL, one JSON-RPC call at a time and only the reads a trade
+ *  needs (confirmation status, balances, decimals). The RPC URL, and any key
+ *  in it, stays on this side. */
 export async function POST(req: NextRequest) {
+  const closed = gateClosed(req);
+  if (closed) return closed;
+  if (Number(req.headers.get("content-length") || 0) > 32 * 1024) return fail(413, "bad_request", "body too large");
   const raw = await req.text();
   if (raw.length > 32 * 1024) return fail(413, "bad_request", "body too large");
   let input: unknown;
@@ -27,6 +31,8 @@ export async function POST(req: NextRequest) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
       cache: "no-store",
+      // A redirect would take the call (and a key in the URL's path) elsewhere.
+      redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
   } catch {

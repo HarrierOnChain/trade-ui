@@ -42,7 +42,7 @@ function Chevron({ open }: { open: boolean }) {
 
 /**
  * Single-select wallet-category filter for transaction tables.
- * Only one of DEV / TRACKED / YOU may be active at a time.
+ * Only one of DEV / YOU may be active at a time.
  */
 export function TradeCategoryFilter<C extends string>({
   categories,

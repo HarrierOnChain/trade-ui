@@ -1,25 +1,20 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPublicMetadata, type MetaResult } from "../../api/metadata";
-import { useApp } from "../../contexts/AppContext";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useTokenQuote } from "../../hooks/useTokenQuote";
 import { useLiveTradePrices, type LivePrice } from "../../hooks/useLiveTradePrices";
 import { useSolPrice } from "../../hooks/useSolPrice";
-import { useDexPaid } from "../../hooks/useDexPaid";
-import { useTokenViews } from "../../hooks/useTokenViews";
-import { useCreatorMigrations } from "../../hooks/useCreatorMigrations";
 import { useMigration } from "../../hooks/useMigration";
-import { DexPaidCelebration } from "./DexPaidCelebration";
 import { MigrationCelebration } from "./MigrationCelebration";
 import type { ReserveSidePanel } from "./CelebrationOverlay";
-import { Icon, Pill, SolAmount, SolSymbol, TokenAvatarFrame, TokenIdentity, TokenSocialLinks, Tooltip } from "../atoms";
+import { SolAmount, TokenAvatarFrame, TokenIdentity, TokenSocialLinks, Tooltip } from "../atoms";
 import { MayhemCountdown } from "../atoms/MayhemCountdown";
-import { dexColor, dexLabel, fmtMcap, fmtNum, fmtPrice, fmtSol, mergeDexLabel, tokenVolumeUsd } from "../../lib/format";
+import { fmtMcap, fmtNum, fmtPrice, fmtSol, mergeDexLabel, tokenVolumeUsd } from "../../lib/format";
 import { computeTokenMetrics } from "../../lib/tokenMetrics";
 import { formatAge } from "../../lib/ageRegistry";
 import { clampWidth } from "../../lib/responsive";
-import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
+import { useIsMobile } from "../../hooks/useMediaQuery";
 import { dexscreenerSlug, getActiveChain } from "../../lib/chains";
 import type { TokenEvent } from "../../types";
 
@@ -32,11 +27,8 @@ interface Props {
   /** On-chain total supply for the active chain. Falls back to the pump.fun
    *  1e9 default when omitted/unloaded. */
   supply?: number;
-  /** Keep migration / DEX-paid overlays off the trading side panel. */
+  /** Keep the migration overlay off the trading side panel. */
   celebrationReserveSidePanel?: ReserveSidePanel;
-  /** "Clone token" DNA action. On by default; the /deploy preview turns it off
-   *  (cloning the placeholder token you're creating makes no sense). */
-  showClone?: boolean;
 }
 
 export function TokenHeader({
@@ -45,10 +37,8 @@ export function TokenHeader({
   solPrice: solPriceProp,
   supply: supplyProp,
   celebrationReserveSidePanel,
-  showClone = true,
 }: Props) {
   const isMobile = useIsMobile();
-  const isPhone = useIsPhone();
   const { info } = useTokenInfo(mint);
   const quote = useTokenQuote(mint);
   const solPriceHook = useSolPrice();
@@ -60,12 +50,6 @@ export function TokenHeader({
   const liveMap = useLiveTradePrices(mintList);
   const live = liveMap.get(mint);
   const [metaFallback, setMetaFallback] = useState<MetaResult | null>(null);
-  // `liveFlipAt` stamps only on a WS-delivered transition into paid, so
-  // opening a page on an already-paid token never triggers the overlay.
-  const { dexPaid, dexscreenerUrl, liveFlipAt } = useDexPaid(mint);
-  // Live "views": Raze streaming listeners subscribed to this mint. Null until
-  // the first signal arrives.
-  const views = useTokenViews(mint);
 
   const token = (info ?? {}) as TokenEvent;
   const quotePlatform = quote?.platform?.trim() || "";
@@ -128,47 +112,35 @@ export function TokenHeader({
   // to it — even on a pumpswap (migrated) quote; migration is still surfaced via
   // `isMigrated`. Any non-launchpad history dex still upgrades to the quote venue.
   const platformSource = mergeDexLabel(token.dex, quotePlatform);
-  const dexText = (platformSource ? dexLabel(platformSource) : "").toUpperCase();
   const age = token.created_at ? formatAge(new Date(token.created_at).getTime()) : "–";
 
-  // Effective real-time price/mcap: live WS price → REST lastPrice → dev buy price
-  const priceSol = live?.price ?? token.lastPrice ?? token.creatorBuyPrice ?? 0;
+  // Effective real-time price/mcap: live WS price → REST lastPrice
+  const priceSol = live?.price ?? token.lastPrice ?? 0;
   const effectivePrice = priceSol;
   // Treat a 0/undefined server marketCap as absent and derive from
   // price × supply × native USD instead.
   const serverMcap = token.marketCap && token.marketCap > 0 ? token.marketCap : undefined;
   const effectiveMcap =
     serverMcap ??
-    (priceSol > 0 && solPrice ? priceSol * effectiveSupply * solPrice : undefined) ??
-    (token.initialMarketCap && token.initialMarketCap > 0 ? token.initialMarketCap : undefined);
+    (priceSol > 0 && solPrice ? priceSol * effectiveSupply * solPrice : undefined);
 
-  // Tab title mirrors the live header — "COBIE ↑ $30.1K | Raze Terminal" — so a
+  // Tab title mirrors the live header — "COBIE ↑ $30.1K | Trade UI" — so a
   // backgrounded tab shows which token is open, its live market cap, and the
   // direction of the last price tick (↑/↓), Axiom-style.
   useEffect(() => {
     if (symbolText === "—") return;
     const arrow = live?.flash === "up" ? " ↑" : live?.flash === "down" ? " ↓" : "";
     document.title = effectiveMcap
-      ? `${symbolText}${arrow} ${fmtMcap(effectiveMcap)} | Raze Terminal`
-      : `${symbolText} | Raze Terminal`;
+      ? `${symbolText}${arrow} ${fmtMcap(effectiveMcap)} | Trade UI`
+      : `${symbolText} | Trade UI`;
   }, [symbolText, effectiveMcap, live?.flash]);
-  useEffect(() => () => { document.title = "Raze Terminal"; }, []);
+  useEffect(() => () => { document.title = "Trade UI"; }, []);
 
   // DexScreener URL slug ("sol" → "solana").
   const dexscreenerChainSlug = dexscreenerSlug(getActiveChain());
 
   return (
     <div>
-      {liveFlipAt != null && (
-        <DexPaidCelebration
-          triggerAt={liveFlipAt}
-          symbol={symbolText}
-          name={nameText}
-          image={displayImage}
-          dexscreenerUrl={dexscreenerUrl}
-          reserveSidePanel={celebrationReserveSidePanel}
-        />
-      )}
       {migrationLive.liveMigratedAt != null && (
         <MigrationCelebration
           triggerAt={migrationLive.liveMigratedAt}
@@ -201,7 +173,6 @@ export function TokenHeader({
             badgeSize={20}
             badgeInset={-5}
             marketCap={effectiveMcap}
-            initialMarketCap={token.initialMarketCap}
             priceSol={priceSol}
             solPrice={solPrice}
             progressPercent={token.graduationPercent}
@@ -224,16 +195,7 @@ export function TokenHeader({
               compact
               size="md"
               showWatch
-              showClone={showClone}
             />
-            {(token as { hot?: boolean }).hot && !isPhone && (
-              <Pill tone="green" size="xs">
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  <SolSymbol size={10} />
-                  HOT
-                </span>
-              </Pill>
-            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {age !== "–" && (
@@ -243,9 +205,8 @@ export function TokenHeader({
                 }}>{age}</span>
               </Tooltip>
             )}
-            {/* Fixed Axiom order: launchpad · cashback · X · telegram · website ·
-                X-search (cashback slotted right after the launchpad inside
-                TokenSocialLinks), then token views, then Raze-specific extras. */}
+            {/* Fixed Axiom order: launchpad · X · telegram · website · X-search,
+                then Raze-specific extras. */}
             <TokenSocialLinks
               twitter={displayTwitter}
               telegram={displayTelegram}
@@ -254,46 +215,9 @@ export function TokenHeader({
               launchpad={token.dex || platformSource}
               showLaunchpad
               showXSearch
-              cashbackSlot={token.hasCashback ? (
-                <Tooltip content="Cashback enabled — bonding-curve creator fee sharing">
-                  <span style={{
-                    display: "inline-flex", alignItems: "center",
-                    color: "#FACC15", cursor: "default", lineHeight: 0,
-                  }}>{Icon.refund(15)}</span>
-                </Tooltip>
-              ) : undefined}
               iconSize={15}
               gap={7}
             />
-            {views?.total != null && (
-              <span
-                title="Live viewers on Raze"
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 3,
-                  color: "var(--info)", cursor: "default",
-                  fontSize: 11, fontWeight: 600, lineHeight: 1,
-                }}
-              >
-                {Icon.eyeLine(13)}
-                {fmtNum(views.total)}
-              </span>
-            )}
-            {token.signer && (token.creatorMigrations ?? 0) > 0 && (
-              <Tooltip
-                interactive
-                placement="bottom"
-                content={<DevMigrationsPopup signer={token.signer} count={token.creatorMigrations ?? 0} />}
-              >
-                <span style={{
-                  display: "inline-flex", alignItems: "center", gap: 3,
-                  color: "#FACC15", cursor: "default",
-                  fontSize: 11, fontWeight: 700, lineHeight: 1,
-                }}>
-                  {Icon.vipCrown2(13)}
-                  {token.creatorMigrations}
-                </span>
-              </Tooltip>
-            )}
             {token.dex?.toLowerCase().includes("mayhem") && (
               <MayhemCountdown createdAt={token.created_at} />
             )}
@@ -313,14 +237,10 @@ export function TokenHeader({
         <div style={{ flex: 1, minWidth: 0, display: "flex", justifyContent: "flex-end" }}>
           <StatsStrip
             token={token}
-            age={age}
             solPrice={solPrice}
-            supply={effectiveSupply}
             live={live}
             top10Pct={top10Pct}
             migrated={isMigrated}
-            dexPaid={dexPaid}
-            showDexscreener
           />
         </div>
 
@@ -365,113 +285,30 @@ export function TokenHeader({
   );
 }
 
-// The API has no all-time high, so the popup shows each token's market cap
-// now. Only a plausible value is surfaced ("—" otherwise): a dust print in an
-// empty pool can price a token at a bogus billion.
-function athMcapOk(v?: number): boolean {
-  return typeof v === "number" && v > 0 && v < 1_000_000_000;
-}
-
-/** Hover list for the dev-migration crown — the creator's migrated tokens and
- *  each one's market cap now. Fetches lazily on open. */
-function DevMigrationsPopup({ signer, count }: { signer: string; count: number }) {
-  const { data, loading } = useCreatorMigrations(signer, true);
-  const rows = data ?? [];
-  return (
-    <div style={{ minWidth: 210, maxWidth: 300 }}>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 5, marginBottom: 6,
-        color: "#FACC15", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase",
-      }}>
-        {Icon.vipCrown2(12)}
-        {count} dev migration{count === 1 ? "" : "s"}
-      </div>
-      {loading && rows.length === 0 ? (
-        <div style={{ color: "var(--paper-4)", fontSize: 11 }}>Loading…</div>
-      ) : rows.length === 0 ? (
-        <div style={{ color: "var(--paper-4)", fontSize: 11 }}>No migration history</div>
-      ) : (
-        <div style={{
-          display: "grid", gridTemplateColumns: "1fr auto",
-          columnGap: 14, rowGap: 5, maxHeight: 240, overflowY: "auto",
-        }}>
-          <span style={{ color: "var(--paper-4)", fontSize: 9 }}>TOKEN</span>
-          <span style={{ color: "var(--paper-4)", fontSize: 9, textAlign: "right" }}>MCAP</span>
-          {rows.map((m) => (
-            <React.Fragment key={m.mint}>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                <span style={{ color: "var(--paper-2)", fontWeight: 600 }}>{m.symbol || "—"}</span>
-                {m.migratedAt && (
-                  <span style={{ color: "var(--paper-4)", marginLeft: 6 }}>
-                    {formatAge(new Date(m.migratedAt).getTime())}
-                  </span>
-                )}
-              </span>
-              <span style={{
-                textAlign: "right", fontWeight: 600,
-                color: athMcapOk(m.marketCap) ? "var(--accent)" : "var(--paper-4)",
-              }}>
-                {athMcapOk(m.marketCap) ? fmtMcap(m.marketCap!) : "—"}
-              </span>
-            </React.Fragment>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function StatsStrip({
   token,
-  age,
   solPrice,
-  supply,
   live,
   top10Pct,
   migrated,
-  dexPaid,
-  showDexscreener,
 }: {
   token: TokenEvent;
-  age: string;
   solPrice: number | null | undefined;
-  supply: number;
   live?: LivePrice;
   top10Pct?: number;
   migrated: boolean;
-  dexPaid?: boolean | undefined;
-  showDexscreener: boolean;
 }) {
-  const { openWalletModal } = useApp();
-  const fmtDevBuy = (v: number) => fmtSol(v);
   const vol24USD = tokenVolumeUsd(token, solPrice, live?.volumeSol ?? 0);
 
-  const feesSol =
-    (token.feesTotal ?? 0) + (live?.feesSol ?? 0);
   const tradeCount =
     (token.tradeCount ?? 0) + (live?.tradeCount ?? 0);
 
   const { bundlePct, sniperPct, holders } = computeTokenMetrics(token, live, { top10Pct });
 
-  // Fall back to dev-buy-derived market cap (creatorBuyPrice × 1B supply × solPrice)
-  // when the server hasn't surfaced initialMarketCap yet.
-  const initialMc =
-    token.initialMarketCap ??
-    (token.creatorBuyPrice && solPrice
-      ? token.creatorBuyPrice * supply * solPrice
-      : undefined);
   const top10Value = top10Pct ?? 0;
-  const devBuySol = token.creatorBuySol ?? 0;
-  // Fees, the dev's buy and the launch market cap are not served by the API:
-  // their cells only show when a value is actually known (never a made-up 0
-  // or the old "$1" placeholder).
-  const feesKnown = token.feesTotal != null || (live?.feesSol ?? 0) > 0;
-  const devBuyKnown = token.creatorBuySol != null;
-  const initialMcKnown = initialMc != null && initialMc > 0;
 
-  const items: Array<{ label: string; val: React.ReactNode; tone?: "warn" | "green"; accent?: string } | null> = [
+  const items: StatItem[] = [
     { label: "VOL 24H",    val: `$${fmtNum(vol24USD ?? 0)}`, accent: "var(--info)" },
-    feesKnown ? { label: "FEES", val: <SolAmount>{fmtSol(feesSol)}</SolAmount>, accent: "var(--paper-4)" } : null,
     { label: "TRADES",     val: fmtNum(tradeCount), accent: "var(--paper-3)" },
     { label: "HOLDERS",    val: fmtNum(holders), accent: "var(--accent)" },
     {
@@ -492,33 +329,6 @@ function StatsStrip({
       tone: top10Value > 50 ? "warn" : undefined,
       accent: top10Value > 30 ? "var(--warn)" : "var(--paper-4)",
     },
-    !devBuyKnown ? null : {
-      label: "D BUY",
-      val: token.signer
-          ? (
-              <Tooltip content={`Open dev wallet ${token.signer}`} mono>
-                <button
-                  type="button"
-                  onClick={() => openWalletModal(token.signer!)}
-                  style={{
-                    color: "inherit",
-                    textDecoration: "underline dotted",
-                    textUnderlineOffset: 3,
-                    background: "transparent",
-                    border: 0,
-                    padding: 0,
-                    font: "inherit",
-                    cursor: "pointer",
-                  }}
-                >
-                  <SolAmount>{fmtDevBuy(devBuySol)}</SolAmount>
-                </button>
-              </Tooltip>
-            )
-          : <SolAmount>{fmtDevBuy(devBuySol)}</SolAmount>,
-      tone: "green",
-    },
-    initialMcKnown ? { label: "INIT MC",  val: fmtMcap(initialMc!) } : null,
     {
       label: "MIGRATED",
       val: migrated ? "YES" : "NO",
@@ -527,7 +337,7 @@ function StatsStrip({
     },
   ];
 
-  return <StatsCarousel items={items.filter((i): i is NonNullable<typeof i> => i != null)} />;
+  return <StatsCarousel items={items} />;
 }
 
 type StatItem = {

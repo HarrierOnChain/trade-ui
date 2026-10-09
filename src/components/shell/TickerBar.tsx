@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useClientNav } from "./ClientPages";
 import { ChainIcon, Icon, Tooltip, TokenIcon, Modal, ModalHeader } from "../atoms";
 import { useWatchlist } from "../../lib/watchlist";
-import { useDeployedTokens } from "../../lib/deployedTokens";
 import { useHiddenMints } from "../../lib/hiddenTokens";
 import { useLastSeen } from "../../contexts/LastSeenContext";
 import { useLiveTradePrices, type LivePrice } from "../../hooks/useLiveTradePrices";
@@ -12,17 +11,14 @@ import { useTokenEnrichment } from "../../hooks/useTokenEnrichment";
 import { enrichWithMeta } from "../../hooks/enrichToken";
 import { fetchWalletHoldings } from "../../api/client";
 import { fetchPublicMetadata } from "../../api/metadata";
-import { readUserWallets } from "../../lib/trackerWallets";
-import { isPreviewMint } from "../../lib/previewData";
+import { readUserWallets } from "../../lib/userWalletsMirror";
 import { tokenHref } from "../../lib/tokenHref";
 import { getActiveChain, nativeSymbol } from "../../lib/chains";
 import { fmtMcap, fmtUsd, fmtPrice } from "../../lib/format";
 import {
   useTickerBar,
   type TickerSource,
-  type TickerQuickbuy,
   type TickerSortField,
-  type TickerPnlDisplay,
   type TickerNativeCurrency,
 } from "../../hooks/useTickerBar";
 import { useIsMobile } from "../../hooks/useMediaQuery";
@@ -32,7 +28,6 @@ const SOURCE_TABS: { id: TickerSource; label: string; icon: (s: number) => React
   { id: "watchlist", label: "Watchlist",        icon: (s) => Icon.starLine(s) },
   { id: "positions", label: "Active positions",  icon: (s) => Icon.lineChart(s) },
   { id: "recent",    label: "Recent pairs",      icon: (s) => Icon.history(s) },
-  { id: "deployed",  label: "Deployed tokens",   icon: (s) => Icon.rocket(s) },
 ];
 
 export function TickerBar() {
@@ -44,14 +39,13 @@ export function TickerBar() {
 
 function TickerBarInner({ source }: { source: TickerSource }) {
   const watchlist = useWatchlist();
-  const deployed = useDeployedTokens();
   const { lastSeen } = useLastSeen();
-  const { quickbuy, sortField, sortDir, pnlDisplay, showMcaps, showHidden, nativeCurrency } = useTickerBar();
+  const { sortField, sortDir, showMcaps, showHidden, nativeCurrency } = useTickerBar();
   const hiddenMints = useHiddenMints();
   const solPrice = useNativeUsd();
 
   const positions = usePositionSource(source === "positions");
-  const recent = useRecentSource(source === "recent" ? lastSeen : null, watchlist, deployed);
+  const recent = useRecentSource(source === "recent" ? lastSeen : null, watchlist);
 
   // Raw TokenEvent list for the active source (positions also carry a usd map).
   const { baseTokens, usdByMint } = useMemo(() => {
@@ -59,16 +53,14 @@ function TickerBarInner({ source }: { source: TickerSource }) {
     let usd = EMPTY_USD;
     switch (source) {
       case "watchlist": toks = watchlist.entries.map((e) => e.snapshot); break;
-      case "deployed":  toks = deployed.map((e) => e.snapshot); break;
       case "positions":
         toks = showHidden ? positions.tokens : positions.tokens.filter((t) => !hiddenMints.has(t.mint_address));
         usd = positions.usd;
         break;
       case "recent":    toks = recent; break;
     }
-    // Never surface the /deploy preview placeholder mint in any source.
-    return { baseTokens: toks.filter((t) => !isPreviewMint(t.mint_address)), usdByMint: usd };
-  }, [source, watchlist.entries, deployed, positions, recent, showHidden, hiddenMints]);
+    return { baseTokens: toks, usdByMint: usd };
+  }, [source, watchlist.entries, positions, recent, showHidden, hiddenMints]);
 
   // Enrich the snapshots through the same pipeline as the stream columns so
   // market cap / price / image fill in (raw snapshots have mcap 0).
@@ -122,8 +114,6 @@ function TickerBarInner({ source }: { source: TickerSource }) {
               solPrice={solPrice ?? undefined}
               usd={usdByMint.get(t.mint_address)}
               isPosition={source === "positions"}
-              quickbuy={quickbuy}
-              pnlDisplay={pnlDisplay}
               showMcaps={showMcaps}
               nativeCurrency={nativeCurrency}
             />
@@ -135,15 +125,13 @@ function TickerBarInner({ source }: { source: TickerSource }) {
 }
 
 function TickerChip({
-  t, live, solPrice, usd, isPosition, quickbuy, pnlDisplay, showMcaps, nativeCurrency,
+  t, live, solPrice, usd, isPosition, showMcaps, nativeCurrency,
 }: {
   t: TokenEvent;
   live: LivePrice | undefined;
   solPrice: number | undefined;
   usd: number | undefined;
   isPosition: boolean;
-  quickbuy: TickerQuickbuy;
-  pnlDisplay: TickerPnlDisplay;
   showMcaps: boolean;
   nativeCurrency: TickerNativeCurrency;
 }) {
@@ -151,9 +139,9 @@ function TickerChip({
   const [hover, setHover] = useState(false);
 
   const symbol = t.symbol || t.name || t.mint_address.slice(0, 4);
-  const priceSol = live?.price ?? t.lastPrice ?? t.creatorBuyPrice ?? 0;
+  const priceSol = live?.price ?? t.lastPrice ?? 0;
   const computedMcap = priceSol > 0 && solPrice ? priceSol * 1_000_000_000 * solPrice : undefined;
-  const mcap = (t.marketCap && t.marketCap > 0 ? t.marketCap : undefined) ?? computedMcap ?? t.initialMarketCap;
+  const mcap = (t.marketCap && t.marketCap > 0 ? t.marketCap : undefined) ?? computedMcap;
   const priceUsd = priceSol && solPrice ? priceSol * solPrice : undefined;
 
   const change = t.priceChange;
@@ -166,15 +154,13 @@ function TickerChip({
   if (isPosition && usd != null && usd > 0) {
     const nat = nativeSymbol(getActiveChain());
     const valStr = nativeCurrency === "sol" && solPrice ? `${(usd / solPrice).toFixed(2)} ${nat}` : fmtUsd(usd);
-    const pctStr = change != null ? `${change > 0 ? "+" : ""}${change.toFixed(1)}%` : null;
-    if (pnlDisplay === "pnlPct") value = pctStr ?? valStr;
-    else { value = valStr; if (pnlDisplay === "valuePct" && pctStr) secondary = pctStr; }
+    // Value of the position, then the token's 24h price change.
+    value = valStr;
+    if (change != null) secondary = `${change > 0 ? "+" : ""}${change.toFixed(1)}%`;
     if (showMcaps && mcap != null && mcap > 0) secondary = fmtMcap(mcap);
   } else {
     value = mcap != null && mcap > 0 ? fmtMcap(mcap) : priceUsd != null && priceUsd > 0 ? fmtPrice(priceUsd) : "—";
   }
-
-  const showQuick = quickbuy === "always" || (quickbuy === "hover" && hover);
 
   return (
     <button
@@ -188,12 +174,6 @@ function TickerChip({
       <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--paper)", whiteSpace: "nowrap" }}>{symbol}</span>
       <span className="mono" style={{ fontSize: 11, color: valueColor, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{value}</span>
       {secondary && <span className="mono" style={{ fontSize: 10, color: "var(--paper-4)", whiteSpace: "nowrap" }}>{secondary}</span>}
-      {showQuick && (
-        <span role="button" aria-label={`Open ${symbol}`} onClick={(e) => { e.stopPropagation(); navigate(tokenHref(t.mint_address)); }}
-          style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 5, background: "color-mix(in oklch, var(--accent) 18%, transparent)", color: "var(--accent)", flexShrink: 0 }}>
-          {Icon.bolt(11)}
-        </span>
-      )}
     </button>
   );
 }
@@ -279,7 +259,6 @@ function usePositionSource(active: boolean): { tokens: TokenEvent[]; usd: Map<st
 function useRecentSource(
   lastSeen: Record<string, number> | null,
   watchlist: ReturnType<typeof useWatchlist>,
-  deployed: ReturnType<typeof useDeployedTokens>,
 ): TokenEvent[] {
   const [meta, setMeta] = useState<Record<string, TokenEvent>>({});
   const mints = useMemo(() => {
@@ -289,9 +268,8 @@ function useRecentSource(
   const known = useMemo(() => {
     const m = new Map<string, TokenEvent>();
     for (const e of watchlist.entries) m.set(e.mint, e.snapshot);
-    for (const e of deployed) m.set(e.mint, e.snapshot);
     return m;
-  }, [watchlist.entries, deployed]);
+  }, [watchlist.entries]);
   useEffect(() => {
     if (mints.length === 0) return;
     const missing = mints.filter((m) => !known.has(m) && !meta[m]);
@@ -322,14 +300,12 @@ const EMPTY_TOKENS: TokenEvent[] = [];
 /* ── settings modal (Axiom-style) ─────────────────────────────────── */
 
 const SORT_LABELS: Record<TickerSortField, string> = {
-  price: "Price", name: "Name", createdAt: "Created At", added: "Added",
+  price: "Price", name: "Name", added: "Added",
 };
 
 function TickerSettingsModal({ open, onClose, source }: { open: boolean; onClose: () => void; source: TickerSource }) {
   const {
-    quickbuy, setQuickbuy,
     sortField, setSortField, sortDir, setSortDir,
-    pnlDisplay, setPnlDisplay,
     showMcaps, setShowMcaps, showHidden, setShowHidden,
     nativeCurrency, setNativeCurrency,
   } = useTickerBar();
@@ -344,15 +320,6 @@ function TickerSettingsModal({ open, onClose, source }: { open: boolean; onClose
       <ModalHeader title="Ticker Row Settings" onClose={onClose} />
 
       <div style={{ padding: "16px 20px", background: "var(--ink-1)", overflow: "auto" }}>
-        <SectionLabel info>Show Quickbuy</SectionLabel>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-          <QuickbuyCard label="Never"    bolt={false} active={quickbuy === "never"}  onClick={() => setQuickbuy("never")} />
-          <QuickbuyCard label="Always"   bolt         active={quickbuy === "always"} onClick={() => setQuickbuy("always")} />
-          <QuickbuyCard label="On Hover" bolt         active={quickbuy === "hover"}  onClick={() => setQuickbuy("hover")} />
-        </div>
-
-        <div style={{ height: 1, background: "var(--line-soft)", margin: "16px 0" }} />
-
         <div style={{ display: "inline-flex", gap: 4, background: "var(--ink-0)", borderRadius: 999, padding: 3, marginBottom: 14 }}>
           <TabPill active={tab === "watchlist"} label="Watchlist" onClick={() => setTab("watchlist")} />
           <TabPill active={tab === "positions"} label="Positions" onClick={() => setTab("positions")} />
@@ -387,12 +354,6 @@ function TickerSettingsModal({ open, onClose, source }: { open: boolean; onClose
           </div>
         ) : (
           <>
-            <SectionLabel info>PnL Display</SectionLabel>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-              <PnlCard label="Value + %"   preview={<>$100 <b style={{ color: "var(--buy)" }}>+10%</b></>}     active={pnlDisplay === "valuePct"} onClick={() => setPnlDisplay("valuePct")} />
-              <PnlCard label="Value + PnL" preview={<>$100 <b style={{ color: "var(--buy)" }}>(+$1.2)</b></>}  active={pnlDisplay === "valuePnl"} onClick={() => setPnlDisplay("valuePnl")} />
-              <PnlCard label="PnL + %"     preview={<b style={{ color: "var(--buy)" }}>+$1.2 (+10%)</b>}       active={pnlDisplay === "pnlPct"}   onClick={() => setPnlDisplay("pnlPct")} />
-            </div>
             <ToggleRow label="Show Active Positions Market Caps" on={showMcaps} onChange={setShowMcaps} />
             <ToggleRow label="Show hidden positions" on={showHidden} onChange={setShowHidden} />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 16 }}>
@@ -413,40 +374,6 @@ function TickerSettingsModal({ open, onClose, source }: { open: boolean; onClose
   );
 }
 
-function SectionLabel({ children, info }: { children: React.ReactNode; info?: boolean }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--paper)", fontWeight: 600, margin: "0 0 10px" }}>
-      {children}{info && <InfoIcon />}
-    </div>
-  );
-}
-function MockTicker({ bolt, children }: { bolt?: boolean; children?: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--ink-2)", borderRadius: 6, padding: "6px 7px", width: "100%" }}>
-      <span style={{ width: 12, height: 12, borderRadius: 3, background: "var(--paper-4)", flexShrink: 0 }} />
-      <span style={{ fontSize: 10, color: "var(--paper-2)", flex: 1, whiteSpace: "nowrap", overflow: "hidden" }}>{children ?? "Ticker"}</span>
-      {bolt && (
-        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 14, borderRadius: 4, background: "color-mix(in oklch, var(--accent) 22%, transparent)", color: "var(--accent)", flexShrink: 0 }}>{Icon.bolt(9)}</span>
-      )}
-    </div>
-  );
-}
-function QuickbuyCard({ label, bolt, active, onClick }: { label: string; bolt: boolean; active: boolean; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} aria-pressed={active} style={cardStyle(active)}>
-      <div style={{ height: 40, display: "flex", alignItems: "center", padding: "0 8px", background: "var(--ink-0)", borderRadius: 7 }}><MockTicker bolt={bolt} /></div>
-      <span style={cardLabel(active)}>{label}</span>
-    </button>
-  );
-}
-function PnlCard({ label, preview, active, onClick }: { label: string; preview: React.ReactNode; active: boolean; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} aria-pressed={active} style={cardStyle(active)}>
-      <div style={{ height: 40, display: "flex", alignItems: "center", padding: "0 8px", background: "var(--ink-0)", borderRadius: 7 }}><MockTicker><span className="mono" style={{ fontSize: 9.5 }}>{preview}</span></MockTicker></div>
-      <span style={cardLabel(active)}>{label}</span>
-    </button>
-  );
-}
 function CurrencyCard({ label, icon, active, onClick }: { label: string; icon: React.ReactNode; active: boolean; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={active} style={{ ...cardStyle(active), width: 72 }}>
@@ -498,15 +425,6 @@ function SortDirIcon({ dir }: { dir: "asc" | "desc" }) {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: dir === "asc" ? "scaleY(-1)" : "none" }}>
       <path d="M4 4h9M4 8h6M4 12h3M12.5 7.5v5m0 0 1.8-1.8M12.5 12.5l-1.8-1.8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-function InfoIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--paper-4)" }}>
-      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M8 7.2v3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-      <circle cx="8" cy="5.2" r="0.7" fill="currentColor" />
     </svg>
   );
 }

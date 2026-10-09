@@ -1,13 +1,11 @@
 "use client";
 import { useCallback, useState } from "react";
-import { BackendClient, useSession } from "../api/backend";
+import { executeLocalTrade } from "../api/localTrade";
 import { useApp } from "../contexts/AppContext";
-import { useRegion } from "../contexts/RegionContext";
 import { useUserWallets } from "./useUserWallets";
 import { useUserPreference } from "./useUserPreference";
 import { PREF_KEYS } from "../components/TradingPanel/presets";
 import { shortAddr } from "../lib/format";
-import { notifyDemoChanged } from "../lib/demoEvents";
 
 const MIN_TRANSACTIONS_FEE_LAMPORTS = 100_000;
 
@@ -16,9 +14,7 @@ function clampSlippageBps(v: number) {
 }
 
 export function useQuickSell(mint: string) {
-  const { authed, pushToast } = useApp();
-  const { region } = useRegion();
-  const session = useSession();
+  const { pushToast } = useApp();
   const userWallets = useUserWallets();
   const [slipBps] = useUserPreference<number>(PREF_KEYS.slippageBps, 100);
   const [transactionsFeeLamports] = useUserPreference<number>(PREF_KEYS.transactionsFee, MIN_TRANSACTIONS_FEE_LAMPORTS);
@@ -30,24 +26,16 @@ export function useQuickSell(mint: string) {
       pushToast({ title: "ENTER AMOUNT", body: "Percentage must be greater than 0", tone: "sell" });
       return;
     }
-    if (!authed || !session) {
-      pushToast({ title: "SESSION EXPIRED", body: "Reload to sign in again.", tone: "sell" });
-      return;
-    }
-
-    // The selected local wallets, else the connected browser wallet: the same
-    // rule as the trading panel.
-    const picked = walletId
-      ? userWallets.wallets.filter((w) => w.id === walletId)
-      : userWallets.wallets.filter((w) => userWallets.activeIds.has(w.id) && !w.isConnected);
-    const connected = userWallets.wallets.find((w) => w.isConnected);
-    const platforms = picked.length > 0 || walletId ? picked : connected ? [connected] : [];
+    // The wallet asked for, else the ones selected in the top bar: the same
+    // rule as the trading panel. Watch-only wallets never trade.
+    const platforms = walletId
+      ? userWallets.wallets.filter((w) => w.id === walletId && !w.watchOnly)
+      : userWallets.activeWallets;
     if (platforms.length === 0) {
-      pushToast({ title: "NO WALLET", body: "Pick a wallet to trade with.", tone: "sell" });
+      pushToast({ title: "NO WALLET", body: "Pick the wallets that trade in the top bar, or add one in Wallets.", tone: "sell" });
       return;
     }
 
-    const client = new BackendClient(region.baseUrl, session.token);
     const commonBase = {
       side: "sell" as const,
       mint,
@@ -59,7 +47,7 @@ export function useQuickSell(mint: string) {
     setBusy(true);
     try {
       const results = await Promise.allSettled(
-        platforms.map((w) => client.execute({ ...commonBase, walletId: w.id }).then((r) => ({ w, r }))),
+        platforms.map((w) => executeLocalTrade({ ...commonBase, walletId: w.id }).then((r) => ({ w, r }))),
       );
       const ok: { w: typeof platforms[number]; r: { signature: string } }[] = [];
       const fail: { w: typeof platforms[number]; err: unknown }[] = [];
@@ -85,7 +73,6 @@ export function useQuickSell(mint: string) {
         });
       }
       if (ok.length === 0) throw new Error("All wallets failed");
-      notifyDemoChanged();
       void userWallets.refreshBalances();
     } catch (err) {
       pushToast({
@@ -96,7 +83,7 @@ export function useQuickSell(mint: string) {
     } finally {
       setBusy(false);
     }
-  }, [authed, busy, mint, pushToast, region.baseUrl, region.flag, session, slipBps, transactionsFeeLamports, userWallets]);
+  }, [busy, mint, pushToast, slipBps, transactionsFeeLamports, userWallets]);
 
   return { run, busy };
 }

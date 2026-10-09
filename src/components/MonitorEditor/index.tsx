@@ -381,7 +381,6 @@ export function StylePanel({
   onToggleCollapsed: () => void;
 }) {
   const isMobile = useIsMobile();
-  const isPhone = useIsPhone();
   const slot = selectedSlotId ? template.slots.find((s) => s.id === selectedSlotId) ?? null : null;
 
   const updateSlotStyle = (patch: Partial<SlotStyle>) => {
@@ -601,26 +600,8 @@ export function StylePanel({
         <PanelSection title="Cards">
           <NumRow label="Scale" value={slot.card.scale} min={0.6} max={1.8} step={0.05}
             onChange={(v) => updateCard({ scale: v })} />
-          <NumRow label="Row pad Y" value={slot.card.rowPaddingY} min={0} max={32}
-            onChange={(v) => updateCard({ rowPaddingY: v })} />
-          <NumRow label="Row pad X" value={slot.card.rowPaddingX} min={0} max={32}
-            onChange={(v) => updateCard({ rowPaddingX: v })} />
-          <NumRow label="Row gap" value={slot.card.rowGap} min={0} max={24}
-            onChange={(v) => updateCard({ rowGap: v })} />
-          <NumRow label="Row radius" value={slot.card.rowRadius} min={0} max={24}
-            onChange={(v) => updateCard({ rowRadius: v })} />
-          <NumRow label="Separator" value={slot.card.separatorOpacity} min={0} max={1} step={0.05}
-            onChange={(v) => updateCard({ separatorOpacity: v })} />
-          <NumRow label="Accent stripe" value={slot.card.accentWidth} min={0} max={8}
-            onChange={(v) => updateCard({ accentWidth: v })} />
-          {slot.card.accentWidth > 0 && (
-            <SwatchRow label="Accent color" value={slot.card.accentColor} options={SWATCHES}
-              onChange={(v) => updateCard({ accentColor: v })} />
-          )}
           <ToggleRow label="Sparkline" value={slot.card.showSparkline}
             onChange={(v) => updateCard({ showSparkline: v })} />
-          <ToggleRow label="Social links" value={slot.card.showSocials}
-            onChange={(v) => updateCard({ showSocials: v })} />
           <button
             onClick={() => updateCard({ ...DEFAULT_CARD_STYLE })}
             style={{

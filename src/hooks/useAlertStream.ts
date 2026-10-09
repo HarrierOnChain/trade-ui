@@ -1,12 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { fetchTrending } from "../api/client";
-import { normalizeRestToken, toArray } from "../api/normalize";
 import { useChain } from "../contexts/ChainContext";
 import { platformAllowed } from "../lib/tokenFilters";
 import { mergeLiveFrame } from "../lib/streamMerge";
 import { useTokenEnrichment } from "./useTokenEnrichment";
-import type { TokenEvent, TrendingPeriod, TrendingToken } from "../types";
+import type { TokenEvent, TrendingPeriod } from "../types";
 
 const MAX = 20;
 /**
@@ -16,10 +15,6 @@ const MAX = 20;
  * useLiveTradePrices.
  */
 const REFRESH_MS = 30_000;
-
-function alertRestToToken(t: TrendingToken): TokenEvent {
-  return normalizeRestToken(t as unknown as Record<string, unknown>);
-}
 
 export function useAlertStream(platform?: string, period: TrendingPeriod = "recent") {
   const { chainId } = useChain();
@@ -38,8 +33,7 @@ export function useAlertStream(platform?: string, period: TrendingPeriod = "rece
         .then((res) => {
           if (cancelled) return;
           const seen = new Set<string>();
-          const list = toArray<TrendingToken>(res)
-            .map(alertRestToToken)
+          const list = res.data
             .filter((t) => {
               if (!t.mint_address || seen.has(t.mint_address)) return false;
               if (!platformAllowed(t.dex, platform)) return false;

@@ -2,7 +2,6 @@
 import React, { useMemo } from "react";
 import { usePriceChanges } from "../../hooks/usePriceChanges";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
-import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
 import { fluidColsFit } from "../../lib/responsive";
 import { Tooltip } from "../atoms";
@@ -30,7 +29,6 @@ function fmtCompactPct(v: number): string {
 
 export function PriceChangeStrip({ mint }: Props) {
   const { data: changes } = usePriceChanges(mint);
-  const { info }          = useTokenInfo(mint);
   const isMobile          = useIsMobile();
   const isPhone           = useIsPhone();
   const mintList = useMemo(() => (mint ? [mint] : []), [mint]);
@@ -40,13 +38,6 @@ export function PriceChangeStrip({ mint }: Props) {
   // Live-ticking "current" SOL price: WS first, then whatever the REST
   // price-changes call captured. The grid re-renders whenever either fires.
   const currentSol = live?.price ?? changes?.currentPrice ?? 0;
-
-  // Fallback reference = dev buy. We compare the current SOL price against
-  // creator_buy_price; supply and solPrice cancel out in the ratio so the %
-  // change equals what you'd get from current-mcap / initial-mcap.
-  const refSol = info?.creatorBuyPrice ?? 0;
-  const fallbackPct =
-    refSol > 0 && currentSol > 0 ? ((currentSol - refSol) / refSol) * 100 : null;
 
   return (
     <div style={{
@@ -68,26 +59,18 @@ export function PriceChangeStrip({ mint }: Props) {
         const anchor = period?.price ?? 0;
         // The window's opening price (recovered from the API's change) against
         // the live price, so the cell ticks with every trade; the API's own
-        // percentage when no live price is known yet; dev-buy → current last.
-        const livePct =
+        // percentage when no live price is known yet.
+        const pct =
           anchor > 0 && currentSol > 0
             ? ((currentSol - anchor) / anchor) * 100
             : period?.change ?? null;
-        const pct = livePct ?? fallbackPct;
-        const isFallback = livePct == null && fallbackPct != null;
         const up = pct != null && pct >= 0;
         const color =
           pct == null ? "var(--paper-4)" : up ? "var(--buy)" : "var(--sell)";
         return (
           <Tooltip
             key={key}
-            content={
-              pct != null && Math.abs(pct) >= 1000
-                ? `${pct.toFixed(1)}%`
-                : isFallback
-                  ? "vs dev-buy market cap (no per-period anchor available)"
-                  : null
-            }
+            content={pct != null && Math.abs(pct) >= 1000 ? `${pct.toFixed(1)}%` : null}
           >
             <div
               style={{
@@ -103,10 +86,7 @@ export function PriceChangeStrip({ mint }: Props) {
               <span className="eyebrow" style={{ fontSize: 9 }}>{label}</span>
               <span
                 className="mono"
-                style={{
-                  fontSize: 12, fontWeight: 500, color,
-                  opacity: isFallback ? 0.65 : 1,
-                }}
+                style={{ fontSize: 12, fontWeight: 500, color }}
               >
                 {pct == null ? "–" : fmtCompactPct(pct)}
               </span>

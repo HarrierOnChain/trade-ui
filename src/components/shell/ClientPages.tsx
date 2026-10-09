@@ -18,25 +18,19 @@ import React, {
 import { usePathname, useRouter } from "next/navigation";
 import { ClientPageVisibilityProvider } from "../../contexts/ClientPageVisibility";
 import { useIsMobile } from "../../hooks/useMediaQuery";
-import { getActiveTokenMint } from "../../lib/activeToken";
-import { hasPendingClone } from "../../lib/deployDraft";
 import { parseTokenPath } from "../../lib/tokenHref";
 import { TokenPageHost } from "./TokenPageHost";
-import {
-  requestDeployReset,
-  SPOOL_SHELL_PATH,
-} from "../../lib/shellNavigation";
 
 // ── lazy pages ──────────────────────────────────────────────────────────────
 const MonitorPage = lazy(() => import("../../app/monitor/page"));
 const PortfolioPage = lazy(() => import("../../app/portfolio/page"));
-const DeployPage = lazy(() => import("../../app/deploy/page"));
+const WalletsPage = lazy(() => import("../../app/wallets/page"));
 const SwapPage = lazy(() => import("../../app/swap/page"));
 
 interface PageDef {
   id: string;
   path: string;
-  /** Tab-title label — rendered as `"<title> | Raze Terminal"` while active. */
+  /** Tab-title label — rendered as `"<title> | Trade UI"` while active. */
   title: string;
   /** Page sets its own live tab title (e.g. ticker + market cap); the central
    *  title effect leaves it alone so it isn't stomped back to the static label. */
@@ -47,8 +41,8 @@ interface PageDef {
 const PAGES: PageDef[] = [
   { id: "monitor",    path: "/monitor",    title: "Monitor",    Component: MonitorPage },
   { id: "portfolio",  path: "/portfolio",  title: "Portfolio",  Component: PortfolioPage },
+  { id: "wallets",    path: "/wallets",    title: "Wallets",    Component: WalletsPage },
   { id: "swap",       path: "/swap",       title: "Swap",       Component: SwapPage },
-  { id: "deploy",     path: "/deploy",     title: "Deploy",     Component: DeployPage },
 ];
 
 // Fired after navigate() rewrites the URL via pushState so query-param readers
@@ -149,17 +143,6 @@ export function ClientNavProvider({ children }: { children: React.ReactNode }) {
     const id = resolvePageId(pathname);
     if (id) {
       window.history.pushState(null, "", path);
-      // Post-launch the URL is /token/<mint> while the wizard stays mounted.
-      // Re-opening Deploy must remount a blank form — unless a clone seed is
-      // waiting, which the already-mounted wizard applies via CLONE_SEED_EVENT.
-      if (
-        id === "deploy" &&
-        clientPath.startsWith("/token/") &&
-        getActiveTokenMint() &&
-        !hasPendingClone()
-      ) {
-        requestDeployReset();
-      }
       activate(id, pathname);
       window.dispatchEvent(new Event(SPOOL_NAV_EVENT));
     } else if (pathname.startsWith("/token/")) {
@@ -170,7 +153,7 @@ export function ClientNavProvider({ children }: { children: React.ReactNode }) {
     } else {
       router.push(path);
     }
-  }, [router, activate, clientPath]);
+  }, [router, activate]);
 
   // Tab title follows the visible managed page ("Monitor | Trade UI").
   // Token detail (activePage === null) sets its own live title — ticker +
@@ -180,23 +163,6 @@ export function ClientNavProvider({ children }: { children: React.ReactNode }) {
     const page = PAGES.find((p) => p.id === activePage);
     if (page && !page.dynamicTitle) document.title = `${page.title} | Trade UI`;
   }, [activePage]);
-
-  // In-place URL relabels (e.g. /deploy → /token/<mint> after launch).
-  useEffect(() => {
-    const onShellPath = (e: Event) => {
-      const path = (e as CustomEvent<string>).detail;
-      if (!path || typeof path !== "string") return;
-      const id = resolvePageId(path);
-      if (id) {
-        activate(id, path);
-      } else {
-        setActivePage(null);
-        setClientPath(path);
-      }
-    };
-    window.addEventListener(SPOOL_SHELL_PATH, onShellPath);
-    return () => window.removeEventListener(SPOOL_SHELL_PATH, onShellPath);
-  }, [activate]);
 
   // Browser back/forward.
   useEffect(() => {
@@ -258,7 +224,7 @@ export function ClientPages({ nextChildren }: { nextChildren: React.ReactNode })
   const nextPathname = usePathname();
   // Next's children tree is the page that was SSR'd / last router.push'd —
   // NOT whatever pushState last wrote to the URL. Pin it so a client nav to
-  // /deploy (or away from it) cannot keep showing the previous RSC page.
+  // another page (or away from it) cannot keep showing the previous RSC page.
   const ssrPathRef = useRef(nextPathname);
   const ssrManagedId = resolvePageId(ssrPathRef.current);
   const isManaged = activePage !== null;

@@ -1,7 +1,7 @@
-export const APP_BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/$/, "");
-
+/**
+ * Trade UI is served at the root of its host: server.mjs guards `/api/` there,
+ * so there is no base path. Kept as a seam for the callers.
+ */
 export function withBasePath(path: string): string {
-  if (!APP_BASE_PATH || /^https?:\/\//i.test(path)) return path;
-  const normalized = path.startsWith("/") ? path : `/${path}`;
-  return `${APP_BASE_PATH}${normalized}`;
+  return path;
 }

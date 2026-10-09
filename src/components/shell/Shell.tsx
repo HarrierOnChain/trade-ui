@@ -6,35 +6,30 @@ import { useIsMobile } from "../../hooks/useMediaQuery";
 import { SelectedTokenProvider } from "../../contexts/SelectedTokenContext";
 import { LastSeenProvider } from "../../contexts/LastSeenContext";
 import { FiltersProvider } from "../../contexts/FiltersContext";
-import { RegionProvider } from "../../contexts/RegionContext";
 import { ChainProvider } from "../../contexts/ChainContext";
 import { TopBar } from "./TopBar";
 import { TickerBar } from "./TickerBar";
 import { StatusFooter } from "./StatusFooter";
 import { SearchModal } from "./SearchModal";
-import { AuthGate } from "./AuthGate";
-import { ConfirmModal } from "./ConfirmModal";
+import { LockGate } from "./LockGate";
 import { WalletModal } from "./WalletModal";
 import { ToastRail } from "./ToastRail";
 import { KeyboardShortcuts } from "./KeyboardShortcuts";
 import { Sidebar } from "./Sidebar";
-import { MonitorStrip } from "./MonitorStrip";
 import { UserWalletsProvider } from "../../hooks/useUserWallets";
-import { XTrackerProvider } from "../../hooks/useXTracker";
-import { LiveAlertsProvider } from "../../contexts/LiveAlertsContext";
 import { useApplyThemeMode } from "../../hooks/useThemeMode";
 import { useApplyThemeFont } from "../../hooks/useThemeFont";
 import { ThemeStudioModal } from "./ThemeStudioModal";
 import { NotificationsModal } from "./NotificationsModal";
 import { prefetchRoutes } from "../../lib/prefetchRoutes";
 import { ClientNavProvider, ClientPages } from "./ClientPages";
-import { PrivyRoot } from "./PrivyRoot";
 import { PageLifecycleReload } from "./PageLifecycleReload";
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  // Nothing below the gate mounts, fetches or opens a socket until this
+  // browser has unlocked the vault.
   return (
-    <PrivyRoot>
-    <RegionProvider>
+    <LockGate>
       <ChainProvider>
       <AppProvider>
         <LastSeenProvider>
@@ -42,30 +37,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <SelectedTokenProvider>
               <AppZoomProvider>
                 <UserWalletsProvider>
-                  <XTrackerProvider>
-                    <LiveAlertsProvider>
-                      <PageLifecycleReload />
-                      <PrefetchOnMount />
-                      <ThemeAccentApplier />
-                      <ThemeFontApplier />
-                      <ClientNavProvider>
-                      <AuthGate>
-                        <AppZoomFrame>
-                          <ShellChrome>{children}</ShellChrome>
-                          <SearchModal />
-                          <ConfirmModal />
-                          <WalletModal />
-                          <ThemeStudioModal />
-                          <NotificationsModal />
-                          <KeyboardShortcuts />
-                        </AppZoomFrame>
-                      </AuthGate>
-                      </ClientNavProvider>
-                      {/* Toasts live outside the gate so connect/disconnect
-                          confirmations surface on the auth screen too. */}
-                      <ToastRail />
-                    </LiveAlertsProvider>
-                  </XTrackerProvider>
+                  <PageLifecycleReload />
+                  <PrefetchOnMount />
+                  <ThemeAccentApplier />
+                  <ThemeFontApplier />
+                  <ClientNavProvider>
+                    <AppZoomFrame>
+                      <ShellChrome>{children}</ShellChrome>
+                      <SearchModal />
+                      <WalletModal />
+                      <ThemeStudioModal />
+                      <NotificationsModal />
+                      <KeyboardShortcuts />
+                    </AppZoomFrame>
+                  </ClientNavProvider>
+                  <ToastRail />
                 </UserWalletsProvider>
               </AppZoomProvider>
             </SelectedTokenProvider>
@@ -73,8 +59,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </LastSeenProvider>
       </AppProvider>
       </ChainProvider>
-    </RegionProvider>
-    </PrivyRoot>
+    </LockGate>
   );
 }
 
