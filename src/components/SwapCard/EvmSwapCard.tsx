@@ -16,7 +16,7 @@ import { shortAddr } from "../../lib/format";
 import { quoteMints } from "../../lib/quoteMints";
 import { toRaw, toUi } from "../../lib/swap/quote";
 import { useDocumentHidden } from "../../lib/swap/useSwapQuote";
-import { evmAssetId, evmRoutes, vault } from "../../lib/vault/client";
+import { evmMintId, evmRouteLabel, evmRoutes, vault } from "../../lib/vault/client";
 import { useEvmDecimals, useEvmQuote } from "../../lib/evm/useEvmQuote";
 
 const SLIPPAGE_PRESETS = [10, 50, 100]; // bps
@@ -195,11 +195,11 @@ export function EvmSwapCard({ chain }: { chain: ChainId }) {
 
   const quote = q.quote;
   // The quote on screen is for what is typed now (not the previous amount or pair).
-  const quoteMatches = !!quote && amountRaw !== null && quote.amountIn === amountRaw.toString()
-    && evmAssetId(quote.tokenIn) === tokenIn && evmAssetId(quote.tokenOut) === tokenOut;
+  const quoteMatches = !!quote && amountRaw !== null && quote.inAmount === amountRaw.toString()
+    && evmMintId(quote.inputMint) === tokenIn && evmMintId(quote.outputMint) === tokenOut;
   const uiIn = amountRaw !== null && inDec !== null ? toUi(amountRaw, inDec) : 0;
-  const uiOut = quoteMatches && outDec !== null ? toUi(BigInt(quote!.amountOut), outDec) : 0;
-  const minOut = quoteMatches && outDec !== null ? toUi(BigInt(quote!.minimumAmountOut), outDec) : 0;
+  const uiOut = quoteMatches && outDec !== null ? toUi(BigInt(quote!.outAmount), outDec) : 0;
+  const minOut = quoteMatches && outDec !== null ? toUi(BigInt(quote!.otherAmountThreshold), outDec) : 0;
   const insufficient = balance !== null && amountRaw !== null && amountRaw > balance;
   const canSwap = !!chosen && !!tokenIn && !!tokenOut && !same && amountRaw !== null && stage === null && !insufficient && !q.noRoute;
 
@@ -210,7 +210,7 @@ export function EvmSwapCard({ chain }: { chain: ChainId }) {
       let quoteToken = quoteMatches && Date.now() - q.updatedAt < MAX_QUOTE_AGE_MS ? quote!.quoteToken : null;
       if (!quoteToken) {
         setStage("quote");
-        quoteToken = (await evmRoutes.quote({ chain, tokenIn, tokenOut, amountIn: amountRaw.toString(), slippageBps })).quoteToken;
+        quoteToken = (await evmRoutes.quote({ chain, inputMint: tokenIn, outputMint: tokenOut, amount: amountRaw.toString(), slippageBps })).quoteToken;
       }
       setStage("sign");
       const { signature } = await vault.swap(chosen.id, quoteToken);
@@ -299,7 +299,7 @@ export function EvmSwapCard({ chain }: { chain: ChainId }) {
       <div style={{ ...box, padding: "8px 14px" }}>
         <DRow label="Minimum received">{quoteMatches && outDec !== null ? `${fmt(minOut)} ${outLabel}` : "—"}</DRow>
         <DRow label="Route">
-          {quote && quoteMatches ? (quote.route.kind === "swap" ? `${quote.route.venue} · ${quote.route.tokens.length - 1} hop${quote.route.tokens.length > 2 ? "s" : ""}` : quote.route.kind) : "—"}
+          {quote && quoteMatches ? evmRouteLabel(quote) : "—"}
         </DRow>
         <DRow label="Slippage">
           <span style={{ display: "inline-flex", gap: 4 }}>

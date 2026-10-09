@@ -1,8 +1,10 @@
 /**
  * The server side of an EVM swap. Fixtures: real answers of
- * router.raze.bot/evm on Base (2026-10-09), unsigned, never sent: a buy
- * (ETH → USDC, no approval) and a sell (USDC → ETH, one approval), built for
- * a funded wallet seen on chain; the tests put their own wallet in `from`.
+ * router.raze.bot/evm on Base (2026-10-09, the Solana router's API: `GET
+ * /quote`, then `POST /swap` with the quote as `quoteResponse`), unsigned,
+ * never sent: a buy (ETH → USDC on Uniswap V2, no approval) and a sell
+ * (USDC → ETH on Uniswap V3, one approval), built for a funded wallet seen on
+ * chain; the tests put their own wallet in `from`.
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,24 +15,26 @@ import {
   createEvm,
   describeRouterError,
   evmAddressOfKey,
-  quoteBody,
+  NATIVE,
+  quoteQuery,
   rlp,
   signEip1559,
 } from "../server/evm.mjs";
 
 const fixture = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8"));
 const QUOTE_BUY = fixture("evm-quote-buy.json");
-const BUILD_BUY = fixture("evm-build-buy.json");
+const BUILD_BUY = fixture("evm-swap-buy.json");
 const QUOTE_SELL = fixture("evm-quote-sell.json");
-const BUILD_SELL = fixture("evm-build-sell.json");
+const BUILD_SELL = fixture("evm-swap-sell.json");
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const SWAP_ROUTER = "0x2626664c2603336e57b271c5c0b26f421741e481";
+const V2_ROUTER = "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24";
 const hex = (b) => `0x${Buffer.from(b).toString("hex")}`;
 
 /** The fixture's build, made for `address`. */
 function buildFor(build, address) {
   const b = structuredClone(build);
-  for (const tx of [...b.approvals, b.swap]) tx.from = address;
+  for (const tx of [...b.setupTransactions, b.swapTransaction]) tx.from = address;
   return b;
 }
 
@@ -73,36 +77,40 @@ describe("signing", () => {
 });
 
 describe("what the router is asked", () => {
-  test("chain, tokens, amount, slippage and hops; nothing else", () => {
-    const body = quoteBody(sp({ chain: "base", tokenIn: "native", tokenOut: USDC.toUpperCase().replace("0X", "0x"), amountIn: "1000", slippageBps: "150", maxHops: "3", venues: "x", sender: "0x1" }));
-    assert.deepEqual(body, {
+  test("chain, mints, amount, slippage and hops; nothing else", () => {
+    const query = quoteQuery(sp({ chain: "base", inputMint: "native", outputMint: USDC.toUpperCase().replace("0X", "0x"), amount: "1000", slippageBps: "150", maxHops: "3", dexes: "x", userPublicKey: "0x1" }));
+    assert.deepEqual(Object.fromEntries(query), {
       chain: "base",
-      tokenIn: { kind: "native" },
-      tokenOut: { kind: "erc20", address: USDC },
-      amountIn: "1000",
-      slippageBps: 150,
-      maxHops: 3,
+      inputMint: NATIVE,
+      outputMint: USDC,
+      amount: "1000",
+      slippageBps: "150",
+      maxHops: "3",
     });
-    assert.equal(quoteBody(sp({ chain: "bsc", tokenIn: USDC, tokenOut: "native", amountIn: "1" })).slippageBps, 100);
+    assert.equal(quoteQuery(sp({ chain: "bsc", inputMint: USDC, outputMint: NATIVE, amount: "1" })).get("slippageBps"), "100");
   });
 
   test("a bad request is refused before the router", () => {
-    const ok = { chain: "base", tokenIn: "native", tokenOut: USDC, amountIn: "1" };
-    assert.throws(() => quoteBody(sp({ ...ok, chain: "sol" })), /Unknown EVM chain/);
-    assert.throws(() => quoteBody(sp({ ...ok, tokenOut: "native" })), /same token/);
-    assert.throws(() => quoteBody(sp({ ...ok, tokenOut: "0x123" })), /native` or a 0x address/);
-    assert.throws(() => quoteBody(sp({ ...ok, amountIn: "01" })), /Bad amount/);
-    assert.throws(() => quoteBody(sp({ ...ok, amountIn: (1n << 256n).toString() })), /Bad amount/);
-    assert.throws(() => quoteBody(sp({ ...ok, maxHops: "4" })), /maxHops/);
-    assert.throws(() => quoteBody(sp({ ...ok, slippageBps: "5001" })), /above 50%/);
-    assert.throws(() => quoteBody(sp({ ...ok, slippageBps: "300" }), { maxSlippageBps: 200 }), /above 2%/);
+    const ok = { chain: "base", inputMint: "native", outputMint: USDC, amount: "1" };
+    assert.throws(() => quoteQuery(sp({ ...ok, chain: "sol" })), /Unknown EVM chain/);
+    assert.throws(() => quoteQuery(sp({ ...ok, outputMint: "native" })), /same token/);
+    assert.throws(() => quoteQuery(sp({ ...ok, outputMint: NATIVE.toUpperCase().replace("0X", "0x") })), /same token/);
+    assert.throws(() => quoteQuery(sp({ ...ok, outputMint: "0x123" })), /outputMint is `native` or a 0x address/);
+    assert.throws(() => quoteQuery(sp({ ...ok, amount: "01" })), /Bad amount/);
+    assert.throws(() => quoteQuery(sp({ ...ok, amount: (1n << 256n).toString() })), /Bad amount/);
+    assert.throws(() => quoteQuery(sp({ ...ok, maxHops: "4" })), /maxHops/);
+    assert.throws(() => quoteQuery(sp({ ...ok, slippageBps: "5001" })), /above 50%/);
+    assert.throws(() => quoteQuery(sp({ ...ok, slippageBps: "300" }), { maxSlippageBps: 200 }), /above 2%/);
   });
 
   test("router refusals read as something to do", () => {
     assert.match(describeRouterError(401, {}), /RAZE_API_KEY/);
-    assert.match(describeRouterError(409, { error: { code: "QUOTE_STALE" } }), /price moved/);
-    assert.match(describeRouterError(404, { error: { code: "NO_ROUTE" } }), /No route/);
-    assert.match(describeRouterError(502, { error: { code: "RPC_UNAVAILABLE", rpcError: "RPC_TIMEOUT" } }), /RPC_TIMEOUT/);
+    assert.match(describeRouterError(409, { error: "declined", reason: "quote_stale", outAmount: "1" }), /price moved/);
+    assert.match(describeRouterError(404, { error: "declined", reason: "no_route", candidates: 0 }), /No route/);
+    assert.match(describeRouterError(409, { error: "route_expired", reason: "the quote expired: quote again" }), /expired/);
+    assert.match(describeRouterError(503, { error: "rpc", reason: "rpc_timeout" }), /rpc_timeout/);
+    assert.match(describeRouterError(503, { error: "not_ready", reasons: ["overloaded: too many quotes and builds in flight"] }), /busy/);
+    assert.match(describeRouterError(503, { error: "not_ready", reasons: ["base: no venue verified yet"] }), /base: no venue verified yet/);
   });
 });
 
@@ -112,7 +120,7 @@ describe("what gets signed", () => {
 
   test("the router's real buy and sell pass, in order, with their gas", () => {
     const buy = at(QUOTE_BUY, BUILD_BUY);
-    assert.deepEqual(buy.map((t) => [t.to, t.value, t.gas]), [[SWAP_ROUTER, 1_000_000_000_000_000n, 149_476n]]);
+    assert.deepEqual(buy.map((t) => [t.to, t.value, t.gas]), [[V2_ROUTER, 1_000_000_000_000_000n, 135_352n]]);
     const sell = at(QUOTE_SELL, BUILD_SELL);
     assert.deepEqual(sell.map((t) => [t.to, t.value]), [[USDC, 0n], [SWAP_ROUTER, 0n]]);
     assert.ok(sell[0].data.startsWith("0x095ea7b3"));
@@ -129,19 +137,21 @@ describe("what gets signed", () => {
     assert.throws(() => checkedTransactions(BUILD_BUY, { quote: QUOTE_BUY, owner: me, chainId: 8453 }), /from another wallet/);
     refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.chainId = 1; }), /another quote or chain/);
     refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.quoteId = "x"; }), /another quote or chain/);
-    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swap.to = USDC; }), /swap to another contract/);
-    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swap.value = "2000000000000000"; }), /another value/);
-    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swap.chainId = 1; }), /on another chain/);
-    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { delete b.swap.gas; }), /swap gas/);
-    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swap.gas = "9000000"; }), /swap gas/);
-    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.approvals = [structuredClone(BUILD_SELL.approvals[0])]; }), /native input/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.otherAmountThreshold = "1"; }), /other amounts than the quote's/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.inAmount = "2000000000000000"; }), /other amounts than the quote's/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swapTransaction.to = USDC; }), /swap to another contract/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swapTransaction.value = "2000000000000000"; }), /another value/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swapTransaction.chainId = 1; }), /on another chain/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { delete b.swapTransaction.gas; }), /swap gas/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.swapTransaction.gas = "9000000"; }), /swap gas/);
+    refused(QUOTE_BUY, edit(BUILD_BUY, (b) => { b.setupTransactions = [structuredClone(BUILD_SELL.setupTransactions[0])]; }), /native input/);
     refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.spender = USDC; }), /another spender/);
     const other = "1111111111111111111111111111111111111111";
-    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.approvals[0].data = b.approvals[0].data.replace(SWAP_ROUTER.slice(2), other); }), /another spender/);
-    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.approvals[0].data = b.approvals[0].data.slice(0, 74) + "f".repeat(64); }), /above the amount/);
-    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.approvals[0].data = `0xa9059cbb${b.approvals[0].data.slice(10)}`; }), /not an approve call/);
-    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.approvals[0].to = SWAP_ROUTER; }), /another token/);
-    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.approvals[0].value = "1"; }), /approval with value/);
+    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.setupTransactions[0].data = b.setupTransactions[0].data.replace(SWAP_ROUTER.slice(2), other); }), /another spender/);
+    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.setupTransactions[0].data = b.setupTransactions[0].data.slice(0, 74) + "f".repeat(64); }), /above the amount/);
+    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.setupTransactions[0].data = `0xa9059cbb${b.setupTransactions[0].data.slice(10)}`; }), /not an approve call/);
+    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.setupTransactions[0].to = SWAP_ROUTER; }), /another token/);
+    refused(QUOTE_SELL, edit(BUILD_SELL, (b) => { b.setupTransactions[0].value = "1"; }), /approval with value/);
   });
 
   test("a simulation that did not pass says why and signs nothing", () => {
@@ -153,13 +163,15 @@ describe("what gets signed", () => {
         return true;
       });
     };
-    failed({ status: "failed", reason: "INSUFFICIENT_BALANCE", transaction: 0 });
-    failed({ status: "failed", reason: "OUTPUT_BELOW_MINIMUM", transaction: 1 });
-    failed({ status: "requires_approval" });
-    failed({ status: "not_simulated", reason: "RPC_TIMEOUT" });
+    failed({ status: "failed", reason: "insufficient_balance", transaction: null });
+    failed({ status: "failed", reason: "output_below_minimum", transaction: 1 });
+    failed({ status: "requires_approval", reason: "the node cannot simulate the approval and the swap in sequence" });
+    failed({ status: "not_simulated", reason: "rpc_timeout" });
     const b = buildFor(BUILD_BUY, me);
-    b.simulation = { status: "failed", reason: "SWAP_REVERTED", revertReason: "Too little received" };
+    b.simulation = { status: "failed", reason: "swap_reverted", revertReason: "Too little received" };
     assert.throws(() => checkedTransactions(b, { quote: QUOTE_BUY, owner: me, chainId: 8453 }), /would fail \(Too little received\)/);
+    b.simulation = { status: "failed", reason: "insufficient_balance", transaction: null };
+    assert.throws(() => checkedTransactions(b, { quote: QUOTE_BUY, owner: me, chainId: 8453 }), /Not enough balance/);
   });
 });
 
@@ -184,8 +196,8 @@ function fakeNet({ routes = {}, rpc = {} } = {}) {
       const out = await fn(body.params, url);
       return new Response(JSON.stringify(out && out.error ? { jsonrpc: "2.0", id: 1, error: out.error } : { jsonrpc: "2.0", id: 1, result: out }));
     }
-    const path = url.replace("http://router/evm", "");
-    const [status, answer] = routes[path] ? await routes[path](body) : [404, { error: { code: "NOT_FOUND" } }];
+    const [path] = url.replace("http://router/evm", "").split("?");
+    const [status, answer] = routes[path] ? await routes[path](body) : [404, { error: "not_found", reason: "no such route" }];
     return new Response(JSON.stringify(answer), { status });
   };
   return { fetch, calls };
@@ -195,27 +207,37 @@ describe("quotes, kept here", () => {
   test("the router's answer goes back with a token; the key goes to the router only", async () => {
     const net = fakeNet({ routes: { "/quote": async () => [200, QUOTE_BUY] } });
     const evm = createEvm(CONFIG, { fetch: net.fetch, WebSocket: null });
-    const out = await evm.quote(sp({ chain: "base", tokenIn: "native", tokenOut: USDC, amountIn: "1000000000000000" }));
+    const out = await evm.quote(sp({ chain: "base", inputMint: "native", outputMint: USDC, amount: "1000000000000000" }));
     assert.equal(out.status, 200);
-    assert.equal(out.body.amountOut, QUOTE_BUY.amountOut);
+    assert.equal(out.body.outAmount, QUOTE_BUY.outAmount);
     assert.deepEqual(evm.book.get(out.body.quoteToken), { evm: true, chain: "base", quote: QUOTE_BUY });
-    assert.equal(net.calls[0].url, "http://router/evm/quote");
+    const asked = new URL(net.calls[0].url);
+    assert.equal(`${asked.origin}${asked.pathname}`, "http://router/evm/quote");
+    assert.equal(net.calls[0].init.method, "GET");
+    assert.equal(asked.searchParams.get("outputMint"), USDC);
+    assert.equal(asked.searchParams.get("inputMint"), NATIVE);
     assert.equal(net.calls[0].init.headers["x-api-key"], "k_1");
     assert.equal(net.calls[0].init.redirect, "error");
-    assert.deepEqual(net.calls[0].body.tokenOut, { kind: "erc20", address: USDC });
+    assert.equal(asked.searchParams.get("apiKey"), null, "the key never rides in the URL");
   });
 
   test("refusals keep nothing", async () => {
     const ask = async (status, answer) => {
       const evm = createEvm(CONFIG, { fetch: fakeNet({ routes: { "/quote": async () => [status, answer] } }).fetch, WebSocket: null });
-      return evm.quote(sp({ chain: "base", tokenIn: "native", tokenOut: USDC, amountIn: "1" }));
+      return evm.quote(sp({ chain: "base", inputMint: "native", outputMint: USDC, amount: "1" }));
     };
     let out = await ask(401, { error: { code: "unauthorized" } });
     assert.equal(out.status, 502);
     assert.match(out.body.error.message, /RAZE_API_KEY/);
-    out = await ask(404, { error: { code: "NO_ROUTE", candidates: 0 } });
-    assert.deepEqual([out.status, out.body.error.code], [404, "NO_ROUTE"]);
-    out = await ask(200, { chainId: 1, quoteId: "q", amountOut: "1" });
+    out = await ask(404, { error: "declined", reason: "no_route", candidates: 0 });
+    assert.deepEqual([out.status, out.body.error.code], [404, "no_route"]);
+    out = await ask(503, { error: "not_ready", reasons: ["base: no venue verified yet"] });
+    assert.deepEqual([out.status, out.body.error.code], [503, "not_ready"]);
+    assert.match(out.body.error.message, /no venue verified yet/);
+    out = await ask(200, { chainId: 1, quoteId: "q", outAmount: "1" });
+    assert.equal(out.status, 502);
+    assert.equal(out.body.quoteToken, undefined);
+    out = await ask(200, { ...QUOTE_BUY, router: undefined });
     assert.equal(out.status, 502);
     assert.equal(out.body.quoteToken, undefined);
   });
@@ -228,7 +250,7 @@ describe("a swap: build, check, sign, send", () => {
     const sent = [];
     const net = fakeNet({
       routes: {
-        "/build": async (body) => buildAnswer ? buildAnswer(body) : [200, buildFor(body.quoteId === QUOTE_SELL.quoteId ? BUILD_SELL : BUILD_BUY, wallet.address)],
+        "/swap": async (body) => buildAnswer ? buildAnswer(body) : [200, buildFor(body.quoteResponse.quoteId === QUOTE_SELL.quoteId ? BUILD_SELL : BUILD_BUY, wallet.address)],
       },
       rpc: {
         eth_getTransactionCount: async () => `0x${pendingNonce.toString(16)}`,
@@ -243,13 +265,14 @@ describe("a swap: build, check, sign, send", () => {
     return { evm, wallet, sent, net };
   }
   const kept = (quote) => ({ evm: true, chain: "base", quote });
-  const fee = { maxFeePerGas: 11_000_000n, maxPriorityFeePerGas: 1_000_000n };
+  const fee = { maxFeePerGas: 11_100_000n, maxPriorityFeePerGas: 1_100_000n };
 
   test("approval then swap, consecutive nonces from the pending count, the router's fees and gas", async () => {
     const { evm, wallet, sent, net } = setup();
     const out = await evm.swap(wallet, kept(QUOTE_SELL));
-    const build = net.calls.find((c) => c.url.endsWith("/build")).body;
-    assert.deepEqual(build, { chain: "base", quoteId: QUOTE_SELL.quoteId, sender: wallet.address, recipient: wallet.address });
+    const build = net.calls.find((c) => c.url.endsWith("/swap"));
+    assert.equal(build.init.method, "POST");
+    assert.deepEqual(build.body, { userPublicKey: wallet.address, destinationTokenAccount: wallet.address, quoteResponse: QUOTE_SELL });
     const [approval, swap] = checkedTransactions(buildFor(BUILD_SELL, wallet.address), { quote: QUOTE_SELL, owner: wallet.address, chainId: 8453 });
     const expect = [
       signEip1559({ chainId: 8453n, nonce: 5n, ...fee, ...approval }, wallet.secret),
@@ -284,7 +307,7 @@ describe("a swap: build, check, sign, send", () => {
     const other = generateKey("evm");
     await assert.rejects(s.evm.swap({ ...s.wallet, secret: other.secret }, kept(QUOTE_BUY)), /does not match this wallet/);
     await assert.rejects(s.evm.swap(s.wallet, { quote: QUOTE_BUY }), /quote expired/);
-    const gone = setup({ buildAnswer: async () => [410, { error: { code: "QUOTE_EXPIRED" } }] });
+    const gone = setup({ buildAnswer: async () => [409, { error: "route_expired", reason: "the quote expired: quote again" }] });
     await assert.rejects(gone.evm.swap(gone.wallet, kept(QUOTE_BUY)), (e) => e.status === 409 && /expired/.test(e.message));
     assert.equal(s.sent.length + gone.sent.length, 0);
   });

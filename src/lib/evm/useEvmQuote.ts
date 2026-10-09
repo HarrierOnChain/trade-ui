@@ -49,13 +49,13 @@ export function useEvmQuote(params: {
       const timeout = setTimeout(() => ctl.abort(), 10_000);
       try {
         const quote = await evmRoutes.quote(
-          { chain, tokenIn, tokenOut, amountIn: amountIn.toString(), slippageBps: Math.min(5000, slippageBps) },
+          { chain, inputMint: tokenIn, outputMint: tokenOut, amount: amountIn.toString(), slippageBps: Math.min(5000, slippageBps) },
           ctl.signal,
         );
         if (!cancelled) setState({ status: "live", quote, noRoute: false, error: null, updatedAt: Date.now() });
       } catch (e) {
         if (cancelled) return;
-        if (e instanceof ApiError && e.code === "NO_ROUTE") {
+        if (e instanceof ApiError && e.code === "no_route") {
           setState({ status: "live", quote: null, noRoute: true, error: null, updatedAt: Date.now() });
         } else {
           const aborted = (e as Error)?.name === "AbortError";

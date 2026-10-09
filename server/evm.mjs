@@ -2,14 +2,17 @@
  * EVM, server side: swaps of a vault wallet on the Raze EVM router
  * (router.raze.bot/evm), on Ethereum, BNB Chain, Base and Robinhood Chain.
  *
- *   quote:   `GET /api/evm/quote` → router `POST /quote`; the answer is kept
+ * The EVM router speaks the Solana router's API (Jupiter's shape):
+ *
+ *   quote:   `GET /api/evm/quote` → router `GET /quote`; the answer is kept
  *            here a minute under a random token, like the Solana quotes
  *            (server/quotes.mjs), and the browser trades by naming the token.
- *   swap:    the kept quote → router `POST /build` for this wallet → every
- *            transaction checked (this wallet, this chain, the quote's token
- *            and the venue's router, a simulation that passed) → approvals and
- *            swap signed as EIP-1559 transactions → `eth_sendRawTransaction`
- *            in nonce order → the swap's hash.
+ *   swap:    the kept quote → router `POST /swap` with it as `quoteResponse`
+ *            for this wallet → every transaction checked (this wallet, this
+ *            chain, the quote's token, amounts and floor, the venue's router,
+ *            a simulation that passed) → `setupTransactions` and
+ *            `swapTransaction` signed as EIP-1559 transactions →
+ *            `eth_sendRawTransaction` in nonce order → the swap's hash.
  *   confirm: the swap's receipt, read on each new block the chain's WebSocket
  *            announces (`newHeads`); a read every 2 s only when no socket opens.
  *   balance: a wallet's native or ERC-20 balance and the token's decimals.
@@ -23,8 +26,10 @@ import { isEvmAddress } from "./keys.mjs";
 import { QuoteBook } from "./quotes.mjs";
 
 const U256_MAX = (1n << 256n) - 1n;
-/** The router's own slippage ceiling (router/evm: 0–5000 bps). */
-const ROUTER_MAX_SLIPPAGE_BPS = 5000;
+/** The router's own slippage ceiling (0–10000 bps, as on Solana). */
+const ROUTER_MAX_SLIPPAGE_BPS = 10_000;
+/** How the router writes the native coin (ETH, BNB) as a token. */
+export const NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 /** A gas limit no swap of the router comes near; above it, refuse. */
 const GAS_CEILING = 5_000_000n;
 const APPROVE = "0x095ea7b3";
@@ -134,64 +139,78 @@ export function evmAddressOfKey(secret) {
 
 // ── what goes to the router ────────────────────────────────────────────
 
-function asset(text) {
-  if (text === "native") return { kind: "native" };
-  if (isEvmAddress(text)) return { kind: "erc20", address: lower(text) };
-  throw bad("A token is `native` or a 0x address");
+/** `native` or a 0x address, as the router spells it (lower case). */
+function token(text, what) {
+  if (text === "native" || lower(text) === NATIVE) return NATIVE;
+  if (isEvmAddress(text)) return lower(text);
+  throw bad(`${what} is \`native\` or a 0x address`);
 }
 
 /**
- * The router's `POST /quote` body from the browser's query: chain, tokens,
- * amount, slippage, hops; anything else is dropped. Throws a 400.
+ * The router's `GET /quote` query from the browser's: chain, inputMint,
+ * outputMint, amount, slippage, hops; anything else is dropped. Throws a 400.
  */
-export function quoteBody(sp, { maxSlippageBps = 5000 } = {}) {
+export function quoteQuery(sp, { maxSlippageBps = 5000 } = {}) {
   const chain = sp.get("chain") || "";
   if (!Object.hasOwn(EVM_CHAINS, chain)) throw bad("Unknown EVM chain");
-  const tokenIn = asset(sp.get("tokenIn") || "");
-  const tokenOut = asset(sp.get("tokenOut") || "");
-  if (JSON.stringify(tokenIn) === JSON.stringify(tokenOut)) throw bad("Input and output are the same token");
-  const amountIn = sp.get("amountIn") || "";
-  if (!/^[1-9][0-9]{0,77}$/.test(amountIn) || BigInt(amountIn) > U256_MAX) throw bad("Bad amount");
+  const inputMint = token(sp.get("inputMint") || "", "inputMint");
+  const outputMint = token(sp.get("outputMint") || "", "outputMint");
+  if (inputMint === outputMint) throw bad("Input and output are the same token");
+  const amount = sp.get("amount") || "";
+  if (!/^[1-9][0-9]{0,77}$/.test(amount) || BigInt(amount) > U256_MAX) throw bad("Bad amount");
   const slip = sp.get("slippageBps") ?? "100";
   if (!/^[0-9]{1,5}$/.test(slip)) throw bad("Bad slippageBps");
   const cap = Math.min(maxSlippageBps, ROUTER_MAX_SLIPPAGE_BPS);
   if (Number(slip) > cap) {
     throw new EvmError("slippage_cap", `Slippage above ${cap / 100}% is off for EVM swaps on this Trade UI`, 400);
   }
-  const body = { chain, tokenIn, tokenOut, amountIn, slippageBps: Number(slip) };
+  const q = new URLSearchParams({ chain, inputMint, outputMint, amount, slippageBps: String(Number(slip)) });
   const hops = sp.get("maxHops");
   if (hops != null && hops !== "") {
     if (!/^[1-3]$/.test(hops)) throw bad("Bad maxHops");
-    body.maxHops = Number(hops);
+    q.set("maxHops", hops);
   }
-  return body;
+  return q;
 }
 
-/** What a refused build or quote says, from the router's status and body. */
+/**
+ * What a refused build or quote says, from the router's status and body: the
+ * Solana router's `{error, reason}` (or `reasons` when not ready); the key
+ * gate's 401 and 429 carry the API's own body.
+ */
 export function describeRouterError(status, j) {
-  const e = j && typeof j === "object" && j.error && typeof j.error === "object" ? j.error : {};
-  const code = typeof e.code === "string" ? e.code : "";
+  const error = j && typeof j.error === "string" ? j.error : "";
+  const reason = j && typeof j.reason === "string" ? j.reason : "";
+  const reasons = Array.isArray(j?.reasons) ? j.reasons.filter((r) => typeof r === "string") : [];
   if (status === 401 || status === 403) return "The EVM router refused the API key: check RAZE_API_KEY";
   if (status === 429) return "Too many requests for this API key: wait a moment";
-  if (code === "QUOTE_STALE") return "The price moved below the quote's minimum: try again";
-  if (code === "QUOTE_EXPIRED" || code === "QUOTE_NOT_FOUND") return "That quote expired: get a new one";
-  if (code === "NO_ROUTE") return "No route for this pair on the EVM router";
-  if (code === "AMOUNT_TOO_SMALL") return "Amount too small";
-  if (code === "OVERLOADED") return "The EVM router is busy: try again in a moment";
-  if (code === "CHAIN_NOT_READY") return `The EVM router is not ready on this chain (${e.reason || "starting"})`;
-  if (code === "RPC_UNAVAILABLE") return `The EVM router could not read the chain (${e.rpcError || "RPC"}): try again`;
-  return `EVM router: ${e.message || code || `HTTP ${status}`}`;
+  if (error === "route_expired") return "That quote expired: get a new one";
+  if (error === "declined") {
+    switch (reason) {
+      case "no_route": return "No route for this pair on the EVM router";
+      case "quote_stale": return "The price moved below the quote's minimum: try again";
+      case "amount_too_small":
+      case "zero_amount": return "Amount too small";
+      default: return `The EVM router declined (${reason || "no reason"})`;
+    }
+  }
+  if (error === "not_ready") {
+    if (reasons.some((r) => r.startsWith("overloaded"))) return "The EVM router is busy: try again in a moment";
+    return `The EVM router is not ready (${reasons.join("; ") || "starting"})`;
+  }
+  if (error === "rpc") return `The EVM router could not read the chain (${reason || "RPC"}): try again`;
+  return `EVM router: ${reason || error || `HTTP ${status}`}`;
 }
 
 /** Why a build's simulation did not pass, as something the trader can act on. */
 export function describeSimulation(sim) {
-  const reason = sim?.reason || sim?.status || "unknown";
+  const reason = sim?.status === "requires_approval" ? "requires_approval" : sim?.reason || sim?.status || "unknown";
   switch (reason) {
-    case "INSUFFICIENT_BALANCE": return "Not enough balance in this wallet for this trade";
-    case "PARTIAL_FILL": return "The pool cannot take the whole amount: trade less";
-    case "OUTPUT_BELOW_MINIMUM": return "Less than the minimum would arrive (a taxed token, or the price moved): raise the slippage";
-    case "SWAP_REVERTED": return `The swap would fail${sim.revertReason ? ` (${sim.revertReason})` : ""}`;
-    case "APPROVAL_REVERTED": return "The token refuses the approval";
+    case "insufficient_balance": return "Not enough balance in this wallet for this trade";
+    case "partial_fill": return "The pool cannot take the whole amount: trade less";
+    case "output_below_minimum": return "Less than the minimum would arrive (a taxed token, or the price moved): raise the slippage";
+    case "swap_reverted": return `The swap would fail${sim.revertReason ? ` (${sim.revertReason})` : ""}`;
+    case "approval_reverted": return "The token refuses the approval";
     case "requires_approval": return "The router's node cannot simulate this swap: not sent";
     default: return `The swap could not be simulated (${reason}): not sent, try again`;
   }
@@ -199,9 +218,10 @@ export function describeSimulation(sim) {
 
 /**
  * The build's transactions, checked before anything is signed: this wallet
- * and chain, approvals of the quote's input token to the venue's router for
- * at most the amount, the swap to that router (or the wrapped-native
- * contract) with the quote's value, a gas limit, a simulation that passed.
+ * and chain, the quote's amount and floor, approvals of the quote's input
+ * token to the venue's router for at most the amount, the swap to that
+ * router (or the wrapped-native contract) with the quote's value, a gas
+ * limit, a simulation that passed.
  *
  * @returns {Array<{ to: string, data: string, value: bigint, gas: bigint }>}
  */
@@ -209,17 +229,21 @@ export function checkedTransactions(build, { quote, owner, chainId }) {
   const refuse = (why) => new EvmError("bad_build", `The EVM router built something this Trade UI does not sign (${why})`);
   if (!build || typeof build !== "object") throw refuse("no body");
   if (build.chainId !== chainId || build.quoteId !== quote.quoteId) throw refuse("another quote or chain");
+  // The floor in the swap's calldata is the quote's: this Trade UI never moves it.
+  if (build.inAmount !== quote.inAmount || build.otherAmountThreshold !== quote.otherAmountThreshold) {
+    throw refuse("other amounts than the quote's");
+  }
   if (build.simulation?.status !== "passed") {
     throw new EvmError("simulation", describeSimulation(build.simulation), 422);
   }
-  const amountIn = BigInt(quote.amountIn);
-  const route = quote.route || {};
-  const target = route.kind === "swap" ? lower(route.router) : lower(route.contract);
+  const amountIn = BigInt(quote.inAmount);
+  // The swap's `to`: the venue's router, or the wrapped token for a wrap or an unwrap.
+  const target = lower(quote.router);
   if (!isEvmAddress(target)) throw refuse("no router in the quote");
-  // `spender` is null when nothing needs approving (a native input).
-  if (route.kind === "swap" && build.spender != null && lower(build.spender) !== target) throw refuse("another spender");
-  const nativeIn = quote.tokenIn?.kind === "native";
-  const approvals = Array.isArray(build.approvals) ? build.approvals : [];
+  // `spender` is null when nothing needs approving (a native input, a wrap or an unwrap).
+  if (build.spender != null && lower(build.spender) !== target) throw refuse("another spender");
+  const nativeIn = lower(quote.inputMint) === NATIVE;
+  const approvals = Array.isArray(build.setupTransactions) ? build.setupTransactions : [];
   if (nativeIn && approvals.length) throw refuse("an approval for a native input");
   if (approvals.length > 2) throw refuse("too many approvals");
 
@@ -235,7 +259,7 @@ export function checkedTransactions(build, { quote, owner, chainId }) {
 
   const out = approvals.map((a, i) => {
     const tx = one(a, `approval ${i + 1}`);
-    if (tx.to !== lower(quote.tokenIn.address)) throw refuse("an approval of another token");
+    if (tx.to !== lower(quote.inputMint)) throw refuse("an approval of another token");
     if (tx.value !== 0n) throw refuse("an approval with value");
     // approve(address spender, uint256 amount): selector + two words.
     if (tx.data.length !== 2 + 8 + 128 || !tx.data.startsWith(APPROVE)) throw refuse("not an approve call");
@@ -244,7 +268,7 @@ export function checkedTransactions(build, { quote, owner, chainId }) {
     if (BigInt(`0x${tx.data.slice(74)}`) > amountIn) throw refuse("an approval above the amount");
     return tx;
   });
-  const swap = one(build.swap, "swap");
+  const swap = one(build.swapTransaction, "swap");
   if (swap.to !== target) throw refuse("a swap to another contract");
   if (swap.value !== (nativeIn ? amountIn : 0n)) throw refuse("a swap with another value");
   out.push(swap);
@@ -298,15 +322,17 @@ export function createEvm(config, deps = {}) {
     return j?.result;
   }
 
-  async function router(path, body) {
-    const headers = { "content-type": "application/json", accept: "application/json" };
+  /** A GET with `query`, or a POST of `body`. */
+  async function router(path, { query, body } = {}) {
+    const headers = { accept: "application/json" };
+    if (body) headers["content-type"] = "application/json";
     if (config.apiKey) headers["x-api-key"] = config.apiKey;
     let r;
     try {
-      r = await doFetch(`${config.routerEvmBase}${path}`, {
-        method: "POST",
+      r = await doFetch(`${config.routerEvmBase}${path}${query ? `?${query}` : ""}`, {
+        method: body ? "POST" : "GET",
         headers,
-        body: JSON.stringify(body),
+        body: body ? JSON.stringify(body) : undefined,
         // A redirect would carry the key and the body elsewhere.
         redirect: "error",
         signal: AbortSignal.timeout(15_000),
@@ -335,7 +361,7 @@ export function createEvm(config, deps = {}) {
   }
 
   async function fees(chain, build) {
-    const f = build.fees;
+    const f = build.costs;
     const ok = (v) => typeof v === "string" && /^[0-9]{1,30}$/.test(v);
     if (f && ok(f.maxFeePerGas) && ok(f.maxPriorityFeePerGas)) {
       return { maxFeePerGas: BigInt(f.maxFeePerGas), maxPriorityFeePerGas: BigInt(f.maxPriorityFeePerGas) };
@@ -353,18 +379,26 @@ export function createEvm(config, deps = {}) {
     book,
     rpc,
 
-    /** → router `POST /quote`. Resolves `{ status, body }` to send as JSON. */
+    /** → router `GET /quote`. Resolves `{ status, body }` to send as JSON. */
     async quote(searchParams) {
-      const body = quoteBody(searchParams, { maxSlippageBps: config.maxSlippageBps });
-      const { status, j } = await router("/quote", body);
+      const query = quoteQuery(searchParams, { maxSlippageBps: config.maxSlippageBps });
+      const chain = query.get("chain");
+      const { status, j } = await router("/quote", { query });
       if (status === 0) return { status: 502, body: { error: { code: "upstream_unavailable", message: "The EVM router is unreachable" } } };
       if (status !== 200) {
-        return { status: status === 401 || status === 403 ? 502 : status, body: { error: { code: j?.error?.code || "upstream", message: describeRouterError(status, j) } } };
+        // The router's own code (`no_route`, `not_ready`, …), a sentence to show.
+        const code = j?.error === "declined" ? j.reason : typeof j?.error === "string" ? j.error : "upstream";
+        return { status: status === 401 || status === 403 ? 502 : status, body: { error: { code: code || "upstream", message: describeRouterError(status, j) } } };
       }
-      if (!j || typeof j.quoteId !== "string" || j.chainId !== EVM_CHAINS[body.chain].chainId || typeof j.amountOut !== "string") {
+      const amount = (v) => typeof v === "string" && /^[0-9]{1,78}$/.test(v);
+      if (
+        !j || typeof j.quoteId !== "string" || j.chainId !== EVM_CHAINS[chain].chainId
+        || !amount(j.inAmount) || !amount(j.outAmount) || !amount(j.otherAmountThreshold)
+        || !isEvmAddress(j.router) || !Array.isArray(j.routePlan)
+      ) {
         return { status: 502, body: { error: { code: "upstream", message: "The EVM router answered without a quote" } } };
       }
-      return { status: 200, body: { ...j, quoteToken: book.put({ evm: true, chain: body.chain, quote: j }) } };
+      return { status: 200, body: { ...j, quoteToken: book.put({ evm: true, chain, quote: j }) } };
     },
 
     /**
@@ -378,9 +412,12 @@ export function createEvm(config, deps = {}) {
       if (evmAddressOfKey(wallet.secret) !== lower(wallet.address)) {
         throw new EvmError("bad_key", "The stored key does not match this wallet", 500);
       }
-      const { status, j } = await router("/build", { chain, quoteId: quote.quoteId, sender: wallet.address, recipient: wallet.address });
+      // The quote back as it came, Jupiter style: the router builds the one it holds.
+      const { status, j } = await router("/swap", {
+        body: { userPublicKey: wallet.address, destinationTokenAccount: wallet.address, quoteResponse: quote },
+      });
       if (status === 0) throw new EvmError("router", "The EVM router is unreachable");
-      if (status !== 200) throw new EvmError("router", describeRouterError(status, j), status === 409 || status === 410 ? 409 : 502);
+      if (status !== 200) throw new EvmError("router", describeRouterError(status, j), status === 409 ? 409 : 502);
       const txs = checkedTransactions(j, { quote, owner: wallet.address, chainId });
       const fee = await fees(chain, j);
 
@@ -413,9 +450,9 @@ export function createEvm(config, deps = {}) {
           hash: sent[sent.length - 1],
           approvals: sent.slice(0, -1),
           chain,
-          amountIn: quote.amountIn,
-          amountOut: j.amountOut ?? quote.amountOut,
-          minimumAmountOut: quote.minimumAmountOut,
+          inAmount: quote.inAmount,
+          outAmount: j.simulation?.outAmount ?? quote.outAmount,
+          otherAmountThreshold: quote.otherAmountThreshold,
         };
       });
     },

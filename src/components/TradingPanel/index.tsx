@@ -33,6 +33,7 @@ import { TokenMetricsGrid } from "./TokenMetricsGrid";
 import { SOL_MINT, toRaw, toUi, viaLabel } from "../../lib/swap/quote";
 import { useDocumentHidden, useMintDecimals, useSwapQuote } from "../../lib/swap/useSwapQuote";
 import { useEvmDecimals, useEvmQuote } from "../../lib/evm/useEvmQuote";
+import { evmRouteLabel } from "../../lib/vault/client";
 import { EXACT_OUT_EVM } from "../../lib/evm/plan";
 import { explorerTxUrl } from "../../lib/chains";
 
@@ -297,10 +298,10 @@ export function TradingPanel({ mint }: Props) {
     const tok = (raw: string) => (tokDec != null ? fmtNum(toUi(BigInt(raw), tokDec)) : "…");
     const qt = (raw: string) => toUi(BigInt(raw), activeQuote.decimals).toLocaleString("en-US", { maximumFractionDigits: 6 });
     const head = side === "buy"
-      ? `${qt(q.amountIn)} ${activeQuote.label} → ${tok(q.amountOut)} ${symbolLabel}`
-      : `${tok(q.amountIn)} ${symbolLabel} → ${qt(q.amountOut)} ${activeQuote.label}`;
-    const min = side === "buy" ? `${tok(q.minimumAmountOut)} ${symbolLabel}` : `${qt(q.minimumAmountOut)} ${activeQuote.label}`;
-    return `${head} · min ${min} · ${q.route.kind === "swap" ? q.route.venue : q.route.kind}`;
+      ? `${qt(q.inAmount)} ${activeQuote.label} → ${tok(q.outAmount)} ${symbolLabel}`
+      : `${tok(q.inAmount)} ${symbolLabel} → ${qt(q.outAmount)} ${activeQuote.label}`;
+    const min = side === "buy" ? `${tok(q.otherAmountThreshold)} ${symbolLabel}` : `${qt(q.otherAmountThreshold)} ${activeQuote.label}`;
+    return `${head} · min ${min} · ${evmRouteLabel(q)}`;
   })();
   const previewText = (() => {
     if (!onSol) return evmPreviewText;

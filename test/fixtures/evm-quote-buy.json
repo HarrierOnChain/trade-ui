@@ -1,1 +1,34 @@
-{"amountIn":"1000000000000000","amountOut":"2488257","anchor":{"chainId":8453,"hash":"0x90843dff8b5c83930b4d975a62909fcbdcc7a10db6378a71b80391967e563122","number":"52385357"},"candidates":5,"chain":"base","chainId":8453,"expiresAt":"2026-10-09T15:34:37.295215078Z","gasEstimate":"132954","minimumAmountOut":"2463374","quoteId":"19408de9-176f-4514-af2d-25e16d2000dc","quotedAt":"2026-10-09T15:34:22.295215078Z","route":{"fees":[100],"kind":"swap","pools":["0xb4cb800910b228ed3d0834cf79d697127bbb00e5"],"protocol":"v3","router":"0x2626664c2603336e57b271c5c0b26f421741e481","tokens":["0x4200000000000000000000000000000000000006","0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"],"venue":"base-uniswap-v3"},"slippageBps":100,"tokenIn":{"kind":"native"},"tokenOut":{"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","kind":"erc20"}}
+{
+  "blockHash": "0xb896c3f2461c6a72bae5803317bc11bc8fa76c39d5bd0b864e9aeb4619bce810",
+  "candidates": 5,
+  "chain": "base",
+  "chainId": 8453,
+  "contextSlot": 52396989,
+  "expiresAt": "2026-10-09T22:02:21.202214408Z",
+  "gasEstimate": "115000",
+  "inAmount": "1000000000000000",
+  "inputMint": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "otherAmountThreshold": "2455538",
+  "outAmount": "2480342",
+  "outputMint": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  "priceImpactPct": "0",
+  "quoteId": "45cada22-d512-437d-a68d-fc755d2051b9",
+  "routePlan": [
+    {
+      "bps": 10000,
+      "percent": 100,
+      "swapInfo": {
+        "ammKey": "0x88a43bbdf9d098eec7bceda4e2494615dfd9bb9c",
+        "inAmount": "1000000000000000",
+        "inputMint": "0x4200000000000000000000000000000000000006",
+        "label": "Uniswap V2",
+        "outAmount": "2480342",
+        "outputMint": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+      }
+    }
+  ],
+  "router": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+  "slippageBps": 100,
+  "swapMode": "ExactIn",
+  "timeTaken": 0.039620882
+}

@@ -55,9 +55,10 @@ same browser…) and what they get.
   checking that the wallet is its one and only signer, (2) on the EVM chains,
   the approvals and swap the EVM router (`RAZE_ROUTER_EVM_BASE`) has just
   built for that wallet, after its simulation passed and after checking each
-  one: this wallet and chain, approvals only of the input token, only to the
-  venue's router named in the quote and for at most the amount, the swap to
-  that router with the quote's value, and a bounded gas limit; and (3) a SOL
+  one: this wallet and chain, the quote's amount and minimum, approvals only
+  of the input token, only to the venue's router named in the quote and for
+  at most the amount, the swap to that router with the quote's value, and a
+  bounded gas limit; and (3) a SOL
   transfer it builds itself. There is no endpoint that signs bytes sent by the
   browser.
 - **What a swap may be.** The quote is the router's: the server asks for it,

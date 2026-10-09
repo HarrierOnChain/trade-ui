@@ -283,17 +283,21 @@ wallet or X trackers, and it does not launch tokens.
 The same places trade, through the EVM router (`RAZE_ROUTER_EVM_BASE`), with
 an EVM wallet of the vault:
 
-1. **Quote** — `GET /api/evm/quote` → router `POST /quote`, kept a minute
-   under a `quoteToken`, shown under the amount (output, minimum, venue) and
-   refreshed every 2 s while visible.
+The EVM router speaks the Solana router's API (`inputMint`, `outputMint`,
+`amount`; a quote with `routePlan`; `/swap` with the quote as `quoteResponse`).
+
+1. **Quote** — `GET /api/evm/quote?chain&inputMint&outputMint&amount` →
+   router `GET /quote`, kept a minute under a `quoteToken`, shown under the
+   amount (output, minimum, venue) and refreshed every 2 s while visible.
 2. **Build, check, sign, send** — `POST /api/wallets/{id}/swap` with that
-   token: the router builds the kept quote for the wallet (`POST /build`). The
-   server signs only if the router's simulation passed and every transaction
-   is what the quote says: from this wallet, on this chain; approvals only of
-   the token you pay with, only to the venue's router, for at most the amount;
-   the swap to that router with the quote's value. It signs the approvals and
-   the swap as EIP-1559 transactions with the router's gas and fees and sends
-   them in nonce order.
+   token: the router builds the kept quote for the wallet (`POST /swap` with
+   it as `quoteResponse`). The server signs only if the router's simulation
+   passed and every transaction is what the quote says: from this wallet, on
+   this chain, with the quote's amount and minimum; approvals
+   (`setupTransactions`) only of the token you pay with, only to the venue's
+   router, for at most the amount; the swap (`swapTransaction`) to that
+   router with the quote's value. It signs them as EIP-1559 transactions with
+   the router's gas and fees and sends them in nonce order.
 3. **Confirm** — `POST /api/evm/confirm`: the server reads the swap's receipt
    on each new block the chain's WebSocket announces, and says if it reverted.
 

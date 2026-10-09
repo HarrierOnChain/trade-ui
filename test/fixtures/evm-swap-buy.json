@@ -1,0 +1,55 @@
+{
+  "blockHash": "0xb896c3f2461c6a72bae5803317bc11bc8fa76c39d5bd0b864e9aeb4619bce810",
+  "chain": "base",
+  "chainId": 8453,
+  "contextSlot": 52396989,
+  "costs": {
+    "baseFeePerGas": "5000000",
+    "gas": "135352",
+    "gasPrice": "6100000",
+    "maxFeePerGas": "11100000",
+    "maxNetworkFeeWei": "1502407200000",
+    "maxPriorityFeePerGas": "1100000"
+  },
+  "deadline": 1791583386,
+  "expiresAt": "2026-10-09T22:02:21.202214408Z",
+  "inAmount": "1000000000000000",
+  "otherAmountThreshold": "2455538",
+  "outAmount": "2480342",
+  "quoteId": "45cada22-d512-437d-a68d-fc755d2051b9",
+  "routePlan": [
+    {
+      "bps": 10000,
+      "percent": 100,
+      "swapInfo": {
+        "ammKey": "0x88a43bbdf9d098eec7bceda4e2494615dfd9bb9c",
+        "inAmount": "1000000000000000",
+        "inputMint": "0x4200000000000000000000000000000000000006",
+        "label": "Uniswap V2",
+        "outAmount": "2480342",
+        "outputMint": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+      }
+    }
+  ],
+  "setupTransactions": [],
+  "simulation": {
+    "gasUsed": [
+      "112793"
+    ],
+    "outAmount": "2480342",
+    "status": "passed"
+  },
+  "slippageBps": 100,
+  "spender": null,
+  "swapMode": "ExactIn",
+  "swapTransaction": {
+    "chainId": 8453,
+    "data": "0x7ff36ab500000000000000000000000000000000000000000000000000000000002577f200000000000000000000000000000000000000000000000000000000000000800000000000000000000000004e3ae00e8323558fa5cac04b152238924aa31b60000000000000000000000000000000000000000000000000000000006ac9649a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000004200000000000000000000000000000000000006000000000000000000000000833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "from": "0x4e3ae00e8323558fa5cac04b152238924aa31b60",
+    "gas": "135352",
+    "maxFeePerGas": "11100000",
+    "maxPriorityFeePerGas": "1100000",
+    "to": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+    "value": "1000000000000000"
+  }
+}

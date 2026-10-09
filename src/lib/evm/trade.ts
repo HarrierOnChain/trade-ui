@@ -38,9 +38,9 @@ export async function executeEvmTrade(chain: ChainId, body: TradeBody): Promise<
   const slippageBps = Number.isFinite(body.slippageBps) ? Math.max(0, Math.round(body.slippageBps!)) : DEFAULT_SLIPPAGE_BPS;
   const quote = await evmRoutes.quote({
     chain,
-    tokenIn: plan.tokenIn,
-    tokenOut: plan.tokenOut,
-    amountIn: plan.amountIn.toString(),
+    inputMint: plan.tokenIn,
+    outputMint: plan.tokenOut,
+    amount: plan.amountIn.toString(),
     slippageBps,
   });
   const { signature } = await vault.swap(w.id, quote.quoteToken);

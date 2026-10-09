@@ -205,35 +205,63 @@ export const vault = {
 
 // ── EVM swaps (server/evm.mjs) ──────────────────────────────────────────
 
-export type EvmAsset = { kind: "native" } | { kind: "erc20"; address: string };
+/** How the EVM router writes the native coin (ETH, BNB) as a token. */
+export const EVM_NATIVE = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
-/** `native` or the token's lowercase address. */
-export function evmAssetId(a: EvmAsset): string {
-  return a.kind === "native" ? "native" : a.address.toLowerCase();
+/** `native` or the token's lowercase address, from a router mint. */
+export function evmMintId(mint: string): string {
+  const m = mint.toLowerCase();
+  return m === EVM_NATIVE ? "native" : m;
 }
 
-/** The EVM router's quote, kept by this Trade UI's server under `quoteToken`. */
+/** One hop of an EVM route (the Solana router's `routePlan` step). */
+export interface EvmRouteStep {
+  swapInfo: {
+    ammKey: string;
+    /** the venue (`Uniswap V3`, `PancakeSwap V2`, …), or `Wrap` / `Unwrap` */
+    label: string;
+    inputMint: string;
+    outputMint: string;
+    inAmount: string;
+    outAmount: string;
+    feeTier?: number;
+  };
+  percent: number;
+  bps: number;
+}
+
+/** The EVM router's quote (the Solana router's shape), kept by this Trade
+ *  UI's server under `quoteToken`. */
 export interface EvmQuote {
   quoteToken: string;
   quoteId: string;
   chain: string;
   chainId: number;
-  tokenIn: EvmAsset;
-  tokenOut: EvmAsset;
-  amountIn: string;
-  amountOut: string;
-  minimumAmountOut: string;
+  inputMint: string;
+  inAmount: string;
+  outputMint: string;
+  outAmount: string;
+  otherAmountThreshold: string;
+  swapMode: "ExactIn";
   slippageBps: number;
-  route:
-    | { kind: "swap"; venue: string; protocol: string; router: string; tokens: string[]; fees: number[]; pools: string[] }
-    | { kind: "wrap" | "unwrap"; contract: string };
+  routePlan: EvmRouteStep[];
+  contextSlot: number;
+  router: string;
   gasEstimate: string;
   expiresAt: string;
   candidates: number;
 }
 
+/** The venue of a quote and its hops, for display. */
+export function evmRouteLabel(q: EvmQuote): string {
+  const label = q.routePlan[0]?.swapInfo.label ?? "—";
+  const hops = q.routePlan.length;
+  return hops > 1 ? `${label} · ${hops} hops` : label;
+}
+
 export const evmRoutes = {
-  quote: (q: { chain: string; tokenIn: string; tokenOut: string; amountIn: string; slippageBps: number }, signal?: AbortSignal) =>
+  /** `inputMint` / `outputMint`: `native` or a 0x address; `amount` raw. */
+  quote: (q: { chain: string; inputMint: string; outputMint: string; amount: string; slippageBps: number }, signal?: AbortSignal) =>
     request<EvmQuote>("GET", `/api/evm/quote?${new URLSearchParams({ ...q, slippageBps: String(q.slippageBps) })}`, undefined, signal),
   /** `owner`'s balance of `token` (`native` or a 0x address), raw, and its
    *  decimals; with `owner` empty, the decimals only. */
