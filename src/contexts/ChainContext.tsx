@@ -58,8 +58,13 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Keep the module-level mirror (read by the data fetchers) in sync on
-  // every subsequent change.
+  // every subsequent change. Not while the state still lags the stored chain:
+  // on mount `chainId` is the SSR default, and writing it back would undo the
+  // stored chain the effect above just set — the next render's fetches and
+  // subscriptions would then go to Solana while the context says another chain.
   useEffect(() => {
+    const stored = readStoredChain();
+    if (stored && stored !== chainId) return;
     setActiveChain(chainId);
   }, [chainId]);
 

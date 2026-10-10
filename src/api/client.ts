@@ -17,6 +17,7 @@ import {
   type Rec,
 } from "./mappers";
 import { fetchNativePrices, nativeUsd } from "./native";
+import { platformAllowed } from "../lib/tokenFilters";
 import type { BatchEnrichEntry } from "../lib/batchEnrichCoordinator";
 import type {
   ChainSentiment,
@@ -169,10 +170,10 @@ async function listBoard(board: "new" | "graduating" | "graduated", limit: numbe
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
   const { data } = await get<unknown>(`/launchpad/${board}`, { chain: c, limit }, 1_000);
-  const wanted = platform?.toLowerCase().split(",").map((p) => p.trim()).filter(Boolean) ?? [];
+  // Same gate as the live board: a launchpad with no chip yet is never hidden.
   const list = rows(data)
     .map((r) => apiTokenToEvent(r, native))
-    .filter((t) => t.mint_address && (!wanted.length || !t.dex || wanted.includes(t.dex.toLowerCase())));
+    .filter((t) => t.mint_address && platformAllowed(t.dex, platform));
   return { data: list };
 }
 
