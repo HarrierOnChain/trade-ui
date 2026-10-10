@@ -7,10 +7,10 @@ import { queueBatchEnrich } from "../../lib/batchEnrichCoordinator";
 
 import { ChainHealthPopup } from "./ChainHealthPopup";
 import { useChainSentiment } from "../../hooks/useChainSentiment";
-import { useSolPrice } from "../../hooks/useSolPrice";
+import { useNativeSpots, useSolPrice, type NativeSpots } from "../../hooks/useSolPrice";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import { useChain } from "../../contexts/ChainContext";
-import { type ChainId, nativeSymbol } from "../../lib/chains";
+import { CHAINS, type ChainId, nativeSymbol } from "../../lib/chains";
 import { ChainIcon, Icon, PlatformLogo, TokenIcon, Tooltip } from "../atoms";
 import { TokenChartPopup } from "../TokenRow/TokenChartPopup";
 import { useApp } from "../../contexts/AppContext";
@@ -47,7 +47,7 @@ export function StatusFooter() {
   const fpsColor = fps == null ? "var(--paper-4)" : "var(--accent)";
 
   // Mobile: the dense desktop readout row is replaced by a slim status strip —
-  // SOL price on the left, a couple of action icons on the right. No horizontal scroll; the nav now lives in the header ☰ sheet.
+  // SOL / ETH / BNB on the left, a couple of action icons on the right. No horizontal scroll; the nav now lives in the header ☰ sheet.
   if (isMobile) {
     return (
       <div
@@ -61,7 +61,7 @@ export function StatusFooter() {
           overflow: "hidden",
         }}
       >
-        {solPrice ? <FooterNativePrice price={solPrice} /> : <span style={{ flex: 1 }} />}
+        <FooterNativePrices compact />
         <div style={{ flex: 1, minWidth: 0 }} />
         <FooterTickerToggle />
         <FooterNotificationsButton />
@@ -104,12 +104,7 @@ export function StatusFooter() {
       >
         <HoldingsCarousel solPrice={solPrice} />
       </div>
-      {solPrice && (
-        <>
-          <FooterDivider />
-          <FooterNativePrice price={solPrice} />
-        </>
-      )}
+      <FooterNativePrices leadingDivider />
       {/* Always rendered — it hosts the Chain Health popup on hover. The
           migration FDV is chain-aware ("—" on chains with no bonding curve). */}
       <FooterDivider />
@@ -296,8 +291,35 @@ function FooterReadout({
   );
 }
 
-function FooterNativePrice({ price }: { price: number }) {
-  const { chainId, chain } = useChain();
+const NATIVE_FOOTER: Array<{ chainId: ChainId; spot: keyof NativeSpots }> = [
+  { chainId: "sol", spot: "sol" },
+  { chainId: "eth", spot: "eth" },
+  { chainId: "bsc", spot: "bnb" },
+];
+
+function fmtSpot(price: number): string {
+  return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function FooterNativePrices({ compact = false, leadingDivider = false }: { compact?: boolean; leadingDivider?: boolean }) {
+  const spots = useNativeSpots();
+  const shown = NATIVE_FOOTER.filter((row) => spots[row.spot] != null);
+  if (shown.length === 0) return null;
+  return (
+    <>
+      {leadingDivider && <FooterDivider />}
+      {shown.map((row, i) => (
+        <React.Fragment key={row.spot}>
+          {i > 0 && <FooterDivider />}
+          <FooterNativePrice chainId={row.chainId} price={spots[row.spot]!} compact={compact} />
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
+function FooterNativePrice({ chainId, price, compact = false }: { chainId: ChainId; price: number; compact?: boolean }) {
+  const chain = CHAINS[chainId];
   const label = nativeSymbol(chainId);
   return (
     <Tooltip content={`${chain.name} · ${label}/USD`} placement="top">
@@ -305,8 +327,11 @@ function FooterNativePrice({ price }: { price: number }) {
         <span style={{ display: "inline-flex", alignItems: "center", color: "var(--paper-4)" }}>
           <ChainIcon id={chainId} size={11} />
         </span>
+        {!compact && (
+          <span className="mono" style={{ fontSize: 9, color: "var(--paper-4)", letterSpacing: "0.04em" }}>{label}</span>
+        )}
         <span className="mono" style={{ color: "var(--buy)", fontSize: 11, fontWeight: 500 }}>
-          ${price.toFixed(2)}
+          {fmtSpot(price)}
         </span>
       </span>
     </Tooltip>

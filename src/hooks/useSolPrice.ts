@@ -17,6 +17,13 @@ let cachedPrice: number | null = null;
 let feedStarted = false;
 const listeners = new Set<(price: number | null) => void>();
 
+/** SOL / ETH / BNB together. Base and Robinhood price in ETH. */
+export type NativeSpots = { sol: number | null; eth: number | null; bnb: number | null };
+
+const EMPTY_SPOTS: NativeSpots = { sol: null, eth: null, bnb: null };
+let cachedSpots: NativeSpots = EMPTY_SPOTS;
+const spotListeners = new Set<(spots: NativeSpots) => void>();
+
 /** Display-stable cents; avoids float noise from WS JSON. */
 function normalizeSpotUsd(raw: number): number | null {
   if (!Number.isFinite(raw) || raw <= 0) return null;
@@ -32,12 +39,37 @@ function emitPrice(raw: number, force = false) {
   listeners.forEach((listener) => listener(cachedPrice));
 }
 
+function readSpots(): NativeSpots {
+  return {
+    sol: normalizeSpotUsd(nativeUsdSync("sol")),
+    eth: normalizeSpotUsd(nativeUsdSync("eth")),
+    bnb: normalizeSpotUsd(nativeUsdSync("bsc")),
+  };
+}
+
+function sameSpots(a: NativeSpots, b: NativeSpots): boolean {
+  return a.sol === b.sol && a.eth === b.eth && a.bnb === b.bnb;
+}
+
+function emitSpots() {
+  const next = readSpots();
+  if (sameSpots(next, cachedSpots)) return;
+  cachedSpots = next;
+  spotListeners.forEach((listener) => listener(cachedSpots));
+}
+
 function startSolPriceFeed() {
   if (feedStarted) return;
   feedStarted = true;
 
-  onNativePrices(() => emitPrice(nativeUsdSync()));
-  void fetchNativePrices().then(() => emitPrice(nativeUsdSync())).catch(() => {});
+  onNativePrices(() => {
+    emitPrice(nativeUsdSync());
+    emitSpots();
+  });
+  void fetchNativePrices().then(() => {
+    emitPrice(nativeUsdSync());
+    emitSpots();
+  }).catch(() => {});
 
   // Holds the `prices` channel (RazeWebSocket.connect subscribes it).
   RazeWebSocket.getInstance().connect();
@@ -62,4 +94,21 @@ export function useSolPrice() {
   }, []);
 
   return price;
+}
+
+/** SOL, ETH and BNB in USD, from the same feed as `useSolPrice`. */
+export function useNativeSpots(): NativeSpots {
+  const [spots, setSpots] = useState<NativeSpots>(cachedSpots);
+
+  useEffect(() => {
+    startSolPriceFeed();
+    const listener = (next: NativeSpots) => setSpots(next);
+    spotListeners.add(listener);
+    if (!sameSpots(cachedSpots, EMPTY_SPOTS)) setSpots(cachedSpots);
+    return () => {
+      spotListeners.delete(listener);
+    };
+  }, []);
+
+  return spots;
 }
