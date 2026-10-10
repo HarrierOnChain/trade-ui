@@ -27,8 +27,8 @@ function QuoteMintIcon({ label, size }: { label: string; size: number }) {
 const SEARCH_COLLAPSE_WIDTH = 1400;
 
 // Mirrors Sidebar's own key — writing it before opening the drawer deep-links
-// the mobile menu's "Live Tape" / "Wallets" entries to the right sidebar page
-// (Sidebar unmounts while closed, so it re-reads this on the next open).
+// the mobile menu's "Holdings" / "Wallets" entries to the right sidebar page
+// (Sidebar re-reads this every time it opens).
 const SIDEBAR_PAGE_KEY = "spool.sidebar.page";
 
 type NavItem = { id: string; label: string; path: string; icon: React.ReactNode };
@@ -852,7 +852,7 @@ function HamburgerIcon() {
 }
 
 // Mobile primary navigation — a ☰ slide-in sheet (left drawer) holding the full
-// tab list, plus deep-links into the Tape/Wallets sidebar. The
+// tab list, plus deep-links into the Holdings/Wallets sidebar. The
 // desktop nav strip can't fit on a phone, so it lives here instead.
 function MobileNavSheet({
   open,
@@ -882,7 +882,7 @@ function MobileNavSheet({
 
   if (!open) return null;
 
-  const openSidebarPage = (page: "tape" | "wallets") => {
+  const openSidebarPage = (page: "holdings" | "wallets") => {
     try { window.localStorage.setItem(SIDEBAR_PAGE_KEY, page); } catch { /* ignore */ }
     if (!sidebarOpen) toggleSidebar();
     onClose();
@@ -950,7 +950,7 @@ function MobileNavSheet({
 
         <div style={{ flexShrink: 0, borderTop: "1px solid var(--line-soft)", padding: 8, display: "flex", flexDirection: "column", gap: 2 }}>
           <MobileChainPicker onPicked={onClose} />
-          <MobileSheetSecondary label="Live Tape" onClick={() => openSidebarPage("tape")} />
+          <MobileSheetSecondary label="Holdings" onClick={() => openSidebarPage("holdings")} />
           <MobileSheetSecondary label="Wallets" onClick={() => openSidebarPage("wallets")} />
         </div>
       </div>

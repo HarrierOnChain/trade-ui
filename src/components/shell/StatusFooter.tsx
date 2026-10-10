@@ -19,7 +19,6 @@ import { useIsPhone, useIsMobile } from "../../hooks/useMediaQuery";
 import { tokenHref } from "../../lib/tokenHref";
 import { fmtNum, fmtUsd } from "../../lib/format";
 import { PORTFOLIO_STORAGE_KEY, readUserWallets } from "../../lib/userWalletsMirror";
-import { FooterTapeButtons } from "./TapeQuickBar";
 import type { LivePrice } from "../../hooks/useLiveTradePrices";
 import type { TokenEvent, TokenHolding } from "../../types";
 
@@ -93,8 +92,6 @@ export function StatusFooter() {
     >
       <FooterReadout label="FPS" value={fps ?? "..."} valueColor={fpsColor} />
       <FooterDivider />
-      <FooterTapeButtons />
-      <FooterDivider />
       <div
         style={{
           flex: 1,
@@ -137,7 +134,7 @@ export function StatusFooter() {
   );
 }
 
-// Uniform size for every footer icon (tape tabs, tape gear, action icons).
+// Uniform size for every footer icon.
 const FOOTER_ICON = 14;
 
 // Action icons sit brighter than the passive readouts (paper-2, not paper-4)

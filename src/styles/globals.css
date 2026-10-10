@@ -155,10 +155,6 @@ input, textarea { font-family: inherit; color: inherit; }
   0%   { background-position: -200px 0; }
   100% { background-position: 200px 0; }
 }
-@keyframes dropdownPop {
-  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
 @keyframes marqueeScroll {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }

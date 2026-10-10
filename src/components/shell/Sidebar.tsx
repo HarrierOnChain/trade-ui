@@ -29,62 +29,19 @@ import {
   type InstantPresets,
   type PresetKey,
 } from "../TradingPanel/presets";
-import { useAlertStream } from "../../hooks/useAlertStream";
-import { useDeployStream } from "../../hooks/useDeployStream";
-import { useMigratingStream } from "../../hooks/useMigratingStream";
-import { useMigrationStream } from "../../hooks/useMigrationStream";
-import {
-  useWalletTradeStream,
-  type StreamWallet,
-  type WalletTradeAlert,
-} from "../../hooks/useWalletTradeStream";
-import { Icon, QuoteAssetIcon, SolAmount, TokenIcon, Tooltip } from "../atoms";
+import { Icon, QuoteAssetIcon, TokenIcon, Tooltip } from "../atoms";
 import type { QuoteMint } from "../../lib/quoteMints";
-import { fmtMcap, fmtNum, fmtUsd, shortAddr } from "../../lib/format";
-import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
-import {
-  PORTFOLIO_STORAGE_KEY,
-  readUserWallets,
-} from "../../lib/userWalletsMirror";
+import { fmtNum, fmtUsd, shortAddr } from "../../lib/format";
 import { useHiddenMints } from "../../lib/hiddenTokens";
-import { useRowImage } from "../../hooks/useRowImage";
-import type { TokenEvent } from "../../types";
-import {
-  useTapeKinds,
-  TAPE_KINDS,
-  TAPE_VIEW_LABEL,
-  type TapeKind,
-} from "../../hooks/useTapeKinds";
 
-type SidebarPage = "tape" | "wallets";
-type WalletsView = "wallets" | "holdings";
-
-const WALLETS_VIEW_OPTS: { id: WalletsView; label: string }[] = [
-  { id: "wallets", label: "Wallets" },
-  { id: "holdings", label: "Holdings" },
-];
-
-// Subset that maps to TokenEvent rows (TapeRow). The rest of the kinds
-// render with their own components, so TapeItem stays narrow to keep
-// TapeRow's prop shape unchanged.
-type TokenEventKind = "deploy" | "migrating" | "migration" | "trending";
-type TapeItem = TokenEvent & { _kind: TokenEventKind; _ts: number };
+type SidebarPage = "holdings" | "wallets";
 
 const SIDEBAR_PAGE_KEY = "spool.sidebar.page";
-const TAPE_LIMIT = 60;
 
 const PAGES: { id: SidebarPage; label: string }[] = [
-  { id: "tape", label: "Tape" },
+  { id: "holdings", label: "Holdings" },
   { id: "wallets", label: "Wallets" },
 ];
-
-const TAPE_EMPTY_COPY: Record<TapeKind, string> = {
-  deploy: "Waiting for deploys…",
-  migrating: "Waiting for migrating tokens…",
-  migration: "Waiting for migrations…",
-  trending: "Waiting for trending tokens…",
-  mine: "Waiting for trades on your wallets…",
-};
 
 interface StoredWallet {
   id: string;
@@ -97,229 +54,29 @@ interface StoredWallet {
 }
 
 function readStoredPage(): SidebarPage {
-  if (typeof window === "undefined") return "tape";
+  if (typeof window === "undefined") return "holdings";
   try {
     const raw = window.localStorage.getItem(SIDEBAR_PAGE_KEY);
-    if (raw === "tape" || raw === "wallets") return raw;
+    if (raw === "holdings" || raw === "wallets") return raw;
   } catch {
     /* ignore */
   }
-  return "tape";
-}
-
-interface DropdownOption {
-  key: string;
-  label: string;
-  active: boolean;
-  accent: string; // small side-dot color (kind tone)
-  onToggle: () => void;
-}
-
-function HeaderDropdown({
-  title,
-  side,
-  options,
-}: {
-  title: string;
-  /** Which edge of the active tab the attached menu should align to. */
-  side: "left" | "center" | "right";
-  options: DropdownOption[];
-}) {
-  const selected = options.filter((o) => o.active).length;
-  const total = options.length;
-  const anchorStyle: React.CSSProperties =
-    side === "left"
-      ? { left: 0 }
-      : side === "right"
-        ? { right: 0 }
-        : { left: "50%", transform: "translateX(-50%)" };
-
-  return (
-    <div
-      role="menu"
-      style={{
-        position: "absolute",
-        top: "calc(100% - 1px)",
-        ...anchorStyle,
-        width: side === "center" ? 178 : 188,
-        background: "var(--ink-1)",
-        border: "1px solid var(--line)",
-        borderRadius: side === "left" ? "0 4px 4px 4px" : side === "right" ? "4px 0 4px 4px" : "4px",
-        boxShadow: "0 12px 24px -18px rgba(0,0,0,0.7)",
-        overflow: "hidden",
-        zIndex: 30,
-        animation: "dropdownPop 90ms ease-out",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          height: 25,
-          padding: "0 9px",
-          borderBottom: "1px solid var(--line-soft)",
-          background: "var(--ink-2)",
-        }}
-      >
-        <span
-          className="mono"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 7,
-            fontSize: 8,
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-            color: "var(--paper-3)",
-            fontWeight: 600,
-          }}
-        >
-          <span
-            style={{
-              width: 4,
-              height: 4,
-              borderRadius: 999,
-              background: "var(--accent)",
-            }}
-          />
-          {title}
-        </span>
-        <span
-          className="mono"
-          style={{
-            fontSize: 8,
-            letterSpacing: "0.06em",
-            color: selected === 0 ? "var(--sell)" : "var(--paper-3)",
-          }}
-        >
-          {selected}/{total}
-        </span>
-      </div>
-
-      <div style={{ padding: 3, display: "flex", flexDirection: "column" }}>
-        {options.map((opt) => (
-          <DropdownCheckItem key={opt.key} option={opt} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DropdownCheckItem({ option }: { option: DropdownOption }) {
-  const { label, active, accent, onToggle } = option;
-  return (
-    <button
-      role="menuitemcheckbox"
-      aria-checked={active}
-      onClick={onToggle}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "12px minmax(0, 1fr) 6px",
-        alignItems: "center",
-        gap: 8,
-        width: "100%",
-        height: 28,
-        padding: "0 8px",
-        border: 0,
-        borderRadius: 3,
-        background: active ? "var(--ink-2)" : "transparent",
-        color: active ? "var(--paper)" : "var(--paper-2)",
-        cursor: "pointer",
-        textAlign: "left",
-        transition: "background 0.12s, color 0.12s",
-      }}
-      onMouseEnter={(e) => {
-        if (!active) e.currentTarget.style.background = "var(--ink-2)";
-      }}
-      onMouseLeave={(e) => {
-        if (!active) e.currentTarget.style.background = "transparent";
-      }}
-    >
-      <span
-        aria-hidden="true"
-        style={{
-          width: 11,
-          height: 11,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 2,
-          border: "1px solid " + (active ? "var(--accent)" : "var(--line)"),
-          background: active ? "var(--accent)" : "var(--ink-1)",
-          transition: "background 0.12s, border-color 0.12s",
-          flexShrink: 0,
-        }}
-      >
-        {active && (
-          <svg width={8} height={8} viewBox="0 0 9 9" fill="none">
-            <path
-              d="M1 4.5 L3.5 7 L8 1.5"
-              stroke="oklch(0.14 0.006 65)"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        )}
-      </span>
-
-      <span
-        className="mono"
-        style={{
-          fontSize: 10,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          fontWeight: active ? 600 : 500,
-        }}
-      >
-        {label}
-      </span>
-
-      <span
-        aria-hidden="true"
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 999,
-          background: accent,
-          opacity: active ? 1 : 0.35,
-          transition: "opacity 0.12s",
-          flexShrink: 0,
-        }}
-      />
-    </button>
-  );
+  return "holdings";
 }
 
 export function Sidebar() {
-  const tapeMenuRef = useRef<HTMLDivElement>(null);
   const { sidebarOpen: open, toggleSidebar } = useApp();
   const isMobile = useIsMobile();
 
-  const [page, setPage] = useState<SidebarPage>("tape");
-  const { kinds: tapeKinds, toggleKind: toggleTapeKind } = useTapeKinds();
-  const [tapeMenuOpen, setTapeMenuOpen] = useState(false);
-  const [walletsMenuOpen, setWalletsMenuOpen] = useState(false);
-  const [walletsView, setWalletsView] = useUserPreference<WalletsView>("sidebar.walletsView", "wallets");
+  const [page, setPage] = useState<SidebarPage>("holdings");
 
+  // Re-read on every open: the mobile menu picks the page in storage before
+  // opening the drawer.
   useEffect(() => {
-    setPage(readStoredPage());
-  }, []);
+    if (open) setPage(readStoredPage());
+  }, [open]);
 
   const selectPage = (next: SidebarPage) => {
-    if (next === "tape" && page === "tape") {
-      setWalletsMenuOpen(false);
-      setTapeMenuOpen((prev) => !prev);
-      return;
-    }
-    if (next === "wallets" && page === "wallets") {
-      setTapeMenuOpen(false);
-      setWalletsMenuOpen((prev) => !prev);
-      return;
-    }
-    setTapeMenuOpen(false);
-    setWalletsMenuOpen(false);
     setPage(next);
     try {
       window.localStorage.setItem(SIDEBAR_PAGE_KEY, next);
@@ -327,29 +84,6 @@ export function Sidebar() {
       /* ignore */
     }
   };
-
-  // Outside-click / Escape closes header dropdowns.
-  useEffect(() => {
-    if (!tapeMenuOpen && !walletsMenuOpen) return;
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!tapeMenuRef.current?.contains(event.target as Node)) {
-        setTapeMenuOpen(false);
-        setWalletsMenuOpen(false);
-      }
-    };
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setTapeMenuOpen(false);
-        setWalletsMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [tapeMenuOpen, walletsMenuOpen]);
 
   if (!open) return null;
 
@@ -364,136 +98,46 @@ export function Sidebar() {
       overflow: "hidden", position: "relative",
     }}>
       <div
-        ref={tapeMenuRef}
+        role="tablist"
         style={{
           height: 48,
           padding: "0 8px",
           borderBottom: "1px solid var(--line-soft)",
           display: "flex", alignItems: "center", gap: 2,
           flexShrink: 0,
-          position: "relative",
         }}
       >
-        <div style={{ display: "flex", gap: 2, flex: 1, minWidth: 0, alignItems: "center" }}>
-          {PAGES.map((p, idx) => {
-            const active = page === p.id;
-            const isTape = p.id === "tape";
-            const isWallets = p.id === "wallets";
-            const hasMenu = isTape || isWallets;
-            const menuOpen = (isTape && tapeMenuOpen) || (isWallets && walletsMenuOpen);
-            const isFirst = idx === 0;
-            const isLast = idx === PAGES.length - 1;
-
-            const tapeOpts: DropdownOption[] = isTape
-              ? TAPE_KINDS.map((k) => ({
-                  key: k,
-                  label: TAPE_VIEW_LABEL[k],
-                  active: tapeKinds.includes(k),
-                  accent:
-                    k === "deploy"
-                      ? "var(--buy)"
-                      : k === "migration"
-                        ? "var(--accent)"
-                        : "var(--paper)",
-                  onToggle: () => toggleTapeKind(k),
-                }))
-              : [];
-
-            const walletsOpts: DropdownOption[] = isWallets
-              ? WALLETS_VIEW_OPTS.map((v) => ({
-                  key: v.id,
-                  label: v.label,
-                  active: walletsView === v.id,
-                  accent: "var(--accent)",
-                  onToggle: () => {
-                    setWalletsView(v.id);
-                    setWalletsMenuOpen(false);
-                  },
-                }))
-              : [];
-
-            return (
-              <div
-                key={p.id}
-                style={{ flex: 1, minWidth: 0, position: "relative" }}
-              >
-                <Tooltip content={
-                  isTape && active ? "Change tape feed"
-                    : isWallets && active ? "Change wallets view"
-                    : null
-                }>
-                <button
-                  onClick={() => selectPage(p.id)}
-                  aria-haspopup={hasMenu ? "menu" : undefined}
-                  aria-expanded={hasMenu ? menuOpen : undefined}
-                  style={{
-                    width: "100%",
-                    padding: "6px 10px",
-                    fontSize: 12,
-                    fontWeight: 500,
-                    border: "1px solid transparent",
-                    borderColor: menuOpen
-                      ? "var(--line-soft)"
-                      : active
-                        ? "transparent"
-                        : "transparent",
-                    borderBottomColor: menuOpen ? "var(--ink-1)" : "transparent",
-                    borderRadius: menuOpen ? "4px 4px 0 0" : 4,
-                    background: menuOpen || active ? "var(--ink-2)" : "transparent",
-                    color: active ? "var(--paper)" : "var(--paper-3)",
-                    cursor: "pointer",
-                    textAlign: "center",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    transition: "background 120ms, color 120ms, border-color 120ms",
-                  }}
-                >
-                  <span>
-                    {isWallets && active
-                      ? (WALLETS_VIEW_OPTS.find((v) => v.id === walletsView)?.label ?? p.label)
-                      : p.label}
-                  </span>
-                  {hasMenu && active && (
-                    <span
-                      style={{
-                        fontSize: 8,
-                        opacity: 0.7,
-                        fontStyle: "normal",
-                        display: "inline-block",
-                        transform: menuOpen ? "rotate(180deg)" : "rotate(0deg)",
-                        transition: "transform 0.18s",
-                      }}
-                    >
-                      ▾
-                    </span>
-                  )}
-                </button>
-                </Tooltip>
-
-                {isTape && tapeMenuOpen && active && (
-                  <HeaderDropdown
-                    title="Tape Sources"
-                    side={isFirst ? "left" : isLast ? "right" : "center"}
-                    options={tapeOpts}
-                  />
-                )}
-                {isWallets && walletsMenuOpen && active && (
-                  <HeaderDropdown
-                    title="Wallets View"
-                    side={isFirst ? "left" : isLast ? "right" : "center"}
-                    options={walletsOpts}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
+        {PAGES.map((p) => {
+          const active = page === p.id;
+          return (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => selectPage(p.id)}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: "6px 10px",
+                fontSize: 12,
+                fontWeight: 500,
+                border: "1px solid transparent",
+                borderRadius: 4,
+                background: active ? "var(--ink-2)" : "transparent",
+                color: active ? "var(--paper)" : "var(--paper-3)",
+                cursor: "pointer",
+                textAlign: "center",
+                transition: "background 120ms, color 120ms",
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
       </div>
 
-      {page === "tape" && <TapePage kinds={tapeKinds} />}
-      {page === "wallets" && <WalletsPage view={walletsView} />}
+      {page === "holdings" && <HoldingsPage />}
+      {page === "wallets" && <WalletsPage />}
     </aside>
   );
 
@@ -513,363 +157,12 @@ export function Sidebar() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   Tape page
+   Shared: wallet list + balance refresh
    ───────────────────────────────────────────────────────────── */
 
-function getTapeEmptyCopy(kinds: TapeKind[]) {
-  if (kinds.length === 0) return "Select one or more tape feeds.";
-  if (kinds.length === 1) return TAPE_EMPTY_COPY[kinds[0]];
-  return "Waiting for selected events…";
-}
-
-// Discriminated feed item — one of these per row in the unified Tape.
-// Token-event kinds carry a TapeItem, wallet trades carry an alert. Sorted
-// purely by `ts`.
-type TapeFeedItem =
-  | { kind: "token"; ts: number; token: TapeItem }
-  | { kind: "alert"; ts: number; alert: WalletTradeAlert };
-
-function TapePage({ kinds }: { kinds: TapeKind[] }) {
-  const { navigate } = useClientNav();
-  const hiddenMints = useHiddenMints();
-
-  // Token-event sources.
-  const { tokens: deploys } = useDeployStream();
-  const { tokens: migrating } = useMigratingStream();
-  const { tokens: migs } = useMigrationStream();
-  const { tokens: trending } = useAlertStream();
-
-  // Wallet source for trade alerts: the user's own wallets.
-  const [userWallets, setUserWalletsState] = useState<StreamWallet[]>([]);
-  useEffect(() => {
-    setUserWalletsState(readUserWallets());
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === PORTFOLIO_STORAGE_KEY) setUserWalletsState(readUserWallets());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-  }, []);
-
-  // Only subscribe upstream signers when the user has actually selected
-  // "mine" — keeps the WS quiet when the tape is showing only token events.
-  const tracedWallets = useMemo<StreamWallet[]>(
-    () => (kinds.includes("mine") ? userWallets : []),
-    [kinds, userWallets],
-  );
-
-  const walletStream = useWalletTradeStream(tracedWallets, { maxAlerts: 60, seedLimit: 5 });
-
-  const items = useMemo<TapeFeedItem[]>(() => {
-    const out: TapeFeedItem[] = [];
-    const selected = new Set(kinds);
-
-    if (selected.has("deploy")) {
-      for (const t of deploys || []) {
-        if (hiddenMints.has(t.mint_address)) continue;
-        const ts = new Date(t.created_at || 0).getTime();
-        out.push({ kind: "token", ts, token: { ...t, _kind: "deploy", _ts: ts } });
-      }
-    }
-    if (selected.has("migrating")) {
-      // Migrating items are snapshot-derived (no created_at), so fall back
-      // to `now` so they still sort to the top when selected.
-      const now = Date.now();
-      for (const t of migrating || []) {
-        if (hiddenMints.has(t.mint_address)) continue;
-        const ts = new Date(t.created_at || 0).getTime() || now;
-        out.push({ kind: "token", ts, token: { ...t, _kind: "migrating", _ts: ts } });
-      }
-    }
-    if (selected.has("migration")) {
-      for (const t of migs || []) {
-        if (hiddenMints.has(t.mint_address)) continue;
-        const ts = new Date(t.migrated_at || t.created_at || 0).getTime();
-        out.push({ kind: "token", ts, token: { ...t, _kind: "migration", _ts: ts } });
-      }
-    }
-    if (selected.has("trending")) {
-      for (const t of trending || []) {
-        if (hiddenMints.has(t.mint_address)) continue;
-        const ts = new Date(t.created_at || 0).getTime();
-        out.push({ kind: "token", ts, token: { ...t, _kind: "trending", _ts: ts } });
-      }
-    }
-    if (selected.has("mine")) {
-      for (const a of walletStream.alerts) {
-        if (hiddenMints.has(a.tokenMint)) continue;
-        out.push({ kind: "alert", ts: a.timestamp, alert: a });
-      }
-    }
-
-    return out.sort((x, y) => y.ts - x.ts).slice(0, TAPE_LIMIT);
-  }, [deploys, migrating, migs, trending, walletStream.alerts, kinds, hiddenMints]);
-
-  return (
-    <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-      {items.length === 0 && (
-        <div style={{
-          padding: 24, fontSize: 11, color: "var(--paper-4)",
-          textAlign: "center", fontFamily: "var(--font-mono)",
-        }}>
-          {getTapeEmptyCopy(kinds)}
-        </div>
-      )}
-      {items.map((item, i) => {
-        if (item.kind === "token") {
-          const t = item.token;
-          return (
-            <TapeRow
-              key={`tk:${t.mint_address || i}:${t._kind}:${t._ts}`}
-              t={t}
-              rowIndex={i}
-              onClick={() => navigate(tokenHref(t.mint_address))}
-            />
-          );
-        }
-        return (
-          <WalletTradeRow
-            key={`al:${item.alert.id}`}
-            alert={item.alert}
-            onClick={() => navigate(tokenHref(item.alert.tokenMint))}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-function TapeChip({
-  glyph,
-  value,
-  color = "var(--paper-4)",
-  valueColor = "var(--paper-2)",
-}: {
-  glyph: React.ReactNode;
-  value: React.ReactNode;
-  color?: string;
-  valueColor?: string;
-}) {
-  return (
-    <span
-      className="mono"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 3,
-        fontSize: 10,
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          color,
-          lineHeight: 0,
-        }}
-      >
-        {glyph}
-      </span>
-      <span style={{ color: valueColor, fontWeight: 600 }}>{value}</span>
-    </span>
-  );
-}
-
-function TapeRow({ t, onClick, rowIndex = 0 }: { t: TapeItem; onClick: () => void; rowIndex?: number }) {
-  const ageRef = React.useRef<HTMLSpanElement>(null);
-  const resolvedImage = useRowImage(t.mint_address, t.image, rowIndex);
-  useEffect(() => {
-    const el = ageRef.current;
-    if (!el || !t._ts) return;
-    el.textContent = formatAge(t._ts);
-    registerAge(el, t._ts);
-    return () => unregisterAge(el);
-  }, [t._ts]);
-
-  const edgeColor =
-    t._kind === "migration"
-      ? "var(--accent)"
-      : t._kind === "trending"
-        ? "var(--paper)"
-        : t._kind === "migrating"
-          ? "var(--accent)"
-          : "var(--buy)";
-
-  const ticker = (t.symbol || "").trim() || shortAddr(t.mint_address, 4);
-
-  // Right-rail primary value: mcap > volume24h > liquidity > "NEW".
-  let primary: React.ReactNode = null;
-  let primaryColor = "var(--paper)";
-  if (t.marketCap != null && t.marketCap > 0) {
-    primary = fmtMcap(t.marketCap);
-  } else if (t.volume24h != null && t.volume24h > 0) {
-    primary = `V ${fmtMcap(t.volume24h)}`;
-  } else if (t.liquidity != null && t.liquidity > 0) {
-    primary = `L ${fmtMcap(t.liquidity)}`;
-  } else {
-    primary = "NEW";
-    primaryColor = "var(--paper-4)";
-  }
-
-  // Subline chip set — show whichever fields exist. Cap at 3 chips so the
-  // line doesn't wrap on a 264px sidebar.
-  const chips: React.ReactNode[] = [];
-  if (t.creatorDeploys != null) {
-    const devValue = String(t.creatorDeploys);
-    chips.push(
-      <TapeChip
-        key="dev"
-        glyph={Icon.dev(10)}
-        value={devValue}
-        color="var(--paper-3)"
-      />,
-    );
-  }
-  if (t.bundlePercentage != null && t.bundlePercentage > 0) {
-    const warn = t.bundlePercentage > 10;
-    chips.push(
-      <TapeChip
-        key="b"
-        glyph={Icon.bundle(10)}
-        value={`${t.bundlePercentage.toFixed(0)}%`}
-        color={warn ? "var(--warn)" : "var(--sell)"}
-        valueColor={warn ? "var(--warn)" : "var(--paper-2)"}
-      />,
-    );
-  }
-  if (t.sniperPercentage != null && t.sniperPercentage > 0 && chips.length < 3) {
-    const warn = t.sniperPercentage > 8;
-    chips.push(
-      <TapeChip
-        key="s"
-        glyph={Icon.sniper(10)}
-        value={`${t.sniperPercentage.toFixed(0)}%`}
-        color={warn ? "var(--warn)" : "var(--paper-3)"}
-        valueColor={warn ? "var(--warn)" : "var(--paper-2)"}
-      />,
-    );
-  }
-  if (t.holders != null && t.holders > 0 && chips.length < 3) {
-    chips.push(
-      <TapeChip
-        key="h"
-        glyph={Icon.holders(10)}
-        value={fmtNum(t.holders)}
-        color="var(--accent)"
-      />,
-    );
-  }
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      className={(t as TokenEvent & { isNew?: boolean }).isNew ? "new-in" : undefined}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "3px 38px minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: 10,
-        padding: "9px 12px 9px 0",
-        width: "100%",
-        borderBottom: "1px solid var(--line-soft)",
-        background: "transparent",
-        textAlign: "left",
-        cursor: "pointer",
-        transition: "background 120ms",
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--ink-2)")}
-      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-    >
-      <span
-        aria-hidden="true"
-        style={{ alignSelf: "stretch", background: edgeColor }}
-      />
-      <TokenIcon
-        token={{ mint_address: t.mint_address, symbol: t.symbol, image: resolvedImage }}
-        size={38}
-      />
-      <div
-        style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}
-      >
-        <span
-          className="ellipsis"
-          style={{
-            fontSize: 14,
-            fontWeight: 700,
-            color: "var(--paper)",
-            letterSpacing: "0.01em",
-            lineHeight: 1.15,
-          }}
-        >
-          {ticker}
-        </span>
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            minWidth: 0,
-            flexWrap: "nowrap",
-            overflow: "hidden",
-          }}
-        >
-          {chips}
-        </span>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-end",
-          justifyContent: "center",
-          gap: 3,
-          flexShrink: 0,
-        }}
-      >
-        <span
-          className="mono"
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: primaryColor,
-            letterSpacing: "0.02em",
-            lineHeight: 1,
-          }}
-        >
-          {primary}
-        </span>
-        <span
-          ref={ageRef}
-          className="mono"
-          style={{
-            fontSize: 9,
-            color: "var(--paper-4)",
-            letterSpacing: "0.04em",
-            lineHeight: 1,
-          }}
-        >
-          {t._ts ? formatAge(t._ts) : ""}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────────────
-   Wallets page
-   ───────────────────────────────────────────────────────────── */
-
-function WalletsPage({ view }: { view: WalletsView }) {
-  const pathname = usePathname();
-  const { navigate } = useClientNav();
+function useSidebarWallets() {
   const userWallets = useUserWallets();
-  const [quote] = useBuyQuoteMint();
   const [refreshing, setRefreshing] = useState(false);
-  const hiddenMints = useHiddenMints();
-  const solPrice = useSolPrice() ?? 0;
   const wallets: StoredWallet[] = useMemo(
     () =>
       userWallets.wallets
@@ -883,7 +176,148 @@ function WalletsPage({ view }: { view: WalletsView }) {
         })),
     [userWallets.wallets, userWallets.activeIds],
   );
-  const holdingsWallets = wallets;
+
+  const refresh = async () => {
+    if (refreshing || wallets.length === 0) return;
+    setRefreshing(true);
+    try {
+      await userWallets.refreshBalances();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return { userWallets, wallets, balances: userWallets.balances, refreshing, refresh };
+}
+
+function RefreshButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  return (
+    <Tooltip content="Refresh balances">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy}
+        style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          background: "transparent", border: "none", padding: 2,
+          color: "var(--paper-3)", cursor: busy ? "default" : "pointer",
+          opacity: busy ? 0.45 : 1,
+        }}
+      >
+        {Icon.refresh(12)}
+      </button>
+    </Tooltip>
+  );
+}
+
+const pageHeaderStyle: React.CSSProperties = {
+  height: 40, padding: "0 12px",
+  borderBottom: "1px solid var(--line-soft)",
+  display: "flex", alignItems: "center", justifyContent: "space-between",
+  fontFamily: "var(--font-mono)", fontSize: 11,
+  color: "var(--accent)",
+  flexShrink: 0,
+};
+
+const emptyStyle: React.CSSProperties = {
+  padding: 24, fontSize: 11, color: "var(--paper-4)",
+  textAlign: "center", fontFamily: "var(--font-mono)", fontStyle: "italic",
+};
+
+/* ─────────────────────────────────────────────────────────────
+   Holdings page
+   ───────────────────────────────────────────────────────────── */
+
+function HoldingsPage() {
+  const { navigate } = useClientNav();
+  const { wallets, balances, refreshing, refresh } = useSidebarWallets();
+  const hiddenMints = useHiddenMints();
+  const solPrice = useSolPrice() ?? 0;
+  const hasLiveBalances = wallets.some((w) => (balances[w.id]?.updatedAt ?? 0) > 0);
+
+  // Every token held across all wallets, summed per mint the same way the
+  // Portfolio tab does.
+  const holdingAgg = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const w of wallets) {
+      const toks = balances[w.id]?.tokens;
+      if (!toks) continue;
+      for (const [mint, amt] of Object.entries(toks)) {
+        if (!(amt > 0) || hiddenMints.has(mint)) continue;
+        m.set(mint, (m.get(mint) ?? 0) + amt);
+      }
+    }
+    return m;
+  }, [wallets, balances, hiddenMints]);
+  const holdingMints = useMemo(() => [...holdingAgg.keys()], [holdingAgg]);
+  const liveMap = useLiveTradePrices(holdingMints);
+  const holdingRows = useMemo(() => {
+    const out = holdingMints.map((mint) => {
+      const amount = holdingAgg.get(mint) ?? 0;
+      const lp = liveMap.get(mint)?.price ?? 0;
+      const usd = lp > 0 && solPrice > 0 ? lp * solPrice * amount : 0;
+      return { mint, amount, usd };
+    });
+    out.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
+    return out;
+  }, [holdingMints, holdingAgg, liveMap, solPrice]);
+  const holdingsTotalUsd = useMemo(
+    () => holdingRows.reduce((s, r) => s + r.usd, 0),
+    [holdingRows],
+  );
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={pageHeaderStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span>Total</span>
+          <SortGlyph />
+          <span>{fmtUsd(holdingsTotalUsd)}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ color: "var(--paper-4)" }}>
+            {holdingRows.length} token{holdingRows.length === 1 ? "" : "s"}
+          </span>
+          <RefreshButton
+            busy={refreshing || wallets.length === 0}
+            onClick={() => void refresh()}
+          />
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+        {holdingRows.length === 0 ? (
+          <div style={emptyStyle}>
+            {wallets.length === 0
+              ? "No wallets available. Create or import them in the Wallets tab."
+              : hasLiveBalances
+                ? "No tokens held across your wallets."
+                : "Waiting for balances…"}
+          </div>
+        ) : (
+          holdingRows.map((r) => (
+            <HoldingRow
+              key={r.mint}
+              mint={r.mint}
+              amount={r.amount}
+              usd={r.usd}
+              onClick={() => navigate(tokenHref(r.mint))}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Wallets page
+   ───────────────────────────────────────────────────────────── */
+
+function WalletsPage() {
+  const pathname = usePathname();
+  const { userWallets, wallets, balances, refreshing, refresh } = useSidebarWallets();
+  const [quote] = useBuyQuoteMint();
 
   const activeMint = useMemo(() => {
     const parsed = pathname ? parseTokenPath(pathname) : null;
@@ -891,8 +325,6 @@ function WalletsPage({ view }: { view: WalletsView }) {
   }, [pathname]);
   const { info } = useTokenInfo(activeMint);
   const hasToken = !!activeMint;
-  const balances = userWallets.balances;
-  const hasLiveBalances = wallets.some((w) => (balances[w.id]?.updatedAt ?? 0) > 0);
 
   const totalQuote = useMemo(
     () => wallets.reduce((acc, w) => acc + walletQuoteBalance(balances[w.id], quote), 0),
@@ -910,193 +342,66 @@ function WalletsPage({ view }: { view: WalletsView }) {
     ? "$" + (rawSymbol ? (rawSymbol.length > 5 ? rawSymbol.slice(0, 5) + "…" : rawSymbol) : "TOKEN")
     : "";
 
-  // ── Holdings view ─ aggregate every token held across all (non-connected)
-  // wallets into a single per-mint total, the same way the Portfolio tab does.
-  const holdingAgg = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const w of holdingsWallets) {
-      const toks = balances[w.id]?.tokens;
-      if (!toks) continue;
-      for (const [mint, amt] of Object.entries(toks)) {
-        if (!(amt > 0) || hiddenMints.has(mint)) continue;
-        m.set(mint, (m.get(mint) ?? 0) + amt);
-      }
-    }
-    return m;
-  }, [holdingsWallets, balances, hiddenMints]);
-  const holdingMints = useMemo(() => [...holdingAgg.keys()], [holdingAgg]);
-  // Only subscribe to live WS prices while the Holdings view is actually open.
-  const liveMap = useLiveTradePrices(view === "holdings" ? holdingMints : []);
-  const holdingRows = useMemo(() => {
-    const out = holdingMints.map((mint) => {
-      const amount = holdingAgg.get(mint) ?? 0;
-      const lp = liveMap.get(mint)?.price ?? 0;
-      const usd = lp > 0 && solPrice > 0 ? lp * solPrice * amount : 0;
-      return { mint, amount, usd };
-    });
-    out.sort((a, b) => b.usd - a.usd || b.amount - a.amount);
-    return out;
-  }, [holdingMints, holdingAgg, liveMap, solPrice]);
-  const holdingsTotalUsd = useMemo(
-    () => holdingRows.reduce((s, r) => s + r.usd, 0),
-    [holdingRows],
-  );
-
-  const handleRefreshBalances = async () => {
-    if (refreshing || wallets.length === 0) return;
-    setRefreshing(true);
-    try {
-      await userWallets.refreshBalances();
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      {view === "wallets" ? (
-        <>
-          {/* SOL / token balance header */}
-          <div style={{
-            height: 40, padding: "0 12px",
-            borderBottom: "1px solid var(--line-soft)",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            fontFamily: "var(--font-mono)", fontSize: 11,
-            color: "var(--accent)",
-          }}>
+      {/* SOL / token balance header */}
+      <div style={pageHeaderStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Tooltip content={quote.label}>
+            <span style={{ display: "inline-flex", lineHeight: 0, color: "var(--accent)" }}>
+              <QuoteAssetIcon label={quote.label} size={12} />
+            </span>
+          </Tooltip>
+          <SortGlyph />
+          <span>{fmtQuoteBalance(totalQuote, quote.label)}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {hasToken && (
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Tooltip content={quote.label}>
-                <span style={{ display: "inline-flex", lineHeight: 0, color: "var(--accent)" }}>
-                  <QuoteAssetIcon label={quote.label} size={12} />
-                </span>
-              </Tooltip>
+              <span>{tickerLabel}</span>
               <SortGlyph />
-              <span>{fmtQuoteBalance(totalQuote, quote.label)}</span>
+              <span>{fmtNum(totalToken)}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              {hasToken && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>{tickerLabel}</span>
-                  <SortGlyph />
-                  <span>{fmtNum(totalToken)}</span>
-                </div>
-              )}
-              <Tooltip content="Refresh balances">
-                <button
-                  type="button"
-                  onClick={() => void handleRefreshBalances()}
-                  disabled={refreshing || wallets.length === 0}
-                  style={{
-                    display: "inline-flex", alignItems: "center", justifyContent: "center",
-                    background: "transparent", border: "none", padding: 2,
-                    color: "var(--paper-3)", cursor: refreshing || wallets.length === 0 ? "default" : "pointer",
-                    opacity: refreshing || wallets.length === 0 ? 0.45 : 1,
-                  }}
-                >
-                  {Icon.refresh(12)}
-                </button>
-              </Tooltip>
-            </div>
-          </div>
+          )}
+          <RefreshButton
+            busy={refreshing || wallets.length === 0}
+            onClick={() => void refresh()}
+          />
+        </div>
+      </div>
 
-          {/* Wallet list */}
-          <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-            {wallets.length === 0 ? (
-              <div style={{
-                padding: 24, fontSize: 11, color: "var(--paper-4)",
-                textAlign: "center", fontFamily: "var(--font-mono)", fontStyle: "italic",
-              }}>
-                No wallets available. Create or import them in the Wallets tab.
-              </div>
-            ) : (
-              wallets.map((w) => {
-                const bal = balances[w.id];
-                const balanceKnown = (bal?.updatedAt ?? 0) > 0;
-                const tokenAmount = bal && activeMint ? bal.tokens[activeMint] ?? 0 : 0;
-                return (
-                  <WalletRow
-                    key={w.id}
-                    wallet={w}
-                    quote={quote}
-                    activeMint={activeMint}
-                    quoteBalance={walletQuoteBalance(bal, quote)}
-                    tokenBalance={tokenAmount}
-                    balanceKnown={balanceKnown}
-                    loading={(refreshing && !balanceKnown) || (!!bal?.loading && !balanceKnown)}
-                    onClick={() => userWallets.toggleActive(w.id)}
-                  />
-                );
-              })
-            )}
+      {/* Wallet list */}
+      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+        {wallets.length === 0 ? (
+          <div style={emptyStyle}>
+            No wallets available. Create or import them in the Wallets tab.
           </div>
-        </>
-      ) : (
-        <>
-          {/* Holdings total header */}
-          <div style={{
-            height: 40, padding: "0 12px",
-            borderBottom: "1px solid var(--line-soft)",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            fontFamily: "var(--font-mono)", fontSize: 11,
-            color: "var(--accent)",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span>Total</span>
-              <SortGlyph />
-              <span>{fmtUsd(holdingsTotalUsd)}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ color: "var(--paper-4)" }}>
-                {holdingRows.length} token{holdingRows.length === 1 ? "" : "s"}
-              </span>
-              <Tooltip content="Refresh balances">
-                <button
-                  type="button"
-                  onClick={() => void handleRefreshBalances()}
-                  disabled={refreshing || wallets.length === 0}
-                  style={{
-                    display: "inline-flex", alignItems: "center", justifyContent: "center",
-                    background: "transparent", border: "none", padding: 2,
-                    color: "var(--paper-3)", cursor: refreshing || wallets.length === 0 ? "default" : "pointer",
-                    opacity: refreshing || wallets.length === 0 ? 0.45 : 1,
-                  }}
-                >
-                  {Icon.refresh(12)}
-                </button>
-              </Tooltip>
-            </div>
-          </div>
-
-          {/* Aggregated holdings list */}
-          <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-            {holdingRows.length === 0 ? (
-              <div style={{
-                padding: 24, fontSize: 11, color: "var(--paper-4)",
-                textAlign: "center", fontFamily: "var(--font-mono)", fontStyle: "italic",
-              }}>
-                {hasLiveBalances
-                  ? "No tokens held across your wallets."
-                  : "Waiting for balances…"}
-              </div>
-            ) : (
-              holdingRows.map((r) => (
-                <HoldingRow
-                  key={r.mint}
-                  mint={r.mint}
-                  amount={r.amount}
-                  usd={r.usd}
-                  onClick={() => navigate(tokenHref(r.mint))}
-                />
-              ))
-            )}
-          </div>
-        </>
-      )}
+        ) : (
+          wallets.map((w) => {
+            const bal = balances[w.id];
+            const balanceKnown = (bal?.updatedAt ?? 0) > 0;
+            const tokenAmount = bal && activeMint ? bal.tokens[activeMint] ?? 0 : 0;
+            return (
+              <WalletRow
+                key={w.id}
+                wallet={w}
+                quote={quote}
+                activeMint={activeMint}
+                quoteBalance={walletQuoteBalance(bal, quote)}
+                tokenBalance={tokenAmount}
+                balanceKnown={balanceKnown}
+                loading={(refreshing && !balanceKnown) || (!!bal?.loading && !balanceKnown)}
+                onClick={() => userWallets.toggleActive(w.id)}
+              />
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
 
-/// One aggregated-holding row in the Holdings view of the Wallets tab.
+/// One aggregated-holding row of the Holdings page.
 /// Resolves symbol / image lazily (cache-first, then a single public
 /// metadata fetch) so a long bag list doesn't fan out a heavy per-row
 /// REST call the way useTokenInfo would.
@@ -1508,98 +813,5 @@ function SortGlyph() {
     <svg width={10} height={10} viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ display: "block", color: "var(--paper-4)" }}>
       <path d="M5 3v10M2.5 5.5 5 3l2.5 2.5M11 13V3M8.5 10.5 11 13l2.5-2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
-  );
-}
-
-/* WalletTradeRow renders a trade of one of the user's wallets in the
-   merged Tape feed ("My Wallets" lane). */
-function WalletTradeRow({
-  alert,
-  onClick,
-}: {
-  alert: WalletTradeAlert;
-  onClick: () => void;
-}) {
-  const ageRef = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    const el = ageRef.current;
-    if (!el || !alert.timestamp) return;
-    el.textContent = formatAge(alert.timestamp);
-    registerAge(el, alert.timestamp);
-    return () => unregisterAge(el);
-  }, [alert.timestamp]);
-
-  const buy = alert.side === "buy";
-  const newBg = `color-mix(in oklch, ${buy ? "var(--buy)" : "var(--sell)"} 10%, transparent)`;
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "4px minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: 8,
-        padding: "8px 12px",
-        width: "100%",
-        borderBottom: "1px dashed var(--line-soft)",
-        background: alert.isNew ? newBg : "transparent",
-        textAlign: "left",
-        cursor: "pointer",
-        transition: "background 120ms",
-      }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--ink-2)")}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = alert.isNew ? newBg : "transparent";
-      }}
-    >
-      <span style={{
-        width: 4, height: 28, borderRadius: 2,
-        background: buy ? "var(--buy)" : "var(--sell)",
-      }} />
-      <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <span className="mono" style={{
-            fontSize: 9, color: buy ? "var(--buy)" : "var(--sell)",
-            letterSpacing: "0.08em", textTransform: "uppercase",
-            fontWeight: 600, flexShrink: 0,
-          }}>
-            {alert.side}
-          </span>
-          <Tooltip content="My wallet">
-            <span
-              style={{
-                display: "inline-block",
-                width: 6, height: 6, borderRadius: 999,
-                flexShrink: 0,
-                background: "var(--accent)",
-              }}
-            />
-          </Tooltip>
-          <span className="mono ellipsis" style={{
-            fontSize: 11, color: "var(--paper)",
-            minWidth: 0, flex: 1,
-          }}>
-            {alert.walletLabel}
-          </span>
-        </div>
-        <span className="mono ellipsis" style={{
-          fontSize: 9, color: "var(--paper-4)",
-          letterSpacing: "0.04em",
-          display: "inline-flex", alignItems: "center", gap: 4,
-        }}>
-          {alert.solAmount > 0 && <SolAmount iconSize={8}>{alert.solAmount.toFixed(3)}</SolAmount>}
-          {alert.solAmount > 0 && alert.tokenMint && <span>·</span>}
-          {alert.tokenMint && <span>{shortAddr(alert.tokenMint, 4)}</span>}
-        </span>
-      </div>
-      <span ref={ageRef} className="mono" style={{
-        fontSize: 10, color: "var(--paper-3)", flexShrink: 0,
-      }}>
-        {formatAge(alert.timestamp)}
-      </span>
-    </div>
   );
 }

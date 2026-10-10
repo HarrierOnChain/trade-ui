@@ -3,7 +3,7 @@
 
    useUserWallets mirrors the vault's wallet list into
    localStorage (`trade.portfolio.wallets.v3`) so code outside
-   React (the sidebar tape, the ticker bar, the status footer)
+   React (the ticker bar, the status footer)
    can read it without waiting on the provider.
    ───────────────────────────────────────────────────────────── */
 
@@ -26,8 +26,7 @@ function isRawWallet(v: unknown): v is RawPortfolioWallet {
 
 /** The mirrored wallet list as TrackedWallets. Returns an empty array when
  *  the user hasn't added any wallets yet — never seed demo addresses,
- *  otherwise the "My Wallets" tape would stream somebody else's trades to
- *  a brand-new install. */
+ *  otherwise a brand-new install would stream somebody else's trades. */
 export function readUserWallets(): StreamWallet[] {
   if (typeof window === "undefined") return [];
   try {
