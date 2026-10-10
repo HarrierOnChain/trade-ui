@@ -25,6 +25,7 @@ import { createQuotes } from "./server/quotes.mjs";
 import { createEvm } from "./server/evm.mjs";
 import { createApi, sendError } from "./server/api.mjs";
 import { createGate } from "./server/gate.mjs";
+import { silenceOkRequestLogs } from "./server/dev-log.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 let config;
@@ -35,6 +36,7 @@ try {
   process.exit(1);
 }
 process.env.NODE_ENV = config.dev ? "development" : "production";
+if (config.dev) silenceOkRequestLogs();
 
 // The Next.js route handlers run in this process and read these.
 process.env.RAZE_API_BASE = config.apiBase;
