@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useMemo, useRef } from "react";
-import { mergeDexLabel } from "../lib/format";
 import {
   queueBatchEnrich,
   resetBatchEnrichClaims,
@@ -40,6 +39,11 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
   if (buyCount != null) patch.buyCount = buyCount;
   if (sellCount != null) patch.sellCount = sellCount;
   if (deploys != null) patch.creatorDeploys = deploys;
+  for (const k of SHARE_KEYS) {
+    const v = num(row[k]);
+    if (v != null) patch[k] = v;
+  }
+  for (const k of SOCIAL_KEYS) if (row[k]) patch[k] = row[k];
   if (row.signer) patch.signer = row.signer;
   if (row.platform) patch.dex = row.platform;
   if (row.name) patch.name = row.name;
@@ -47,16 +51,39 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
   return patch;
 }
 
-function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>): TokenEvent {
+/** Safety shares the batch read carries (percent). */
+const SHARE_KEYS = [
+  "top10Percent",
+  "devPercent",
+  "insidersPercent",
+  "freshWalletsPercent",
+  "botsPercent",
+  "bluechipPercent",
+] as const;
+
+/** Every safety field, for `keepSafety`. */
+const SAFETY_KEYS = [
+  ...SHARE_KEYS,
+  "bundlePercentage",
+  "sniperPercentage",
+  "creatorDeploys",
+] as const;
+
+const SOCIAL_KEYS = ["twitter", "website", "telegram", "discord"] as const;
+
+function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>, keepSafety: boolean): TokenEvent {
+  // Links only fill gaps: a row's own socials are never replaced.
+  for (const k of SOCIAL_KEYS) if (t[k]) delete patch[k];
+  if (keepSafety) for (const k of SAFETY_KEYS) if (t[k] != null) delete patch[k];
   if (Object.keys(patch).length === 0) return t;
   return {
     ...t,
     ...patch,
     name: t.name || patch.name || t.name,
     symbol: t.symbol || patch.symbol || t.symbol,
-    // Never relabel a pump-family launchpad (Mayhem) to the pumpfun/pumpswap
-    // trade venue the enrich row reports.
-    dex: mergeDexLabel(t.dex, patch.dex),
+    // The board's launchpad is the row's label and filter key: enrichment
+    // only fills it when the row has none.
+    dex: t.dex || patch.dex || "",
   };
 }
 
@@ -70,9 +97,11 @@ export function useTokenEnrichment(
   setTokens: React.Dispatch<React.SetStateAction<TokenEvent[]>>,
   maxRows = 20,
   resetKey = 0,
+  opts: { keepSafety?: boolean } = {},
 ) {
   const prevResetKey = useRef(resetKey);
   const prevMintsKey = useRef("");
+  const keepSafety = opts.keepSafety === true;
 
   const mintsKey = useMemo(
     () =>
@@ -107,7 +136,7 @@ export function useTokenEnrichment(
             if (!mints.has(t.mint_address)) return t;
             const row = data[t.mint_address];
             if (!row) return t;
-            const merged = mergeBatchPatch(t, applyBatchEntry(row));
+            const merged = mergeBatchPatch(t, applyBatchEntry(row), keepSafety);
             if (merged === t) return t;
             dirty = true;
             return merged;
@@ -118,5 +147,5 @@ export function useTokenEnrichment(
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [mintsKey, setTokens, maxRows, resetKey]);
+  }, [mintsKey, setTokens, maxRows, resetKey, keepSafety]);
 }

@@ -26,6 +26,10 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v ? v : undefined;
 }
 
+function bool(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
 export function msToIso(v: unknown): string | undefined {
   const n = num(v);
   if (n == null || n <= 0) return undefined;
@@ -71,6 +75,7 @@ const PLATFORM_ALIASES: Record<string, string> = {
   "pump mayhem": "Mayhem",
   "bonk.fun": "LetsBonk",
   "jupiter studio": "JupiterStudio",
+  "jup_studio": "JupiterStudio",
   "launchlab": "RaydiumLaunchpad",
   "easya kickstart": "Kickstart",
   "pons": "Pons",
@@ -116,6 +121,7 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     website: str(socials.website) ?? null,
     twitter: str(socials.twitter) ?? null,
     telegram: str(socials.telegram) ?? null,
+    discord: str(socials.discord) ?? null,
     created_at: msToIso(row.createdAt) ?? "",
     migrated_at: msToIso(launchpad?.graduatedAt),
     marketCap: num(row.marketCapUsd),
@@ -141,6 +147,17 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     event.bundlePercentage = num(safety.bundlersPercent);
     event.sniperPercentage = num(safety.snipersPercent);
     event.creatorDeploys = num(safety.creatorLaunches);
+    event.top10Percent = num(safety.top10Percent);
+    event.devPercent = num(safety.devPercent);
+    event.insidersPercent = num(safety.insidersPercent);
+    event.freshWalletsPercent = num(safety.freshWalletsPercent);
+    event.botsPercent = num(safety.botsPercent);
+    event.bluechipPercent = num(safety.bluechipPercent);
+    event.buyTaxPercent = num(safety.buyTaxPercent);
+    event.sellTaxPercent = num(safety.sellTaxPercent);
+    event.honeypot = bool(safety.honeypot);
+    event.mintRenounced = bool(safety.mintRenounced);
+    event.freezeRenounced = bool(safety.freezeRenounced);
   }
   return event;
 }

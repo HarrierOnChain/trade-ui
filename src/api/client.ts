@@ -13,11 +13,11 @@ import {
   asRecord,
   msToIso,
   num,
+  platformName,
   usdToNative,
   type Rec,
 } from "./mappers";
 import { fetchNativePrices, nativeUsd } from "./native";
-import { platformAllowed } from "../lib/tokenFilters";
 import type { BatchEnrichEntry } from "../lib/batchEnrichCoordinator";
 import type {
   ChainSentiment,
@@ -157,8 +157,20 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
         bundle_percentage: t.bundlePercentage,
         sniper_percentage: t.sniperPercentage,
         signer: t.signer,
-        platform: t.dex || undefined,
+        // The launchpad only: without one, the batch read's `dex` is the
+        // pool's venue (on new BSC pairs even the pair's name), not a launchpad.
+        platform: platformName(asRecord(row.launchpad)?.name) || undefined,
         creatorDeploys: t.creatorDeploys,
+        top10Percent: t.top10Percent,
+        devPercent: t.devPercent,
+        insidersPercent: t.insidersPercent,
+        freshWalletsPercent: t.freshWalletsPercent,
+        botsPercent: t.botsPercent,
+        bluechipPercent: t.bluechipPercent,
+        twitter: t.twitter ?? undefined,
+        website: t.website ?? undefined,
+        telegram: t.telegram ?? undefined,
+        discord: t.discord ?? undefined,
       };
       data[asked] = entry;
     }
@@ -166,20 +178,17 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
   return { success: true, data };
 };
 
-async function listBoard(board: "new" | "graduating" | "graduated", limit: number, platform?: string): Promise<{ data: TokenEvent[] }> {
+/** A whole board; the columns filter it themselves (hooks/useLaunchpadBoard). */
+async function listBoard(board: "new" | "graduating" | "graduated", limit: number): Promise<{ data: TokenEvent[] }> {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
   const { data } = await get<unknown>(`/launchpad/${board}`, { chain: c, limit }, 1_000);
-  // Same gate as the live board: a launchpad with no chip yet is never hidden.
-  const list = rows(data)
-    .map((r) => apiTokenToEvent(r, native))
-    .filter((t) => t.mint_address && platformAllowed(t.dex, platform));
-  return { data: list };
+  return { data: rows(data).map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address) };
 }
 
-export const fetchDeploys = (limit = 50, platform?: string) => listBoard("new", limit, platform);
-export const fetchMigrations = (limit = 50, platform?: string) => listBoard("graduated", limit, platform);
-export const fetchMigrating = (limit = 50, platform?: string) => listBoard("graduating", limit, platform);
+export const fetchDeploys = (limit = 100) => listBoard("new", limit);
+export const fetchMigrations = (limit = 100) => listBoard("graduated", limit);
+export const fetchMigrating = (limit = 100) => listBoard("graduating", limit);
 
 // ── trades ─────────────────────────────────────────────────────────────────
 
@@ -289,8 +298,16 @@ function trendingInterval(period: TrendingPeriod): string {
 export const fetchTrending = async (period: TrendingPeriod = "daily", limit = 50): Promise<{ data: TokenEvent[] }> => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
-  const { data } = await get<unknown>("/trending", { chain: c, limit, interval: trendingInterval(period) }, 5_000);
-  return { data: rows(data).map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address) };
+  const interval = trendingInterval(period);
+  const { data } = await get<unknown>("/trending", { chain: c, limit, interval }, 5_000);
+  // A row's `window` is the ranking interval; the rows' volume, trades and
+  // change are 24h figures, so a shorter window is left for enrichment to fill.
+  const list = rows(data).map((r) => {
+    if (interval === "24h") return r;
+    const { window: _window, ...rest } = r;
+    return rest;
+  });
+  return { data: list.map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address) };
 };
 
 export interface SearchOptions {

@@ -9,7 +9,7 @@ import { ColumnHeader, ColumnPauseToggle, ColumnSoundToggle, ColumnSearchInput, 
 import { ColumnConfig } from "../ColumnConfig";
 import { useFilters } from "../../contexts/FiltersContext";
 import { dedupeByName } from "../../lib/activity";
-import { passesFilters } from "../../lib/tokenFilters";
+import { isFiltering, passesFilters } from "../../lib/tokenFilters";
 import { useHiddenMints } from "../../lib/hiddenTokens";
 import { useHiddenDevAddresses } from "../../lib/hiddenDevs";
 import { useFreezeOnHover } from "../../hooks/useFreezeOnHover";
@@ -23,10 +23,9 @@ interface Props {
 }
 
 export function MigrationColumn({ onSelect, maxHeight = "100%", titleSlot }: Props) {
-  const { get, platformString } = useFilters();
+  const { get } = useFilters();
   const f = get("migration");
-  const platform = platformString("migration");
-  const { tokens, loading, error } = useMigrationStream(platform);
+  const { tokens, loading, error } = useMigrationStream(f);
   const { selectedMint } = useSelectedToken();
   const solPrice = useNativeUsd();
   const visibleMints = useMemo(
@@ -70,7 +69,7 @@ export function MigrationColumn({ onSelect, maxHeight = "100%", titleSlot }: Pro
         {error && <Empty>{error}</Empty>}
         {loading && tokens.length === 0 && <LoadingRows />}
         {!loading && displayed.length === 0 && !error && (
-          <Empty>{tokens.length > 0 ? "No tokens match filters — adjust to see more" : "No migrations yet…"}</Empty>
+          <Empty>{tokens.length > 0 || isFiltering(f) ? "No tokens match filters — adjust to see more" : "No migrations yet…"}</Empty>
         )}
         {displayed.map((t, i) => (
           <TokenRow

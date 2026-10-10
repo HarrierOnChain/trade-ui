@@ -9,7 +9,7 @@ import { ColumnHeader, ColumnPauseToggle, ColumnSoundToggle, ColumnSearchInput, 
 import { ColumnConfig } from "../ColumnConfig";
 import { useFilters } from "../../contexts/FiltersContext";
 import { dedupeByName } from "../../lib/activity";
-import { passesFilters } from "../../lib/tokenFilters";
+import { isFiltering, passesFilters } from "../../lib/tokenFilters";
 import { useHiddenMints } from "../../lib/hiddenTokens";
 import { useHiddenDevAddresses } from "../../lib/hiddenDevs";
 import { useFreezeOnHover } from "../../hooks/useFreezeOnHover";
@@ -23,10 +23,9 @@ interface Props {
 }
 
 export function TrendingColumn({ onSelect, maxHeight = "100%", titleSlot }: Props) {
-  const { get, platformString } = useFilters();
+  const { get } = useFilters();
   const f = get("trending");
-  const platform = platformString("trending");
-  const { tokens, loading } = useAlertStream(platform);
+  const { tokens, loading } = useAlertStream(f);
   const { selectedMint } = useSelectedToken();
   const solPrice = useNativeUsd();
   const visibleMints = useMemo(
@@ -77,7 +76,7 @@ export function TrendingColumn({ onSelect, maxHeight = "100%", titleSlot }: Prop
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", maxHeight }} {...handlers}>
         {loading && tokens.length === 0 && <LoadingRows />}
         {!loading && displayed.length === 0 && (
-          <Empty>{tokens.length > 0 ? "No tokens match filters — adjust to see more" : "Waiting for alerts…"}</Empty>
+          <Empty>{tokens.length > 0 || isFiltering(f) ? "No tokens match filters — adjust to see more" : "Waiting for alerts…"}</Empty>
         )}
         {displayed.map((t, i) => (
           <TokenRow

@@ -1,31 +1,36 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RazeWebSocket, type WsEventType } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
 import { useChain } from "../contexts/ChainContext";
 import { useClientPageVisible } from "../contexts/ClientPageVisibility";
 import { mergeLiveFrame } from "../lib/streamMerge";
-import { platformAllowed } from "../lib/tokenFilters";
+import { isFiltering, passesFilters, type ColumnFilters } from "../lib/tokenFilters";
+import { noteRows } from "../lib/columnSeen";
 import { useTokenEnrichment } from "./useTokenEnrichment";
 import { useMetaEnrichment } from "./useMetaEnrichment";
 import type { TokenEvent } from "../types";
 
-/** Rows a column renders; the board itself holds more (the API's 50+). */
+/** Rows a column renders; the board itself holds more (the API's 100). */
 const MAX = 20;
 /** Coalesce a burst of board frames (the `new` board moves ~20×/s). */
 const FLUSH_MS = 150;
+/** The REST prime: `new` and `graduated` keep the latest 100 per chain. */
+const PRIME_LIMIT = 100;
 
 export interface BoardOptions {
-  /** `deploy` = board new, `migrating` = graduating, `migration` = graduated. */
+  /** `deploy` = board new, `migrating` = graduating, `migration` = graduated
+   *  (also the column's key). */
   event: Extract<WsEventType, "deploy" | "migrating" | "migration">;
   /** REST prime: the board as of now, before the socket's snapshot lands. */
-  fetch: (limit: number, platform?: string) => Promise<{ data: TokenEvent[] }>;
+  fetch: (limit: number) => Promise<{ data: TokenEvent[] }>;
   /** Column order (the API's own: newest, fullest, latest graduation). */
   order: (a: TokenEvent, b: TokenEvent) => number;
-  platform?: string;
+  /** The column's filters: a row that fails them does not take a slot. */
+  filters?: ColumnFilters;
 }
 
-function sameRow(a: TokenEvent, b: TokenEvent): boolean {
+export function sameRow(a: TokenEvent, b: TokenEvent): boolean {
   const x = a as unknown as Record<string, unknown>;
   const y = b as unknown as Record<string, unknown>;
   const keys = new Set([...Object.keys(x), ...Object.keys(y)]);
@@ -40,11 +45,14 @@ function sameRow(a: TokenEvent, b: TokenEvent): boolean {
  * (new → graduating → graduated) or drops off the end. REST only primes the
  * board once, before the snapshot arrives — nothing here polls.
  *
- * The full board lives in a ref; the column renders its top `MAX` in `order`,
- * so a removed row is replaced by the next one instead of leaving a hole.
- * Enriched fields (volume, bundle %, socials…) survive every live update.
+ * The full board lives in a ref; the column renders the top `MAX` rows, in
+ * `order`, that pass its filters, so a removed or filtered-out row is replaced
+ * by the next one instead of leaving a hole. Values a row does not carry yet
+ * (volume, safety… come from enrichment, which runs on visible rows) let it
+ * in; once enriched, a row that fails gives its slot to the next one. Enriched
+ * fields (volume, bundle %, socials…) survive every live update.
  */
-export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOptions) {
+export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions) {
   const { chainId } = useChain();
   const pageVisible = useClientPageVisible();
   const [tokens, setTokens] = useState<TokenEvent[]>([]);
@@ -61,24 +69,30 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
   const enrichMintsRef = useRef("");
   const orderRef = useRef(order);
   orderRef.current = order;
-  const platformRef = useRef(platform);
-  platformRef.current = platform;
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+  const filtersKey = JSON.stringify(filters ?? null);
 
   const render = () => {
     flushRef.current = null;
-    const wanted = [...boardRef.current.values()]
-      .filter((t) => platformAllowed(t.dex, platformRef.current))
-      .sort(orderRef.current)
-      .slice(0, MAX);
+    const f = filtersRef.current;
+    const gate = f && isFiltering(f) ? f : null;
     setTokens((prev) => {
       for (const t of prev) renderedRef.current.set(t.mint_address, t);
-      const next = wanted.map((t) => {
+      const rows = [...boardRef.current.values()].map((t) => {
         const old = renderedRef.current.get(t.mint_address);
+        return { t, old, view: old ? mergeLiveFrame(old, t) : t };
+      });
+      const wanted = (gate
+        ? rows.filter((r) => passesFilters(r.view, undefined, gate, { optimistic: true }))
+        : rows)
+        .sort((a, b) => orderRef.current(a.view, b.view))
+        .slice(0, MAX);
+      const next = wanted.map(({ t, old, view }) => {
         if (!old) return t;
-        const merged = mergeLiveFrame(old, t);
         // A row the live feed just added keeps its entry flag until rendered.
-        if (t.isNew && !prev.some((p) => p.mint_address === t.mint_address)) merged.isNew = true;
-        return sameRow(old, merged) ? old : merged;
+        if (t.isNew && !prev.some((p) => p.mint_address === t.mint_address)) view.isNew = true;
+        return sameRow(old, view) ? old : view;
       });
       if (renderedRef.current.size > 500) {
         const keep = new Set(boardRef.current.keys());
@@ -87,21 +101,23 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
       if (next.length === prev.length && next.every((t, i) => t === prev[i])) return prev;
       return next;
     });
-    const mintsKey = wanted.map((t) => t.mint_address).join(",");
-    if (mintsKey !== enrichMintsRef.current) {
-      // New rows in view: enrich them (batched, ≤50 per call).
-      const before = new Set(enrichMintsRef.current.split(","));
-      enrichMintsRef.current = mintsKey;
-      if (wanted.some((t) => !before.has(t.mint_address))) setEnrichKey((k) => k + 1);
-    }
   };
 
   const schedule = () => {
     if (flushRef.current != null) return;
     flushRef.current = setTimeout(render, FLUSH_MS);
   };
+  const scheduleRef = useRef(schedule);
+  scheduleRef.current = schedule;
 
-  // Reset + REST prime on chain / platform / visibility change.
+  // Enrichment patches the rendered rows; re-pick the visible set after each
+  // so a row that now fails a filter makes room.
+  const setEnriched = useCallback<React.Dispatch<React.SetStateAction<TokenEvent[]>>>((u) => {
+    setTokens(u);
+    scheduleRef.current();
+  }, []);
+
+  // Reset + REST prime on chain / visibility change.
   useEffect(() => {
     boardRef.current = new Map();
     renderedRef.current = new Map();
@@ -115,13 +131,14 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
     }
     let cancelled = false;
     setLoading(true);
-    fetch(50, platform)
+    fetch(PRIME_LIMIT)
       .then((res) => {
         // The socket's snapshot is newer; a late REST answer must not undo it.
         if (cancelled || snapshotSeenRef.current) return;
         for (const t of res.data) {
           if (t.mint_address) boardRef.current.set(t.mint_address, t);
         }
+        noteRows(event, res.data);
         render();
       })
       .catch((e) => {
@@ -130,7 +147,7 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainId, platform, pageVisible]);
+  }, [chainId, pageVisible]);
 
   // Live board.
   useEffect(() => {
@@ -151,6 +168,7 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
         }
         boardRef.current = next;
         snapshotSeenRef.current = true;
+        noteRows(event, rows);
         setError(null);
         setLoading(false);
         schedule();
@@ -166,6 +184,7 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
       const { kind: _k, type: _t, board: _b, ...row } = t;
       const had = boardRef.current.get(mint);
       boardRef.current.set(mint, had ? mergeLiveFrame(had, row) : { ...row, isNew: kind === "add" });
+      noteRows(event, [row]);
       schedule();
     });
     return () => {
@@ -179,14 +198,25 @@ export function useLaunchpadBoard({ event, fetch, order, platform }: BoardOption
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event, chainId, pageVisible]);
 
-  // Re-filter when the platform selection changes (no refetch needed).
+  // Re-pick the visible rows when the filters change (no refetch needed).
   useEffect(() => {
     schedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [platform]);
+  }, [filtersKey]);
 
-  useTokenEnrichment(tokens, setTokens, MAX, enrichKey);
-  useMetaEnrichment(tokens, setTokens, MAX, enrichKey);
+  // New rows in view: enrich them (batched, ≤50 per call). Rendered rows also
+  // carry what enrichment added, which tells the filter modal what exists.
+  useEffect(() => {
+    noteRows(event, tokens);
+    const mintsKey = tokens.map((t) => t.mint_address).join(",");
+    if (mintsKey === enrichMintsRef.current) return;
+    const before = new Set(enrichMintsRef.current.split(","));
+    enrichMintsRef.current = mintsKey;
+    if (tokens.some((t) => !before.has(t.mint_address))) setEnrichKey((k) => k + 1);
+  }, [event, tokens]);
+
+  useTokenEnrichment(tokens, setEnriched, MAX, enrichKey);
+  useMetaEnrichment(tokens, setEnriched, MAX, enrichKey);
 
   return { tokens, loading: pageVisible ? loading : false, error };
 }

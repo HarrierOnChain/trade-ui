@@ -15,6 +15,20 @@ export interface TokenEvent {
   bundlePercentage?: number;
   sniperPercentage?: number;
   creatorDeploys?: number;
+  /** The API's `safety` shares, in percent (supply or holders). */
+  top10Percent?: number;
+  devPercent?: number;
+  insidersPercent?: number;
+  freshWalletsPercent?: number;
+  botsPercent?: number;
+  bluechipPercent?: number;
+  /** EVM transfer taxes, percent. */
+  buyTaxPercent?: number;
+  sellTaxPercent?: number;
+  honeypot?: boolean;
+  /** Solana: nobody can mint more / freeze holders. */
+  mintRenounced?: boolean;
+  freezeRenounced?: boolean;
   signer?: string;
   slot?: number;
   priceChange?: number;
@@ -33,6 +47,7 @@ export interface TokenEvent {
   website?: string | null;
   twitter?: string | null;
   telegram?: string | null;
+  discord?: string | null;
   created_at: string;
   migrated_at?: string;
   isNew?: boolean;

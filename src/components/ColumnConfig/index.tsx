@@ -1,7 +1,6 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Icon, Modal, PlatformLogo, SolSymbol, Tooltip, Btn, ModalHeader } from "../atoms";
-import { platforms } from "../PlatformFilter";
 import {
   COLUMN_META,
   countActive,
@@ -10,6 +9,18 @@ import {
   type ColumnKey,
   type Range,
 } from "../../contexts/FiltersContext";
+import { useChain } from "../../contexts/ChainContext";
+import {
+  COLUMN_KEYS,
+  FLAG_FILTERS,
+  RANGE_FILTERS,
+  isRangeSet,
+  tabCounts,
+  type FlagKey,
+  type FlagSpec,
+  type RangeSpec,
+} from "../../lib/tokenFilters";
+import { platformLabel, useColumnSeen, type ColumnSeen } from "../../lib/columnSeen";
 
 type SubTab = "protocols" | "audit" | "metrics" | "socials";
 
@@ -27,7 +38,8 @@ interface Props {
 export function ColumnConfig({ column }: Props) {
   const [open, setOpen] = useState(false);
   const { get } = useFilters();
-  const active = countActive(get(column));
+  const { chainId } = useChain();
+  const active = countActive(get(column), chainId);
 
   return (
     <>
@@ -74,17 +86,18 @@ function FiltersModal({
   initialColumn: ColumnKey;
 }) {
   const { get, update, reset, filters } = useFilters();
+  const { chainId } = useChain();
   const [activeCol, setActiveCol] = useState<ColumnKey>(initialColumn);
   const [subTab, setSubTab] = useState<SubTab>("protocols");
+  const seen = useColumnSeen(chainId, activeCol);
 
   useEffect(() => { if (open) setActiveCol(initialColumn); }, [open, initialColumn]);
 
   const f = get(activeCol);
   const patch = (p: Partial<ColumnFilters>) => update(activeCol, p);
   const totalActive = useMemo(
-    () => (["trending", "deploy", "migrating", "migration"] as ColumnKey[])
-      .reduce((sum, k) => sum + countActive(filters[k]), 0),
-    [filters],
+    () => COLUMN_KEYS.reduce((sum, k) => sum + countActive(filters[k], chainId), 0),
+    [filters, chainId],
   );
 
   return (
@@ -116,7 +129,7 @@ function FiltersModal({
           onExclude={(v) => patch({ exclude: v })}
         />
 
-        <SubTabsRow active={subTab} onChange={setSubTab} filters={f} />
+        <SubTabsRow active={subTab} onChange={setSubTab} filters={f} chain={chainId} />
       </div>
 
       {/* ── panel (scrollable) ───────────────────────────────────── */}
@@ -125,7 +138,7 @@ function FiltersModal({
         maxHeight: "min(52vh, 440px)",
         overflow: "auto",
       }}>
-        <PanelSwitcher subTab={subTab} filters={f} patch={patch} />
+        <PanelSwitcher subTab={subTab} filters={f} patch={patch} seen={seen} chain={chainId} />
       </div>
 
       {/* ── footer ───────────────────────────────────────────────── */}
@@ -145,19 +158,20 @@ function FiltersModal({
   );
 }
 
-function PanelSwitcher({
-  subTab, filters, patch,
-}: {
-  subTab: SubTab;
+interface PanelProps {
   filters: ColumnFilters;
   patch: (p: Partial<ColumnFilters>) => void;
-}) {
+  seen: ColumnSeen;
+  chain: string;
+}
+
+function PanelSwitcher({ subTab, ...props }: PanelProps & { subTab: SubTab }) {
   return (
     <div key={subTab} style={{ animation: "slideIn 180ms ease-out" }}>
-      {subTab === "protocols" && <ProtocolsPanel filters={filters} patch={patch} />}
-      {subTab === "audit"     && <AuditPanel     filters={filters} patch={patch} />}
-      {subTab === "metrics"   && <MetricsPanel   filters={filters} patch={patch} />}
-      {subTab === "socials"   && <SocialsPanel   filters={filters} patch={patch} />}
+      {subTab === "protocols" && <ProtocolsPanel {...props} />}
+      {subTab === "audit"     && <FieldsPanel tab="audit" {...props} />}
+      {subTab === "metrics"   && <FieldsPanel tab="metrics" {...props} />}
+      {subTab === "socials"   && <SocialsPanel {...props} />}
     </div>
   );
 }
@@ -201,7 +215,8 @@ function ColumnSegmented({
   active, onChange,
 }: { active: ColumnKey; onChange: (c: ColumnKey) => void }) {
   const { get } = useFilters();
-  const keys: ColumnKey[] = ["trending", "deploy", "migrating", "migration"];
+  const { chainId } = useChain();
+  const keys = COLUMN_KEYS;
   return (
     <div style={{
       padding: "12px 20px",
@@ -220,7 +235,7 @@ function ColumnSegmented({
       }}>
         {keys.map((key) => {
           const isActive = key === active;
-          const n = countActive(get(key));
+          const n = countActive(get(key), chainId);
           return (
             <button
               key={key}
@@ -365,9 +380,9 @@ function KeywordField({
 // ═══ sub-tabs ════════════════════════════════════════════════════════════════
 
 function SubTabsRow({
-  active, onChange, filters,
-}: { active: SubTab; onChange: (t: SubTab) => void; filters: ColumnFilters }) {
-  const counts = subTabCounts(filters);
+  active, onChange, filters, chain,
+}: { active: SubTab; onChange: (t: SubTab) => void; filters: ColumnFilters; chain: string }) {
+  const counts = tabCounts(filters, chain);
   return (
     <div style={{
       display: "flex", gap: 4,
@@ -417,66 +432,67 @@ function SubTabsRow({
   );
 }
 
-function subTabCounts(f: ColumnFilters): Record<SubTab, number> {
-  const rangeN = (r: Range) => (r.min != null || r.max != null ? 1 : 0);
-  return {
-    protocols: f.platforms.length !== platforms().length ? 1 : 0,
-    audit:
-      rangeN(f.bundlePercentage) + rangeN(f.sniperPercentage) +
-      rangeN(f.creatorDeploys),
-    metrics:
-      rangeN(f.marketCap) + rangeN(f.volume24h) + rangeN(f.liquidity) +
-      rangeN(f.priceChange) + rangeN(f.tradeCount) + rangeN(f.holders) +
-      rangeN(f.ageMinutes),
-    socials:
-      (f.requireTwitter ? 1 : 0) + (f.requireWebsite ? 1 : 0) + (f.requireTelegram ? 1 : 0),
-  };
-}
-
 // ═══ panels ══════════════════════════════════════════════════════════════════
 
-function ProtocolsPanel({
-  filters, patch,
-}: { filters: ColumnFilters; patch: (p: Partial<ColumnFilters>) => void }) {
-  const selected = new Set(filters.platforms);
-  function toggle(v: string) {
-    const next = new Set(selected);
-    if (next.has(v)) {
-      if (next.size === 1) return;
-      next.delete(v);
-    } else {
-      next.add(v);
-    }
-    patch({ platforms: platforms().map((p) => p.value).filter((p) => next.has(p)) });
+function PanelNote({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="mono" style={{ fontSize: 11, color: "var(--paper-3)" }}>{children}</span>
+  );
+}
+
+/**
+ * Launchpads this column has received on this chain, most frequent first
+ * (lib/columnSeen), plus any still hidden that have not shown up lately.
+ * Everything starts shown; a launchpad that appears later shows too.
+ */
+function ProtocolsPanel({ filters, patch, seen, chain }: PanelProps) {
+  const hidden = new Set(filters.hiddenPlatforms[chain] ?? []);
+  const list = [...seen.platforms];
+  for (const key of hidden) if (!list.some((p) => p.key === key)) list.push({ key, name: key });
+  const setHidden = (next: Set<string>) =>
+    patch({ hiddenPlatforms: { ...filters.hiddenPlatforms, [chain]: [...next] } });
+  function toggle(key: string) {
+    const next = new Set(hidden);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setHidden(next);
   }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
       }}>
         <span className="eyebrow">Launchpads</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--paper-3)" }}>
-          {selected.size}/{platforms().length}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          {hidden.size > 0 && (
+            <button
+              onClick={() => setHidden(new Set())}
+              style={{
+                fontSize: 10, color: "var(--paper-3)",
+                fontFamily: "var(--font-mono)",
+                textTransform: "uppercase", letterSpacing: "0.08em",
+                background: "transparent", border: "none", cursor: "pointer",
+              }}
+            >Show all</button>
+          )}
+          <span className="mono" style={{ fontSize: 11, color: "var(--paper-3)" }}>
+            {list.length - hidden.size}/{list.length}
+          </span>
         </span>
       </div>
-      {platforms().length === 0 && (
-        <span className="mono" style={{ fontSize: 11, color: "var(--paper-3)" }}>
-          No launchpad filters on this chain.
-        </span>
+      {list.length === 0 && (
+        <PanelNote>No launchpads seen in this column on this chain yet.</PanelNote>
       )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        {platforms().map((p) => {
-          const isOn = selected.has(p.value);
-          return (
-            <ProtocolChip
-              key={p.value}
-              label={p.label}
-              value={p.value}
-              isOn={isOn}
-              onClick={() => toggle(p.value)}
-            />
-          );
-        })}
+        {list.map((p) => (
+          <ProtocolChip
+            key={p.key}
+            label={platformLabel(p.name)}
+            value={p.name}
+            isOn={!hidden.has(p.key)}
+            onClick={() => toggle(p.key)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -513,54 +529,99 @@ function ProtocolChip({
         opacity: isOn ? 1 : 0.72,
         transition: "opacity 140ms",
       }}>
-        <PlatformLogo platform={value} size={18} />
+        {value && <PlatformLogo platform={value} size={18} />}
       </span>
-      <span style={{ flex: 1, fontWeight: isOn ? 500 : 400 }}>{label}</span>
+      <span style={{ flex: 1, fontWeight: isOn ? 500 : 400, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
       <Check on={isOn} />
     </button>
   );
 }
 
-// ─── Audit panel ───────────────────────────────────────────────────────────
+/** A filter is offered where the column's rows carry its field (or it is set). */
+const offered = (seen: ColumnSeen, set: boolean, key: string) => set || seen.fields.has(key);
 
-function AuditPanel({
-  filters, patch,
-}: { filters: ColumnFilters; patch: (p: Partial<ColumnFilters>) => void }) {
+// ─── Audit / Metrics panels ───────────────────────────────────────────────
+
+function FieldsPanel({ tab, filters, patch, seen }: PanelProps & { tab: "audit" | "metrics" }) {
+  const ranges = RANGE_FILTERS.filter((s) => s.tab === tab && offered(seen, isRangeSet(filters[s.key]), s.key));
+  const flags = FLAG_FILTERS.filter((s) => s.tab === tab && offered(seen, filters[s.key], s.key));
+  if (ranges.length === 0 && flags.length === 0) {
+    return <PanelNote>The API sends none of these fields for this column on this chain yet.</PanelNote>;
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <RangeField label="Bundle"        suffix="%" hint="Supply held by coordinated bundlers"
-        r={filters.bundlePercentage}   onChange={(r) => patch({ bundlePercentage: r })} />
-      <RangeField label="Sniper"        suffix="%" hint="Supply snagged in the first seconds"
-        r={filters.sniperPercentage}   onChange={(r) => patch({ sniperPercentage: r })} />
-      <RangeField label="Dev Deploys"               hint="How many tokens this dev has launched"
-        r={filters.creatorDeploys}     onChange={(r) => patch({ creatorDeploys: r })} />
+      {flags.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {flags.map((s) => (
+            <FlagPill key={s.key} spec={s} on={filters[s.key]} onChange={(v) => patch({ [s.key]: v } as Partial<ColumnFilters>)} />
+          ))}
+        </div>
+      )}
+      {ranges.map((s) => (
+        <SpecRange key={s.key} spec={s} r={filters[s.key]} onChange={(r) => patch({ [s.key]: r } as Partial<ColumnFilters>)} />
+      ))}
     </div>
   );
 }
 
-// ─── Metrics panel ─────────────────────────────────────────────────────────
-
-function MetricsPanel({
-  filters, patch,
-}: { filters: ColumnFilters; patch: (p: Partial<ColumnFilters>) => void }) {
+function SpecRange({ spec, r, onChange }: { spec: RangeSpec; r: Range; onChange: (r: Range) => void }) {
+  const unit = spec.unit;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <RangeField label="Market Cap"        prefix="$"        r={filters.marketCap}       onChange={(r) => patch({ marketCap: r })} />
-      <RangeField label="Volume 24h"        suffix={<SolSymbol size={10} />} r={filters.volume24h}       onChange={(r) => patch({ volume24h: r })} />
-      <RangeField label="Liquidity"         prefix="$"        r={filters.liquidity}       onChange={(r) => patch({ liquidity: r })} />
-      <RangeField label="Price Change"      suffix="%"        r={filters.priceChange}     onChange={(r) => patch({ priceChange: r })} />
-      <RangeField label="Trades"                              r={filters.tradeCount}      onChange={(r) => patch({ tradeCount: r })} />
-      <RangeField label="Holders"                             r={filters.holders}         onChange={(r) => patch({ holders: r })} />
-      <RangeField label="Age"               suffix="min"      r={filters.ageMinutes}      onChange={(r) => patch({ ageMinutes: r })} />
-    </div>
+    <RangeField
+      label={spec.label}
+      hint={spec.hint}
+      prefix={unit === "usd" ? "$" : undefined}
+      suffix={
+        unit === "pct" ? "%"
+          : unit === "min" ? "min"
+          : unit === "native" ? <SolSymbol size={10} />
+          : undefined
+      }
+      r={r}
+      onChange={onChange}
+    />
+  );
+}
+
+function FlagPill({ spec, on, onChange }: { spec: FlagSpec; on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <Tooltip content={spec.hint ?? spec.label}>
+    <button
+      onClick={() => onChange(!on)}
+      aria-pressed={on}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 8,
+        padding: "5px 10px 5px 6px",
+        background: on ? "var(--accent-w)" : "transparent",
+        border: `1px solid ${on ? "var(--accent)" : "var(--line-soft)"}`,
+        borderRadius: "var(--r-5)",
+        color: on ? "var(--paper)" : "var(--paper-3)",
+        fontSize: "var(--t-12)", fontFamily: "var(--font-ui)",
+        cursor: "pointer",
+        transition: "all 140ms",
+      }}
+    >
+      <Switch on={on} />
+      {spec.label}
+    </button>
+    </Tooltip>
   );
 }
 
 // ─── Socials panel ─────────────────────────────────────────────────────────
 
-function SocialsPanel({
-  filters, patch,
-}: { filters: ColumnFilters; patch: (p: Partial<ColumnFilters>) => void }) {
+const SOCIAL_ICON: Partial<Record<FlagKey, (s?: number) => React.ReactNode>> = {
+  requireTwitter: Icon.x,
+  requireWebsite: Icon.website,
+  requireTelegram: Icon.telegram,
+  requireDiscord: Icon.discord,
+};
+
+function SocialsPanel({ filters, patch, seen }: PanelProps) {
+  const flags = FLAG_FILTERS.filter((s) => s.tab === "socials" && offered(seen, filters[s.key], s.key));
+  if (flags.length === 0) {
+    return <PanelNote>No token in this column has carried links on this chain yet.</PanelNote>;
+  }
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div>
@@ -569,25 +630,16 @@ function SocialsPanel({
           Token must have the selected links set in its metadata.
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-        <SocialCard
-          label="Twitter"
-          on={filters.requireTwitter}
-          onChange={(v) => patch({ requireTwitter: v })}
-          icon={Icon.x(16)}
-        />
-        <SocialCard
-          label="Website"
-          on={filters.requireWebsite}
-          onChange={(v) => patch({ requireWebsite: v })}
-          icon={Icon.website(16)}
-        />
-        <SocialCard
-          label="Telegram"
-          on={filters.requireTelegram}
-          onChange={(v) => patch({ requireTelegram: v })}
-          icon={Icon.telegram(16)}
-        />
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(flags.length, 4)}, 1fr)`, gap: 8 }}>
+        {flags.map((s) => (
+          <SocialCard
+            key={s.key}
+            label={s.label}
+            on={filters[s.key]}
+            onChange={(v) => patch({ [s.key]: v } as Partial<ColumnFilters>)}
+            icon={SOCIAL_ICON[s.key]?.(16)}
+          />
+        ))}
       </div>
     </div>
   );

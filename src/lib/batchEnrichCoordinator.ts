@@ -17,6 +17,17 @@ export interface BatchEnrichEntry {
   sniper_percentage?: number;
   /** Tokens the creator launched. */
   creatorDeploys?: number;
+  /** Safety shares, percent. */
+  top10Percent?: number;
+  devPercent?: number;
+  insidersPercent?: number;
+  freshWalletsPercent?: number;
+  botsPercent?: number;
+  bluechipPercent?: number;
+  twitter?: string;
+  website?: string;
+  telegram?: string;
+  discord?: string;
   signer?: string;
   platform?: string;
 }
