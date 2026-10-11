@@ -61,7 +61,7 @@ export function StatusFooter() {
           overflow: "hidden",
         }}
       >
-        <FooterNativePrices compact />
+        <FooterNativePrices />
         <div style={{ flex: 1, minWidth: 0 }} />
         <FooterTickerToggle />
         <FooterNotificationsButton />
@@ -92,6 +92,7 @@ export function StatusFooter() {
     >
       <FooterReadout label="FPS" value={fps ?? "..."} valueColor={fpsColor} />
       <FooterDivider />
+      <FooterNativePrices trailingDivider />
       <div
         style={{
           flex: 1,
@@ -104,7 +105,6 @@ export function StatusFooter() {
       >
         <HoldingsCarousel solPrice={solPrice} />
       </div>
-      <FooterNativePrices leadingDivider />
       {/* Always rendered — it hosts the Chain Health popup on hover. The
           migration FDV is chain-aware ("—" on chains with no bonding curve). */}
       <FooterDivider />
@@ -301,7 +301,13 @@ function fmtSpot(price: number): string {
   return "$" + price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function FooterNativePrices({ compact = false, leadingDivider = false }: { compact?: boolean; leadingDivider?: boolean }) {
+function FooterNativePrices({
+  leadingDivider = false,
+  trailingDivider = false,
+}: {
+  leadingDivider?: boolean;
+  trailingDivider?: boolean;
+}) {
   const spots = useNativeSpots();
   const shown = NATIVE_FOOTER.filter((row) => spots[row.spot] != null);
   if (shown.length === 0) return null;
@@ -311,14 +317,15 @@ function FooterNativePrices({ compact = false, leadingDivider = false }: { compa
       {shown.map((row, i) => (
         <React.Fragment key={row.spot}>
           {i > 0 && <FooterDivider />}
-          <FooterNativePrice chainId={row.chainId} price={spots[row.spot]!} compact={compact} />
+          <FooterNativePrice chainId={row.chainId} price={spots[row.spot]!} />
         </React.Fragment>
       ))}
+      {trailingDivider && <FooterDivider />}
     </>
   );
 }
 
-function FooterNativePrice({ chainId, price, compact = false }: { chainId: ChainId; price: number; compact?: boolean }) {
+function FooterNativePrice({ chainId, price }: { chainId: ChainId; price: number }) {
   const chain = CHAINS[chainId];
   const label = nativeSymbol(chainId);
   return (
@@ -327,9 +334,6 @@ function FooterNativePrice({ chainId, price, compact = false }: { chainId: Chain
         <span style={{ display: "inline-flex", alignItems: "center", color: "var(--paper-4)" }}>
           <ChainIcon id={chainId} size={11} />
         </span>
-        {!compact && (
-          <span className="mono" style={{ fontSize: 9, color: "var(--paper-4)", letterSpacing: "0.04em" }}>{label}</span>
-        )}
         <span className="mono" style={{ color: "var(--buy)", fontSize: 11, fontWeight: 500 }}>
           {fmtSpot(price)}
         </span>
@@ -628,7 +632,7 @@ function HoldingsCarousel({ solPrice }: { solPrice: number | null }) {
       className="marquee-mask"
       style={{
         // Fill the parent slot — StatusFooter reserves all free row space
-        // between FPS and the right-side stats for this carousel.
+        // between the native prices and the right-side stats for this carousel.
         flex: 1,
         width: "100%",
         minWidth: 0,

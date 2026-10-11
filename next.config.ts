@@ -11,7 +11,10 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.resolve(__dirname),
   reactStrictMode: false, // Prevent double-mount of the chart widget
-  transpilePackages: ["@razedotbot/charts"],
+  // Charts is a browser widget. Bundling it into the server dev build names a
+  // vendor chunk `vendor-chunks/@razedotbot.js` that webpack never writes, so
+  // the static-paths worker 500s on /token. Require the published CJS instead.
+  serverExternalPackages: ["@razedotbot/charts"],
   // Token images are plain <img> tags from many hosts; no next/image, so no
   // optimizer (and no native image library in the bundle).
   images: { unoptimized: true },
