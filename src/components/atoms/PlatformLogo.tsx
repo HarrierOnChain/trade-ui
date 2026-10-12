@@ -25,6 +25,10 @@ function platformLogoSrc(platform?: string | null): string | null {
   if (exact) return `/platforms/${exact[1]}`;
 
   const value = raw.toLowerCase();
+  // The API's venue ids of a pool (`pool.dex`), exactly: `pump_amm` is
+  // PumpSwap, not the Pump.fun curve the "pump" substring below would pick.
+  if (value === "pump_amm") return `/platforms/${PLATFORM_ICONS.PumpSwap}`;
+  if (value === "easya kickstart" || value === "kickstart") return `/platforms/kickstart.jpg`;
   // Substring aliases for loose labels ("pumpfun", "letsbonk", …).
   // "pumpswap" contains "pump", so it MUST be checked before the generic pump branch.
   if (value.includes("pumpswap")) return `/platforms/${PLATFORM_ICONS.PumpSwap}`;

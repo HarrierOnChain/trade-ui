@@ -278,7 +278,10 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
 
   // The Migration Threshold line is Pump.fun's graduation level: only drawn
   // while the token is still on its bonding curve.
-  const onBondingCurve = getActiveChain() === "sol" && info?.dex === "Pumpfun" && info?.graduated === false;
+  // On a launchpad curve whose graduation market cap the API reads (Pump.fun,
+  // Pump Mayhem, LaunchLab, Meteora DBC): the chart's Migration Threshold.
+  const graduationMarketCapUsd = info?.graduationMarketCapUsd ?? null;
+  const onBondingCurve = info?.graduated === false && graduationMarketCapUsd != null;
 
   // The API's share of the ten largest holders (pools, curves and burns left out).
   const top10Pct = info?.top10Percent ?? 0;
@@ -941,6 +944,7 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
                   solPrice={solPrice}
                   supply={supply}
                   onBondingCurve={onBondingCurve}
+                  graduationMarketCapUsd={graduationMarketCapUsd}
                   onFilterTimestamp={(range) => {
                     handleFilterTimestampFromChart(range);
                     setMobileSection("transactions");
@@ -1111,6 +1115,7 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
                 solPrice={solPrice}
                 supply={supply}
                 onBondingCurve={onBondingCurve}
+                graduationMarketCapUsd={graduationMarketCapUsd}
                 onFilterTimestamp={handleFilterTimestampFromChart}
                 rightPanelVisible={tradesSidebarVisible}
                 onToggleRightPanel={toggleTradesSidebar}

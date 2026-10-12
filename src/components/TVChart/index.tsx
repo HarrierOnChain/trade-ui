@@ -77,9 +77,12 @@ interface Props {
   /** Token supply — used to convert the threshold market cap to a per-token
    *  price when the chart is in price mode. */
   supply?: number | null;
-  /** The token is still on a Pump.fun bonding curve: only then does the
-   *  Migration Threshold line mean something. */
+  /** The token is still on a launchpad curve: only then does the Migration
+   *  Threshold line mean something. */
   onBondingCurve?: boolean;
+  /** The market cap the token graduates at, USD (the API's): the Migration
+   *  Threshold line's level. */
+  graduationMarketCapUsd?: number | null;
   /** Right-click chart → "Filter Timestamp" applies this bar's time range. */
   onFilterTimestamp?: (range: { minMs: number; maxMs: number }) => void;
   /** Current visibility of the column to the right of the chart (trades tape).
@@ -128,8 +131,8 @@ const MIGRATION_COLOR = MARK_COLORS.migration;
 // the dropdown as a toggle; its underlying data is fed by the Transactions
 // filter, and when no filter is set there's simply nothing to draw. `ath`
 // pulls its level from the chart's bar history via the datafeed.
-// `migration_threshold` is a fixed reference price (`solPrice × 411`,
-// matching the footer's bonding-curve readout) — no underlying marks.
+// `migration_threshold` is the token's graduation market cap (the API's,
+// read from its curve on chain) — no underlying marks.
 const LINE_KINDS: LineKind[] = ["user", "filtered", "ath", "migration_threshold"];
 const LINE_LABELS: Record<LineKind, string> = {
   user: "My Wallets",
@@ -137,13 +140,6 @@ const LINE_LABELS: Record<LineKind, string> = {
   ath: "All-Time High",
   migration_threshold: "Migration Threshold",
 };
-// SOL-denominated reference for the migration / bonding-curve graduation
-// level. Derived from Pump.fun's constant-product curve: at ~85 SOL real
-// deposit, virtual reserves give ~411 SOL of fully-diluted market cap
-// (k = 30 × 1.073e9; (30+85) × tokens_left = k → mcap ≈ 411 SOL).
-// Mirrors `bondingCurve = solPrice × 411` in StatusFooter.tsx so the
-// line on the chart and the readout in the footer stay in lockstep.
-const MIGRATION_THRESHOLD_SOL = 411;
 
 function readStoredLineKinds(): Set<LineKind> {
   const all = new Set<LineKind>(LINE_KINDS);
@@ -213,6 +209,7 @@ export const TVChart = memo(function TVChart({
   solPrice,
   supply,
   onBondingCurve = false,
+  graduationMarketCapUsd = null,
   onFilterTimestamp,
   rightPanelVisible,
   onToggleRightPanel,
@@ -277,13 +274,15 @@ export const TVChart = memo(function TVChart({
   const currencyRef = useRef<"usd" | "sol">(currencyProp ?? "usd");
   const displayRef = useRef<"mcap" | "price">(displayProp ?? "mcap");
   const onBondingCurveRef = useRef(onBondingCurve);
+  const graduationMcapRef = useRef<number | null>(graduationMarketCapUsd);
   useEffect(() => {
     solPriceRef.current = solPrice ?? null;
     supplyRef.current = supply ?? null;
     currencyRef.current = currencyProp ?? currencyRef.current;
     displayRef.current = displayProp ?? displayRef.current;
+    graduationMcapRef.current = graduationMarketCapUsd;
     paintLinesRef.current?.();
-  }, [solPrice, supply, currencyProp, displayProp]);
+  }, [solPrice, supply, currencyProp, displayProp, graduationMarketCapUsd]);
 
   useEffect(() => {
     onBondingCurveRef.current = onBondingCurve;
@@ -550,24 +549,23 @@ export const TVChart = memo(function TVChart({
             time: ath.time,
           });
         }
-        // Migration threshold — fixed reference price equal to the
-        // bonding-curve graduation level (`MIGRATION_THRESHOLD_SOL` SOL,
-        // matching the footer's `solPrice × 411` USD readout). Converted
-        // to whatever scale the chart is currently rendering in.
-        if (enabled.has("migration_threshold") && onBondingCurveRef.current) {
+        // Migration threshold — the token's graduation market cap (USD, the
+        // API's), converted to whatever scale the chart is rendering in.
+        const gm = graduationMcapRef.current ?? 0;
+        if (enabled.has("migration_threshold") && onBondingCurveRef.current && gm > 0) {
           const sp = solPriceRef.current ?? 0;
           const sup = supplyRef.current ?? 0;
           const cur = currencyRef.current;
           const disp = displayRef.current;
           let price = 0;
           if (cur === "usd" && disp === "mcap") {
-            price = sp > 0 ? sp * MIGRATION_THRESHOLD_SOL : 0;
+            price = gm;
           } else if (cur === "usd" && disp === "price") {
-            price = sp > 0 && sup > 0 ? (sp * MIGRATION_THRESHOLD_SOL) / sup : 0;
+            price = sup > 0 ? gm / sup : 0;
           } else if (cur === "sol" && disp === "mcap") {
-            price = MIGRATION_THRESHOLD_SOL;
+            price = sp > 0 ? gm / sp : 0;
           } else {
-            price = sup > 0 ? MIGRATION_THRESHOLD_SOL / sup : 0;
+            price = sp > 0 && sup > 0 ? gm / sp / sup : 0;
           }
           if (price > 0) {
             desired.set("migration_threshold:level", {

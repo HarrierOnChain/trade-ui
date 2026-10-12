@@ -2,8 +2,25 @@
 // Shared Raze API types
 // ─────────────────────────────────────────────
 
+/** A stats window's opening price and change (the API's `Window`). */
+export interface TokenWindow {
+  openPriceUsd?: number;
+  priceChangePercent?: number;
+}
+
+export type WindowKey = "1m" | "5m" | "1h" | "6h" | "24h";
+
 export interface TokenEvent {
   mint_address: string;
+  /** The API's price, USD. */
+  priceUsd?: number;
+  /** The market cap the token will have when its curve completes (the
+   *  API's `launchpad.graduationMarketCapUsd`); null off a curve it reads. */
+  graduationMarketCapUsd?: number;
+  /** The token's stats windows: each one's opening price and change. */
+  windows?: Partial<Record<WindowKey, TokenWindow>>;
+  /** A trending row's place in the ranking (1 = first). */
+  rank?: number;
   /** Catalog slug when known (sol, eth, bsc, base, robinhood). */
   chain?: string;
   name: string;
@@ -21,7 +38,6 @@ export interface TokenEvent {
   insidersPercent?: number;
   freshWalletsPercent?: number;
   botsPercent?: number;
-  bluechipPercent?: number;
   /** EVM transfer taxes, percent. */
   buyTaxPercent?: number;
   sellTaxPercent?: number;
@@ -239,31 +255,6 @@ export interface ChainSentiment {
   score: number;
   buyRatio: number;
   trades: number;
-}
-
-export interface PriceChangePeriod {
-  change: number;
-  price: number;
-  trades: number;
-  volume: number;
-}
-
-export interface TokenPriceChanges {
-  mint: string;
-  currentPrice: number;
-  currentPriceUSD: string | null;
-  oldestPrice?: number;
-  oldestTime?: string;
-  tokenAgeSeconds?: number;
-  /** The API's windows: 1m, 5m, 1h, 6h, 24h (no 4h / 12h). */
-  changes: {
-    "1m"?: PriceChangePeriod | null;
-    "5m"?: PriceChangePeriod | null;
-    "1h"?: PriceChangePeriod | null;
-    "6h"?: PriceChangePeriod | null;
-    "24h"?: PriceChangePeriod | null;
-  };
-  solPriceUSD?: number;
 }
 
 export type Timeframe = "1s" | "5s" | "30s" | "1m" | "5m" | "15m" | "1h";

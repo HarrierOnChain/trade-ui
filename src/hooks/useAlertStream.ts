@@ -1,39 +1,36 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchTrending } from "../api/client";
+import { fetchTrending, trendingInterval } from "../api/client";
+import { RazeWebSocket } from "../api/websocket";
 import { useChain } from "../contexts/ChainContext";
 import { isFiltering, passesFilters, type ColumnFilters } from "../lib/tokenFilters";
 import { noteRows } from "../lib/columnSeen";
 import { mergeLiveFrame } from "../lib/streamMerge";
 import { sameRow } from "./useLaunchpadBoard";
-import { useTokenEnrichment } from "./useTokenEnrichment";
 import type { TokenEvent, TrendingPeriod } from "../types";
 
 /** Rows the column renders. */
 const MAX = 20;
-/** Ranking depth read (the API's maximum), so filters have rows to pick from. */
+/** Ranking depth (the API's maximum), so filters have rows to pick from. */
 const RANK_LIMIT = 100;
-/**
- * Trending has no live channel on the API (the old `discovery` stream is
- * gone), so the ranking is re-read on this interval — the one REST refresh
- * that is not priming a stream. Prices on the rows still tick live through
- * useLiveTradePrices.
- */
-const REFRESH_MS = 30_000;
+const SORT = "trades";
+
+const byRank = (a: TokenEvent, b: TokenEvent) => (a.rank ?? Infinity) - (b.rank ?? Infinity);
 
 /**
- * The trending ranking: the top `MAX` rows, in the server's order, that pass
- * the column's filters. As on the boards, a value a row does not carry yet
- * lets it in until enrichment fills it.
+ * The trending ranking: the top `MAX` rows, in the API's order, that pass the
+ * column's filters. One REST read primes the column; the `trending` channel
+ * then sends the ranking (`snapshot`, each row with its `rank`) and its
+ * changes (`add`, `update`, `remove`) at every read of the ranking. Rows carry
+ * the whole token row (stats, safety, pool); a value the API has not measured
+ * yet (null) lets a row through the filters.
  */
 export function useAlertStream(filters?: ColumnFilters, period: TrendingPeriod = "recent") {
   const { chainId } = useChain();
   const [tokens, setTokens] = useState<TokenEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [enrichKey, setEnrichKey] = useState(0);
   const rankRef = useRef<TokenEvent[]>([]);
   const renderedRef = useRef(new Map<string, TokenEvent>());
-  const seenRef = useRef(new Set<string>());
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const filtersKey = JSON.stringify(filters ?? null);
@@ -45,7 +42,7 @@ export function useAlertStream(filters?: ColumnFilters, period: TrendingPeriod =
       for (const t of prev) renderedRef.current.set(t.mint_address, t);
       const next: TokenEvent[] = [];
       for (const t of rankRef.current) {
-        // Keep enriched fields and row identity across refreshes.
+        // Keep row identity across frames that change nothing it shows.
         const old = renderedRef.current.get(t.mint_address);
         const view = old ? mergeLiveFrame(old, t) : t;
         if (gate && !passesFilters(view, undefined, gate, { optimistic: true })) continue;
@@ -61,57 +58,68 @@ export function useAlertStream(filters?: ColumnFilters, period: TrendingPeriod =
     });
   }, []);
 
-  const setEnriched = useCallback<React.Dispatch<React.SetStateAction<TokenEvent[]>>>((u) => {
-    setTokens(u);
-    select();
-  }, [select]);
-
   useEffect(() => {
     let cancelled = false;
+    // A snapshot from the channel is newer than any REST answer still out.
+    let live = false;
     setLoading(true);
-    seenRef.current = new Set();
     rankRef.current = [];
     renderedRef.current = new Map();
     setTokens([]);
 
-    const load = (initial: boolean) => {
-      fetchTrending(period, RANK_LIMIT)
-        .then((res) => {
-          if (cancelled) return;
-          const seen = new Set<string>();
-          const list = res.data.filter((t) => {
-            if (!t.mint_address || seen.has(t.mint_address)) return false;
-            seen.add(t.mint_address);
-            return true;
-          });
-          const fresh = list.some((t) => !seenRef.current.has(t.mint_address));
-          rankRef.current = list.map((t) =>
-            initial || seenRef.current.has(t.mint_address) ? t : { ...t, isNew: true });
-          list.forEach((t) => seenRef.current.add(t.mint_address));
-          noteRows("trending", list);
-          select();
-          if (fresh) setEnrichKey((k) => k + 1);
-        })
-        .catch(() => {})
-        .finally(() => { if (!cancelled && initial) setLoading(false); });
+    const unique = (rows: TokenEvent[]) => {
+      const seen = new Set<string>();
+      return rows.filter((t) => {
+        if (!t.mint_address || seen.has(t.mint_address)) return false;
+        seen.add(t.mint_address);
+        return true;
+      });
     };
 
-    load(true);
-    const id = setInterval(() => load(false), REFRESH_MS);
+    fetchTrending(period, RANK_LIMIT)
+      .then((res) => {
+        if (cancelled || live) return;
+        rankRef.current = unique(res.data);
+        noteRows("trending", rankRef.current);
+        select();
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    const ws = RazeWebSocket.getInstance();
+    const interval = trendingInterval(period);
+    ws.subscribeTrending(chainId, interval, RANK_LIMIT, SORT);
+    const off = ws.on("trending", (msg) => {
+      if (msg.chain !== chainId || msg.interval !== interval || msg.sort !== SORT) return;
+      const kind = msg.kind;
+      if (kind === "snapshot") {
+        live = true;
+        rankRef.current = unique((msg.rows as TokenEvent[]) ?? []).sort(byRank);
+        setLoading(false);
+      } else {
+        const row = msg.row as TokenEvent | undefined;
+        if (!row?.mint_address) return;
+        const rest = rankRef.current.filter((t) => t.mint_address !== row.mint_address);
+        if (kind === "remove") rankRef.current = rest;
+        else if (kind === "add") rankRef.current = [...rest, { ...row, isNew: true }].sort(byRank);
+        else if (kind === "update") {
+          const held = rankRef.current.find((t) => t.mint_address === row.mint_address);
+          rankRef.current = [...rest, held ? { ...row, isNew: held.isNew } : row].sort(byRank);
+        } else return;
+      }
+      noteRows("trending", rankRef.current);
+      select();
+    });
+
     return () => {
       cancelled = true;
-      clearInterval(id);
+      off();
+      ws.unsubscribeTrending(chainId, interval, RANK_LIMIT, SORT);
     };
   }, [period, chainId, select]);
 
   // Re-pick the visible rows when the filters change (no refetch needed).
   useEffect(() => { select(); }, [filtersKey, select]);
-
-  useEffect(() => { noteRows("trending", tokens); }, [tokens]);
-
-  // The ranking already carries safety (honeypot, taxes, renounced…) that the
-  // batch token read leaves empty or zero: enrichment only fills gaps there.
-  useTokenEnrichment(tokens, setEnriched, MAX, enrichKey, { keepSafety: true });
 
   return { tokens, loading };
 }

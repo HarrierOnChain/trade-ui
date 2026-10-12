@@ -4,9 +4,6 @@ import { PlatformLogo } from "./PlatformLogo";
 import { TokenIcon } from "./TokenIcon";
 import { Tooltip } from "./Tooltip";
 
-const DEFAULT_SUPPLY = 1_000_000_000;
-const BONDING_CURVE_SOL = 411;
-
 interface Props {
   mint: string;
   symbol?: string;
@@ -18,12 +15,8 @@ interface Props {
   borderWidth?: number;
   badgeSize?: number;
   badgeInset?: number;
-  marketCap?: number;
-  priceSol?: number;
-  solPrice?: number | null;
-  supply?: number;
-  /** Bonding-curve fill from the API (0–100). Wins over the pump.fun
-   *  411-SOL estimate below, which is wrong for every other launchpad. */
+  /** Bonding-curve fill from the API (0–100), every launchpad's; an empty
+   *  ring when the API has none. */
   progressPercent?: number;
 }
 
@@ -42,10 +35,6 @@ export function TokenAvatarFrame({
   borderWidth = 1.5,
   badgeSize = 18,
   badgeInset = -4,
-  marketCap,
-  priceSol,
-  solPrice,
-  supply = DEFAULT_SUPPLY,
   progressPercent,
 }: Props) {
   const color = migrated
@@ -59,31 +48,12 @@ export function TokenAvatarFrame({
   const badgePlatform =
     migrated && /pump/i.test(String(dex ?? "")) ? "pumpswap" : dex;
 
-  const fallbackMarketCap =
-    priceSol && solPrice && priceSol > 0 && solPrice > 0
-      ? priceSol * solPrice * supply
-      : undefined;
-
-  const effectiveMarketCap =
-    marketCap && marketCap > 0
-      ? marketCap
-      : fallbackMarketCap && fallbackMarketCap > 0
-        ? fallbackMarketCap
-        : 0;
-
-  const targetMarketCap =
-    solPrice && solPrice > 0
-      ? solPrice * BONDING_CURVE_SOL
-      : 0;
-
   const progress =
     migrated
       ? 1
       : progressPercent != null && Number.isFinite(progressPercent)
         ? clamp(progressPercent / 100)
-        : effectiveMarketCap > 0 && targetMarketCap > 0
-          ? clamp(effectiveMarketCap / targetMarketCap)
-          : 0;
+        : 0;
 
   const outerRadius = Math.round(size * 0.22);
   const innerRadius = Math.max(outerRadius - borderWidth, outerRadius - 2);

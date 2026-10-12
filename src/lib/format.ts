@@ -100,45 +100,6 @@ export function shortAddr(a?: string | null, n = 4): string {
   return `${a.slice(0, n)}…${a.slice(-n)}`;
 }
 
-// Launchpads that CPI the Pump.fun program: on-chain their curves/pools decode
-// as PumpFun (pre-migration) or PumpSwap (post-migration), so an enrich / quote
-// / live-trade `platform` of pumpfun/pumpswap is the *trade venue*, NOT the
-// launchpad identity — it must never overwrite the launchpad label. The parser
-// already relabels these (dex_parser.rs: "Mayhem CPIs PumpFun"). Extend this
-// list as more pump-family launchpads appear.
-const PUMP_FAMILY_LAUNCHPADS = ["mayhem"];
-
-function isPumpFamilyLaunchpad(dex: string): boolean {
-  const d = dex.toLowerCase();
-  return PUMP_FAMILY_LAUNCHPADS.some((l) => d.includes(l));
-}
-
-/** True for the generic Pump.fun trade venue — the pumpfun bonding curve or the
- *  pumpswap AMM it migrates to (both contain "pump"). */
-function isGenericPumpVenue(dex: string): boolean {
-  return dex.toLowerCase().includes("pump");
-}
-
-/**
- * Pick the dex/platform label when a secondary source (`incoming`: batch
- * enrich, router quote, live trade) reports a platform for a token that already
- * has `current` (from the deploy stream / history). A pump-family launchpad
- * (Mayhem) keeps its identity against a generic PumpFun/PumpSwap venue so it is
- * never relabeled just because its curve/pool routes there; otherwise a
- * non-empty `incoming` wins (real migrations, first resolve, backfills).
- */
-export function mergeDexLabel(
-  current: string | null | undefined,
-  incoming: string | null | undefined,
-): string {
-  const cur = String(current ?? "").trim();
-  const inc = String(incoming ?? "").trim();
-  if (!inc) return cur;
-  if (!cur) return inc;
-  if (isPumpFamilyLaunchpad(cur) && isGenericPumpVenue(inc)) return cur;
-  return inc;
-}
-
 export function dexColor(dex?: string | null): string {
   const d = String(dex || "").toLowerCase();
   if (d.includes("pump"))    return "var(--dex-pump)";

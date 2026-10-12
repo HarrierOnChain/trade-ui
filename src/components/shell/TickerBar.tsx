@@ -140,8 +140,8 @@ function TickerChip({
 
   const symbol = t.symbol || t.name || t.mint_address.slice(0, 4);
   const priceSol = live?.price ?? t.lastPrice ?? 0;
-  const computedMcap = priceSol > 0 && solPrice ? priceSol * 1_000_000_000 * solPrice : undefined;
-  const mcap = (t.marketCap && t.marketCap > 0 ? t.marketCap : undefined) ?? computedMcap;
+  // The API's market cap, over the token's own supply.
+  const mcap = t.marketCap;
   const priceUsd = priceSol && solPrice ? priceSol * solPrice : undefined;
 
   const change = t.priceChange;

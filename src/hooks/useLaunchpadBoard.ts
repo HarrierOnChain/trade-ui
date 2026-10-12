@@ -7,7 +7,6 @@ import { useClientPageVisible } from "../contexts/ClientPageVisibility";
 import { mergeLiveFrame } from "../lib/streamMerge";
 import { isFiltering, passesFilters, type ColumnFilters } from "../lib/tokenFilters";
 import { noteRows } from "../lib/columnSeen";
-import { useTokenEnrichment } from "./useTokenEnrichment";
 import { useMetaEnrichment } from "./useMetaEnrichment";
 import type { TokenEvent } from "../types";
 
@@ -47,10 +46,11 @@ export function sameRow(a: TokenEvent, b: TokenEvent): boolean {
  *
  * The full board lives in a ref; the column renders the top `MAX` rows, in
  * `order`, that pass its filters, so a removed or filtered-out row is replaced
- * by the next one instead of leaving a hole. Values a row does not carry yet
- * (volume, safety… come from enrichment, which runs on visible rows) let it
- * in; once enriched, a row that fails gives its slot to the next one. Enriched
- * fields (volume, bundle %, socials…) survive every live update.
+ * by the next one instead of leaving a hole. Rows carry the whole token row
+ * (stats, pool, safety) as `/tokens` gives it; a value the API has not
+ * measured yet (null: safety on a launch under ~30 s old, stats until the
+ * first decoration) lets a row in, and once measured a row that fails gives
+ * its slot to the next one. Fields a frame does not carry survive it.
  */
 export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions) {
   const { chainId } = useChain();
@@ -204,8 +204,8 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersKey]);
 
-  // New rows in view: enrich them (batched, ≤50 per call). Rendered rows also
-  // carry what enrichment added, which tells the filter modal what exists.
+  // New rows in view: their metadata (socials a board row may lack). Rendered
+  // rows tell the filter modal what exists.
   useEffect(() => {
     noteRows(event, tokens);
     const mintsKey = tokens.map((t) => t.mint_address).join(",");
@@ -215,7 +215,6 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
     if (tokens.some((t) => !before.has(t.mint_address))) setEnrichKey((k) => k + 1);
   }, [event, tokens]);
 
-  useTokenEnrichment(tokens, setEnriched, MAX, enrichKey);
   useMetaEnrichment(tokens, setEnriched, MAX, enrichKey);
 
   return { tokens, loading: pageVisible ? loading : false, error };
@@ -223,13 +222,18 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
 
 const ms = (iso?: string) => (iso ? Date.parse(iso) || 0 : 0);
 
+/** Ties by address ascending: the API's total order on every board. */
+const byAddress = (a: TokenEvent, b: TokenEvent) =>
+  a.mint_address < b.mint_address ? -1 : a.mint_address > b.mint_address ? 1 : 0;
+
 /** Newest launch first. */
-export const byCreated = (a: TokenEvent, b: TokenEvent) => ms(b.created_at) - ms(a.created_at);
+export const byCreated = (a: TokenEvent, b: TokenEvent) =>
+  ms(b.created_at) - ms(a.created_at) || byAddress(a, b);
 
 /** Fullest curve first, then newest — the API's own `graduating` order. */
 export const byProgress = (a: TokenEvent, b: TokenEvent) =>
   (b.graduationPercent ?? 0) - (a.graduationPercent ?? 0) || byCreated(a, b);
 
-/** Latest graduation first (creation time when the API has no graduation time). */
+/** Latest graduation first (every graduated row has its time). */
 export const byGraduated = (a: TokenEvent, b: TokenEvent) =>
-  (ms(b.migrated_at) || ms(b.created_at)) - (ms(a.migrated_at) || ms(a.created_at));
+  ms(b.migrated_at) - ms(a.migrated_at) || byAddress(a, b);

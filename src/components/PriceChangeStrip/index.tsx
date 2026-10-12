@@ -1,7 +1,6 @@
 "use client";
-import React, { useMemo } from "react";
-import { usePriceChanges } from "../../hooks/usePriceChanges";
-import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
+import React from "react";
+import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useIsMobile, useIsPhone } from "../../hooks/useMediaQuery";
 import { fluidColsFit } from "../../lib/responsive";
 import { Tooltip } from "../atoms";
@@ -28,16 +27,12 @@ function fmtCompactPct(v: number): string {
 }
 
 export function PriceChangeStrip({ mint }: Props) {
-  const { data: changes } = usePriceChanges(mint);
+  // The token's price and windows, kept live by the token channel (a tick's
+  // price, the snapshot's windows).
+  const { info } = useTokenInfo(mint);
   const isMobile          = useIsMobile();
   const isPhone           = useIsPhone();
-  const mintList = useMemo(() => (mint ? [mint] : []), [mint]);
-  const liveMap = useLiveTradePrices(mintList);
-  const live = liveMap.get(mint);
-
-  // Live-ticking "current" SOL price: WS first, then whatever the REST
-  // price-changes call captured. The grid re-renders whenever either fires.
-  const currentSol = live?.price ?? changes?.currentPrice ?? 0;
+  const priceUsd = info?.priceUsd ?? 0;
 
   return (
     <div style={{
@@ -55,15 +50,14 @@ export function PriceChangeStrip({ mint }: Props) {
       flexShrink: 0,
     }}>
       {PERIODS.map(({ key, label }, idx) => {
-        const period = changes?.changes?.[key];
-        const anchor = period?.price ?? 0;
-        // The window's opening price (recovered from the API's change) against
-        // the live price, so the cell ticks with every trade; the API's own
-        // percentage when no live price is known yet.
+        const w = info?.windows?.[key];
+        const open = w?.openPriceUsd ?? 0;
+        // The live price against the window's opening price (the API's), so
+        // the cell moves with the ticks; the API's change without one.
         const pct =
-          anchor > 0 && currentSol > 0
-            ? ((currentSol - anchor) / anchor) * 100
-            : period?.change ?? null;
+          open > 0 && priceUsd > 0
+            ? (priceUsd / open - 1) * 100
+            : w?.priceChangePercent ?? null;
         const up = pct != null && pct >= 0;
         const color =
           pct == null ? "var(--paper-4)" : up ? "var(--buy)" : "var(--sell)";

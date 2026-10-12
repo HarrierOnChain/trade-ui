@@ -8,7 +8,7 @@
  */
 import { getActiveChain } from "../lib/chains";
 import { imageSrc } from "./evmapi";
-import type { Holder, TokenEvent, TopTrader, Trade } from "../types";
+import type { Holder, TokenEvent, TokenWindow, TopTrader, Trade, WindowKey } from "../types";
 
 export type Rec = Record<string, unknown>;
 
@@ -75,11 +75,9 @@ const PLATFORM_ALIASES: Record<string, string> = {
   "pump mayhem": "Mayhem",
   "bonk.fun": "LetsBonk",
   "jupiter studio": "JupiterStudio",
-  "jup_studio": "JupiterStudio",
   "launchlab": "RaydiumLaunchpad",
   "easya kickstart": "Kickstart",
   "pons": "Pons",
-  "clanker v4": "Clanker",
   "zora creator": "Zora",
 };
 
@@ -111,6 +109,8 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
 
   const event: TokenEvent = {
     mint_address: String(row.address ?? ""),
+    rank: num(row.rank),
+    priceUsd: num(row.priceUsd),
     chain,
     name: String(row.name ?? ""),
     symbol: String(row.symbol ?? ""),
@@ -131,10 +131,19 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     // Bonding-curve fill; the API nulls it once graduated.
     graduationPercent: progress ?? (graduated ? 100 : undefined),
     graduated: launchpad ? graduated : undefined,
+    graduationMarketCapUsd: num(launchpad?.graduationMarketCapUsd),
     signer: str(row.creator),
     quoteMint: str(pool?.quoteToken),
     quoteKind: quoteKind(pool?.quoteSymbol, chain),
   };
+  if (stats) {
+    const windows: Partial<Record<WindowKey, TokenWindow>> = {};
+    for (const k of ["1m", "5m", "1h", "6h", "24h"] as const) {
+      const w = asRecord(stats[k]);
+      if (w) windows[k] = { openPriceUsd: num(w.openPriceUsd), priceChangePercent: num(w.priceChangePercent) };
+    }
+    event.windows = windows;
+  }
   if (day) {
     event.priceChange = num(day.priceChangePercent);
     event.volume24h = volumeUsd;
@@ -152,7 +161,6 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     event.insidersPercent = num(safety.insidersPercent);
     event.freshWalletsPercent = num(safety.freshWalletsPercent);
     event.botsPercent = num(safety.botsPercent);
-    event.bluechipPercent = num(safety.bluechipPercent);
     event.buyTaxPercent = num(safety.buyTaxPercent);
     event.sellTaxPercent = num(safety.sellTaxPercent);
     event.honeypot = bool(safety.honeypot);

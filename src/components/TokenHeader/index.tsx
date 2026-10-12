@@ -2,7 +2,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchPublicMetadata, type MetaResult } from "../../api/metadata";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
-import { useTokenQuote } from "../../hooks/useTokenQuote";
 import { useLiveTradePrices, type LivePrice } from "../../hooks/useLiveTradePrices";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useMigration } from "../../hooks/useMigration";
@@ -10,7 +9,7 @@ import { MigrationCelebration } from "./MigrationCelebration";
 import type { ReserveSidePanel } from "./CelebrationOverlay";
 import { SolAmount, TokenAvatarFrame, TokenIdentity, TokenSocialLinks, Tooltip } from "../atoms";
 import { MayhemCountdown } from "../atoms/MayhemCountdown";
-import { fmtMcap, fmtNum, fmtPrice, fmtSol, mergeDexLabel, tokenVolumeUsd } from "../../lib/format";
+import { fmtMcap, fmtNum, fmtPrice, fmtSol, tokenVolumeUsd } from "../../lib/format";
 import { computeTokenMetrics } from "../../lib/tokenMetrics";
 import { formatAge } from "../../lib/ageRegistry";
 import { clampWidth } from "../../lib/responsive";
@@ -24,8 +23,7 @@ interface Props {
   /** Chain-native USD price (SOL). Falls back to the SOL price hook
    *  when omitted so callers keep working unchanged. */
   solPrice?: number;
-  /** On-chain total supply for the active chain. Falls back to the pump.fun
-   *  1e9 default when omitted/unloaded. */
+  /** The token's supply. Not read: the market cap shown is the API's. */
   supply?: number;
   /** Keep the migration overlay off the trading side panel. */
   celebrationReserveSidePanel?: ReserveSidePanel;
@@ -35,27 +33,22 @@ export function TokenHeader({
   mint,
   top10Pct,
   solPrice: solPriceProp,
-  supply: supplyProp,
   celebrationReserveSidePanel,
 }: Props) {
   const isMobile = useIsMobile();
   const { info } = useTokenInfo(mint);
-  const quote = useTokenQuote(mint);
   const solPriceHook = useSolPrice();
   // Prefer the native USD price passed by the token page; fall back to the
   // SOL price hook for any caller that omits it.
   const solPrice = solPriceProp != null && solPriceProp > 0 ? solPriceProp : solPriceHook;
-  const effectiveSupply = supplyProp != null && supplyProp > 0 ? supplyProp : 1_000_000_000;
   const mintList = useMemo(() => (mint ? [mint] : []), [mint]);
   const liveMap = useLiveTradePrices(mintList);
   const live = liveMap.get(mint);
   const [metaFallback, setMetaFallback] = useState<MetaResult | null>(null);
 
   const token = (info ?? {}) as TokenEvent;
-  const quotePlatform = quote?.platform?.trim() || "";
-  const isPumpswap = quotePlatform.toLowerCase() === "pumpswap";
-  const isMigrated = isPumpswap || token.migrated_at != null || token.graduated === true;
-  // Live migration trigger. `isMigrated` (from REST + quote) is the baseline,
+  const isMigrated = token.graduated === true || token.migrated_at != null;
+  // Live migration trigger. `isMigrated` (from REST) is the baseline,
   // so opening a page on an already-migrated token never fires the overlay;
   // a WS migration event for the active mint will fire it exactly once.
   const migrationLive = useMigration(mint, isMigrated);
@@ -107,22 +100,17 @@ export function TokenHeader({
   const displayTwitter = token.twitter?.trim() || metaFallback?.twitter?.trim() || "";
   const displayTelegram = token.telegram?.trim() || metaFallback?.telegram?.trim() || "";
   const displayWebsite = token.website?.trim() || metaFallback?.website?.trim() || "";
-  // The quote platform (pumpfun/pumpswap) is the trade venue, not the launchpad.
-  // `mergeDexLabel` keeps a pump-family launchpad (Mayhem) from being relabeled
-  // to it — even on a pumpswap (migrated) quote; migration is still surfaced via
-  // `isMigrated`. Any non-launchpad history dex still upgrades to the quote venue.
-  const platformSource = mergeDexLabel(token.dex, quotePlatform);
+  // The launchpad the API names (a graduated or never-launched token: its
+  // main pool's venue).
+  const platformSource = token.dex;
   const age = token.created_at ? formatAge(new Date(token.created_at).getTime()) : "–";
 
   // Effective real-time price/mcap: live WS price → REST lastPrice
   const priceSol = live?.price ?? token.lastPrice ?? 0;
   const effectivePrice = priceSol;
-  // Treat a 0/undefined server marketCap as absent and derive from
-  // price × supply × native USD instead.
-  const serverMcap = token.marketCap && token.marketCap > 0 ? token.marketCap : undefined;
-  const effectiveMcap =
-    serverMcap ??
-    (priceSol > 0 && solPrice ? priceSol * effectiveSupply * solPrice : undefined);
+  // The API's market cap, kept live by the token channel's ticks; null when
+  // the supply or the price is not known.
+  const effectiveMcap = token.marketCap;
 
   // Tab title mirrors the live header — "COBIE ↑ $30.1K | Trade UI" — so a
   // backgrounded tab shows which token is open, its live market cap, and the
@@ -172,9 +160,6 @@ export function TokenHeader({
             borderWidth={2}
             badgeSize={20}
             badgeInset={-5}
-            marketCap={effectiveMcap}
-            priceSol={priceSol}
-            solPrice={solPrice}
             progressPercent={token.graduationPercent}
           />
         </div>

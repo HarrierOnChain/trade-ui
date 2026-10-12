@@ -26,7 +26,6 @@ export type RangeKey =
   | "bundlePercentage"
   | "freshWalletsPercent"
   | "botsPercent"
-  | "bluechipPercent"
   | "buyTaxPercent"
   | "sellTaxPercent"
   | "creatorDeploys"
@@ -111,8 +110,6 @@ export const RANGE_FILTERS: RangeSpec[] = [
     hint: "Holders whose wallet is brand new", value: (t) => t.freshWalletsPercent },
   { key: "botsPercent", tab: "audit", label: "Bots", unit: "pct",
     hint: "Holders that are trading bots", value: (t) => t.botsPercent },
-  { key: "bluechipPercent", tab: "audit", label: "Blue-chip holders", unit: "pct",
-    hint: "Holders that also hold blue chips", value: (t) => t.bluechipPercent },
   { key: "buyTaxPercent", tab: "audit", label: "Buy tax", unit: "pct",
     hint: "Transfer tax on buys", value: (t) => t.buyTaxPercent },
   { key: "sellTaxPercent", tab: "audit", label: "Sell tax", unit: "pct",

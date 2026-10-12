@@ -11,11 +11,10 @@ import type { TokenEvent } from "../types";
 
 /**
  * What each monitor column has really received, per chain: the launchpads its
- * rows named, and the filter fields that carry information — seen with at
- * least two different values. A field the API leaves empty, or always fills
- * with the same constant (blue-chip holders on /tokens, Solana bundlers), can
- * filter nothing, so the modal does not offer it. The filter modal lists only
- * what is here, so it follows the API instead of a fixed list.
+ * rows named, and the filter fields seen with a value. A field the API leaves
+ * empty (null: not measured) can filter nothing, so the modal does not offer
+ * it. The filter modal lists only what is here, so it follows the API
+ * instead of a fixed list.
  *
  * Kept in localStorage (pruned after `TTL_MS` unseen) so the modal is
  * complete on the next visit before the first rows land.
@@ -29,7 +28,7 @@ const TOUCH_MS = 3_600_000;
 interface ScopeState {
   /** platformKey → name as the rows spell it, rows seen, last seen (ms). */
   platforms: Record<string, { label: string; n: number; at: number }>;
-  /** Filter field → last seen with a value (ms), once it varied. */
+  /** Filter field → last seen with a value (ms). */
   fields: Record<string, number>;
 }
 
@@ -51,8 +50,6 @@ const OBSERVERS: Array<{ key: string; observe: (t: TokenEvent, now: number) => n
 ];
 
 let state: Record<string, ScopeState> | null = null;
-/** First value per scope+field, until a different one shows the field varies. */
-const firstValue = new Map<string, number | boolean>();
 const listeners = new Set<() => void>();
 let version = 0;
 let notifyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -128,14 +125,8 @@ export function noteRows(column: ColumnKey, rows: Iterable<TokenEvent>): void {
         if (now - at > TOUCH_MS) { sc.fields[o.key] = now; dirty = true; }
         continue;
       }
-      const fk = `${id}:${o.key}`;
-      const first = firstValue.get(fk);
-      if (first === undefined) firstValue.set(fk, v);
-      else if (first !== v) {
-        sc.fields[o.key] = now;
-        firstValue.delete(fk);
-        grew = true;
-      }
+      sc.fields[o.key] = now;
+      grew = true;
     }
   }
   if (grew) changed();

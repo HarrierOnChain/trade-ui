@@ -43,8 +43,8 @@ function TVChartMini({ mint, interval }: { mint: string; interval: ResolutionStr
   const datafeedRef = useRef<SolanaDatafeed | null>(null);
 
   // Datafeed lifecycle: recreate only on mint change.
-  // prefetchMint starts OHLCV + supply + solPrice concurrently so that by
-  // the time the widget calls resolveSymbol → getBars, the data is ready.
+  // prefetchMint starts the OHLCV read so that by the time the widget calls
+  // resolveSymbol → getBars, the data is ready.
   useEffect(() => {
     const datafeed = new SolanaDatafeed();
     datafeed.setMode("usd", "mcap");
@@ -57,8 +57,8 @@ function TVChartMini({ mint, interval }: { mint: string; interval: ResolutionStr
   }, [mint]);
 
   // Widget lifecycle: recreate on mint or interval change.
-  // On interval switch the datafeed (and its supply/solPrice caches) is
-  // reused, so only the new timeframe's OHLCV request goes out.
+  // On interval switch the datafeed (and its caches) is reused, so only the
+  // new timeframe's OHLCV request goes out.
   useEffect(() => {
     const el = containerRef.current;
     const datafeed = datafeedRef.current;
@@ -153,8 +153,8 @@ function TokenChartPopupContent({ token, live, solPrice, holdingAmount, holdingU
   const { run: sell, busy: sellBusy } = useQuickSell(token.mint_address);
   const [quote] = useBuyQuoteMint();
   const canTrade = swapsOn();
-  const priceSol = live?.price ?? token.lastPrice ?? 0;
-  const mcap = token.marketCap ?? (priceSol && solPrice ? priceSol * 1_000_000_000 * solPrice : null);
+  // The API's market cap, over the token's own supply.
+  const mcap = token.marketCap ?? null;
   const pct = token.priceChange ?? 0;
   const pctColor = pct > 0 ? "#66d89e" : pct < 0 ? "#e57359" : "#7a776e";
 

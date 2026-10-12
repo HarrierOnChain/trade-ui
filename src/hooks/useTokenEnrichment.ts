@@ -43,6 +43,9 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
     const v = num(row[k]);
     if (v != null) patch[k] = v;
   }
+  for (const k of CHECK_KEYS) {
+    if (typeof row[k] === "boolean") patch[k] = row[k];
+  }
   for (const k of SOCIAL_KEYS) if (row[k]) patch[k] = row[k];
   if (row.signer) patch.signer = row.signer;
   if (row.platform) patch.dex = row.platform;
@@ -51,30 +54,25 @@ function applyBatchEntry(row: BatchEnrichEntry): Partial<TokenEvent> {
   return patch;
 }
 
-/** Safety shares the batch read carries (percent). */
+/** Safety shares and taxes the batch read carries (percent). */
 const SHARE_KEYS = [
   "top10Percent",
   "devPercent",
   "insidersPercent",
   "freshWalletsPercent",
   "botsPercent",
-  "bluechipPercent",
+  "buyTaxPercent",
+  "sellTaxPercent",
 ] as const;
 
-/** Every safety field, for `keepSafety`. */
-const SAFETY_KEYS = [
-  ...SHARE_KEYS,
-  "bundlePercentage",
-  "sniperPercentage",
-  "creatorDeploys",
-] as const;
+/** Contract checks the batch read carries. */
+const CHECK_KEYS = ["honeypot", "mintRenounced", "freezeRenounced"] as const;
 
 const SOCIAL_KEYS = ["twitter", "website", "telegram", "discord"] as const;
 
-function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>, keepSafety: boolean): TokenEvent {
+function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>): TokenEvent {
   // Links only fill gaps: a row's own socials are never replaced.
   for (const k of SOCIAL_KEYS) if (t[k]) delete patch[k];
-  if (keepSafety) for (const k of SAFETY_KEYS) if (t[k] != null) delete patch[k];
   if (Object.keys(patch).length === 0) return t;
   return {
     ...t,
@@ -88,20 +86,19 @@ function mergeBatchPatch(t: TokenEvent, patch: Partial<TokenEvent>, keepSafety: 
 }
 
 /**
- * Batched stats/volume enrichment only. Images + metadata resolve via
- * `useRowImage` (deferred) so this hook never floods the network with
- * per-token metadata reads.
+ * The `/tokens` batch read of lists known only by their mints (the
+ * watchlist, the ticker, search results): stats, safety and the contract
+ * checks, batched (≤50 a call). Lists the API sends whole (boards, trending)
+ * do not need it.
  */
 export function useTokenEnrichment(
   tokens: TokenEvent[],
   setTokens: React.Dispatch<React.SetStateAction<TokenEvent[]>>,
   maxRows = 20,
   resetKey = 0,
-  opts: { keepSafety?: boolean } = {},
 ) {
   const prevResetKey = useRef(resetKey);
   const prevMintsKey = useRef("");
-  const keepSafety = opts.keepSafety === true;
 
   const mintsKey = useMemo(
     () =>
@@ -136,7 +133,7 @@ export function useTokenEnrichment(
             if (!mints.has(t.mint_address)) return t;
             const row = data[t.mint_address];
             if (!row) return t;
-            const merged = mergeBatchPatch(t, applyBatchEntry(row), keepSafety);
+            const merged = mergeBatchPatch(t, applyBatchEntry(row));
             if (merged === t) return t;
             dirty = true;
             return merged;
@@ -147,5 +144,5 @@ export function useTokenEnrichment(
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [mintsKey, setTokens, maxRows, resetKey, keepSafety]);
+  }, [mintsKey, setTokens, maxRows, resetKey]);
 }

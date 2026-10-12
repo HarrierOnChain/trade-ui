@@ -23,7 +23,13 @@ export interface BatchEnrichEntry {
   insidersPercent?: number;
   freshWalletsPercent?: number;
   botsPercent?: number;
-  bluechipPercent?: number;
+  /** Contract checks: taxes in percent, the honeypot verdict, renounced
+   *  mint and freeze (Solana: the mint's). */
+  buyTaxPercent?: number;
+  sellTaxPercent?: number;
+  honeypot?: boolean;
+  mintRenounced?: boolean;
+  freezeRenounced?: boolean;
   twitter?: string;
   website?: string;
   telegram?: string;

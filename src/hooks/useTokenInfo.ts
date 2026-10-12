@@ -130,6 +130,7 @@ export function useTokenInfo(mint: string | null) {
     const offTick = ws.on("tick", (msg) => {
       if (msg.tokenMint !== mint) return;
       queue({
+        priceUsd: num(msg.priceUsd),
         marketCap: num(msg.marketCapUsd),
         lastPrice: num(msg.lastPrice),
         liquidity: num(msg.liquidityUsd),
@@ -139,6 +140,8 @@ export function useTokenInfo(mint: string | null) {
       if (msg.tokenMint !== mint || !msg.token) return;
       const t = msg.token as TokenEvent;
       queue({
+        priceUsd: t.priceUsd,
+        windows: t.windows,
         marketCap: t.marketCap,
         lastPrice: t.lastPrice,
         liquidity: t.liquidity,
@@ -150,6 +153,7 @@ export function useTokenInfo(mint: string | null) {
         buyCount: t.buyCount,
         sellCount: t.sellCount,
         graduationPercent: t.graduationPercent,
+        graduationMarketCapUsd: t.graduationMarketCapUsd,
         migrated_at: t.migrated_at,
         bundlePercentage: t.bundlePercentage,
         sniperPercentage: t.sniperPercentage,

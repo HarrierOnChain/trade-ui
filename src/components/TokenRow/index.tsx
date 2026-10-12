@@ -66,7 +66,6 @@ export const TokenRow = memo(function TokenRow({
   // matching solana-frame's monitor behavior.
   const liveBundleAdd = live?.bundleAdd ?? 0;
   const liveSniperAdd = live?.sniperAdd ?? 0;
-  const livePriceSol = live?.price ?? t.lastPrice;
   const bundle = Math.max(
     0,
     Math.min(100, Number(t.bundlePercentage ?? 0) + liveBundleAdd)
@@ -196,9 +195,6 @@ export const TokenRow = memo(function TokenRow({
           borderWidth={1.5}
           badgeSize={18}
           badgeInset={-4}
-          marketCap={t.marketCap}
-          priceSol={livePriceSol}
-          solPrice={solPrice}
           progressPercent={t.graduationPercent}
         />
         <AvatarHideOverlay token={t} />
@@ -638,10 +634,9 @@ function usePriceDerivation({
     priceSol > 0 ? <SolAmount iconSize={10}>{fmtSol(priceSol, 6)}</SolAmount> :
     null;
 
-  // Rows carry no supply: the pump.fun 1e9 default.
-  const computedMcap =
-    priceSol > 0 && solPrice ? priceSol * 1_000_000_000 * solPrice : undefined;
-  const mcap = (t.marketCap && t.marketCap > 0 ? t.marketCap : undefined) ?? computedMcap;
+  // The API's market cap (over the token's own supply: Pump Mayhem's 2B, an
+  // EVM token's), kept current by the board's updates; null when not known.
+  const mcap = t.marketCap;
 
   let primary: React.ReactNode;
   if (mcap != null && mcap > 0) {

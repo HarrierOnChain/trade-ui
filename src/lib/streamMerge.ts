@@ -1,5 +1,4 @@
 "use client";
-import { mergeDexLabel } from "./format";
 import type { TokenEvent } from "../types";
 
 /**
@@ -14,7 +13,6 @@ export function mergeLiveFrame(prev: TokenEvent, next: TokenEvent): TokenEvent {
     if (v === undefined || v === null || v === "") continue;
     merged[k] = v;
   }
-  merged.dex = mergeDexLabel(prev.dex, next.dex);
   merged.isNew = prev.isNew;
   return merged as unknown as TokenEvent;
 }

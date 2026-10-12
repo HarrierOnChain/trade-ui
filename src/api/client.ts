@@ -27,8 +27,6 @@ import type {
   TopTrader,
   TrendingPeriod,
   SearchResult,
-  TokenPriceChanges,
-  PriceChangePeriod,
   WalletHoldingsResponse,
   WalletSummaryResponse,
   WalletSummaryItem,
@@ -113,19 +111,15 @@ export async function fetchTokenRaw(mint: string, c: string = chain()): Promise<
   return data;
 }
 
-const BATCH_IDS = 10;
+const BATCH_IDS = 50;
 
 export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0) => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
   const data: Record<string, BatchEnrichEntry> = {};
-  // Only addresses of the active chain's family: one foreign id (a search
-  // result from another chain) makes the API reject the whole batch (400).
-  const evm = c !== "sol";
-  const unique = [...new Set(mints.filter((m) => m && /^0x[0-9a-fA-F]{40}$/.test(m) === evm))];
-  // One batch call per BATCH_IDS tokens instead of two calls per token. The
-  // contract allows 50, but today the API answers 404 "tokens not found" to
-  // any batch of more than 10 (its upstream caps there), so stay at 10.
+  // The API leaves an id of another chain's family out of the answer.
+  const unique = [...new Set(mints.filter(Boolean))];
+  // One batch call per BATCH_IDS tokens (the API's maximum).
   const slices: string[][] = [];
   for (let i = 0; i < unique.length; i += BATCH_IDS) slices.push(unique.slice(i, i + BATCH_IDS));
   const pages = await Promise.all(slices.map(async (slice) => {
@@ -166,7 +160,11 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
         insidersPercent: t.insidersPercent,
         freshWalletsPercent: t.freshWalletsPercent,
         botsPercent: t.botsPercent,
-        bluechipPercent: t.bluechipPercent,
+        buyTaxPercent: t.buyTaxPercent,
+        sellTaxPercent: t.sellTaxPercent,
+        honeypot: t.honeypot,
+        mintRenounced: t.mintRenounced,
+        freezeRenounced: t.freezeRenounced,
         twitter: t.twitter ?? undefined,
         website: t.website ?? undefined,
         telegram: t.telegram ?? undefined,
@@ -266,7 +264,7 @@ export const fetchTopTraders = async (mint: string, limit = 100) => {
 // ── discovery ──────────────────────────────────────────────────────────────
 
 /** The API's trending windows: 1m, 5m, 1h, 6h, 24h. */
-function trendingInterval(period: TrendingPeriod): string {
+export function trendingInterval(period: TrendingPeriod): string {
   switch (period) {
     case "recent": return "1h";
     default: return "24h";
@@ -278,14 +276,9 @@ export const fetchTrending = async (period: TrendingPeriod = "daily", limit = 50
   const native = await nativeUsd(c).catch(() => 0);
   const interval = trendingInterval(period);
   const { data } = await get<unknown>("/trending", { chain: c, limit, interval }, 5_000);
-  // A row's `window` is the ranking interval; the rows' volume, trades and
-  // change are 24h figures, so a shorter window is left for enrichment to fill.
-  const list = rows(data).map((r) => {
-    if (interval === "24h") return r;
-    const { window: _window, ...rest } = r;
-    return rest;
-  });
-  return { data: list.map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address) };
+  // Rows carry the token's own 24h stats, which the mapper reads before the
+  // ranking window.
+  return { data: rows(data).map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address) };
 };
 
 export interface SearchOptions {
@@ -341,78 +334,12 @@ export async function fetchSearch(
   return { data: rows(data).map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
 }
 
-export interface QuoteData {
-  mint: string;
-  avgPrice: number;
-  amountIn: number;
-  amountOut: number;
-  platform: string;
-  pool: string;
-  timeTaken: number;
-}
-
-export const fetchQuote = async (mint: string) => {
-  const c = chain();
-  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
-  const pool = asRecord(data.pool);
-  const launchpad = asRecord(data.launchpad);
-  return {
-    success: true,
-    data: {
-      mint,
-      avgPrice: usdToNative(data.priceUsd, native) ?? 0,
-      amountIn: 0,
-      amountOut: 0,
-      platform: String(launchpad?.name ?? pool?.dex ?? ""),
-      pool: String(pool?.address ?? ""),
-      timeTaken: 0,
-    } satisfies QuoteData,
-  };
-};
-
 export const fetchTokenInfo = async (mint: string) => {
   const c = chain();
   const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
   const token = apiTokenToEvent(data, native);
   if (!token.mint_address) token.mint_address = mint;
   return { success: true, data: token };
-};
-
-const CHANGE_WINDOWS = ["1m", "5m", "1h", "6h", "24h"] as const;
-
-export const fetchPriceChanges = async (mint: string) => {
-  const c = chain();
-  const [data, native] = await Promise.all([fetchTokenRaw(mint, c), nativeUsd(c).catch(() => 0)]);
-  const priceUsd = num(data.priceUsd);
-  const currentPrice = usdToNative(priceUsd, native) ?? 0;
-  const stats = asRecord(data.stats) ?? {};
-  const changes: TokenPriceChanges["changes"] = {};
-  for (const key of CHANGE_WINDOWS) {
-    const w = asRecord(stats[key]);
-    const pct = num(w?.priceChangePercent);
-    if (!w || pct == null) {
-      changes[key] = null;
-      continue;
-    }
-    // The window's opening price, recovered from the change, so the strip can
-    // keep the percentage live as trades move the current price.
-    const anchor = currentPrice > 0 && pct > -100 ? currentPrice / (1 + pct / 100) : 0;
-    changes[key] = {
-      change: pct,
-      price: anchor,
-      trades: num(w.trades) ?? (num(w.buys) ?? 0) + (num(w.sells) ?? 0),
-      volume: num(w.volumeUsd) ?? 0,
-    } satisfies PriceChangePeriod;
-  }
-  const result: TokenPriceChanges & { success: boolean } = {
-    success: true,
-    mint,
-    currentPrice,
-    currentPriceUSD: priceUsd != null ? String(priceUsd) : null,
-    solPriceUSD: native,
-    changes,
-  };
-  return result;
 };
 
 /** The supply `/tokens` prices the market cap over; null when not known. */
