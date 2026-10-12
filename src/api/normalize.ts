@@ -89,6 +89,7 @@ function normalizeTokenHolding(raw: unknown): TokenHolding | null {
     );
   }
   const usdValue = toNumber(token.usdValue ?? token.usd_value, Number.NaN);
+  const liquidityUsd = toNumber(token.liquidityUsd, Number.NaN);
 
   return {
     mint,
@@ -103,6 +104,7 @@ function normalizeTokenHolding(raw: unknown): TokenHolding | null {
     name: typeof token.name === "string" ? token.name : undefined,
     image: typeof token.image === "string" ? token.image : null,
     usdValue: Number.isFinite(usdValue) ? usdValue : undefined,
+    liquidityUsd: Number.isFinite(liquidityUsd) ? liquidityUsd : null,
   };
 }
 

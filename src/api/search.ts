@@ -1,5 +1,5 @@
 import { fetchSearch } from "./client";
-import { fetchPublicMetadata, seedPublicMetadata } from "./metadata";
+import { seedPublicMetadata } from "./metadata";
 import type { SearchResult } from "../types";
 
 export const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -18,66 +18,21 @@ function seedFromResults(results: SearchResult[]): void {
 }
 
 /**
- * Resolve a free-text or address query into search results.
- *
- * Order of attempts:
- * 1. Text-search the local trade-derived index (`/api/sol/tokens/search?q=…`).
- * 2. If the query is a Solana address and step 1 returned nothing, try the
- *    CryptoHouse-backed Metaplex search as a deployer (`?creator=…`) — covers
- *    the case where the user pasted a wallet address, not a mint.
- * 3. If still nothing and the query is an address, fall back to the metadata
- *    endpoint (treats the address as a mint and pulls its on-chain Metaplex).
+ * Resolve a free-text or address query into search results: the API's
+ * `/search` finds a token by name, symbol or address, by a pool's address
+ * (Uniswap V4 and PancakeSwap Infinity pool ids too) and a wallet's created
+ * tokens, newest first. Kept under this name for its callers.
  */
 export async function fetchSearchWithMetadataFallback(
   query: string,
   limit = 20,
 ): Promise<{ data: SearchResult[] }> {
-  const q = query.trim();
-  let results: SearchResult[] = [];
-
   try {
-    const res = await fetchSearch(q, limit);
-    results = Array.isArray(res.data) ? res.data : [];
+    const res = await fetchSearch(query.trim(), limit);
+    const results = Array.isArray(res.data) ? res.data : [];
     seedFromResults(results);
-  } catch {
-    results = [];
-  }
-
-  if (results.length > 0) {
     return { data: results };
-  }
-
-  if (!looksLikeSolanaAddress(q)) {
-    return { data: [] };
-  }
-
-  // Wallet-address case: try interpreting the input as a deployer.
-  try {
-    const res = await fetchSearch({ creator: q, limit });
-    const deployerResults = Array.isArray(res.data) ? res.data : [];
-    if (deployerResults.length > 0) {
-      seedFromResults(deployerResults);
-      return { data: deployerResults };
-    }
   } catch {
-    // ignore — fall through to metadata path
-  }
-
-  // Last resort: treat the address as a mint and pull its on-chain metadata.
-  const meta = await fetchPublicMetadata(q);
-  const name = meta.name?.trim();
-  const symbol = meta.symbol?.trim();
-
-  if (!name && !symbol) {
     return { data: [] };
   }
-
-  return {
-    data: [{
-      mint: q,
-      symbol: symbol || name || "TOKEN",
-      name: name || symbol || q,
-      platform: "metadata",
-    }],
-  };
 }

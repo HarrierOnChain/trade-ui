@@ -86,13 +86,8 @@ export async function fetchPublicMetadata(mint: string): Promise<MetaResult> {
   if (!key) return {};
 
   const cached = metadataStore.mintCache.get(key);
-  // Allow retry after 2 s when the token had no image (e.g. not yet indexed)
-  const RETRY_MS = 2_000;
-  if (cached?.publicFetched) {
-    if (cached.image) return cached;
-    if (cached.fetchedAt && Date.now() - cached.fetchedAt < RETRY_MS) return cached;
-    // TTL expired with no image — fall through and retry
-  }
+  // A token read once is known: the API gives every image a source has.
+  if (cached?.publicFetched) return cached;
   if (metadataStore.mintInflight.has(key)) return metadataStore.mintInflight.get(key)!;
 
   const inflight = (async () => {

@@ -43,9 +43,8 @@ async function proxy(req: NextRequest, ctx: { params: Promise<{ path?: string[] 
   const closed = gateClosed(req);
   if (closed) return closed;
   const params = await ctx.params;
-  // `/api/raze/v1/…` and `/api/raze/…` are the same route (`/v1` was the
-  // API's prefix until 2026-10-05).
-  const segs = (params.path || []).filter((s, i) => !(i === 0 && s === "v1"));
+  // The API still answers its old `/v1` prefix itself.
+  const segs = params.path || [];
   const path = segs.map(encodeURIComponent).join("/");
   const { base, key } = upstream();
   let url: URL;

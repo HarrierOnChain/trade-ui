@@ -10,7 +10,8 @@ type Props = {
 };
 
 /** Buy pressure on the chain: buys against sells over the last hour, summed
- *  across the top 20 trending tokens (fetchChainSentiment). */
+ *  by the API over the top 100 trending tokens by trades (the `trending`
+ *  channel's summary, useChainSentiment). */
 export function ChainHealthPopup({ sentiment, placement = "below" }: Props) {
   const data = sentiment;
   const isPhone = useIsPhone();

@@ -2,7 +2,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useClientNav } from "./ClientPages";
 import { fetchWalletHoldings } from "../../api/client";
-import { fetchPublicMetadata } from "../../api/metadata";
 import { queueBatchEnrich } from "../../lib/batchEnrichCoordinator";
 
 import { ChainHealthPopup } from "./ChainHealthPopup";
@@ -525,29 +524,8 @@ function useUserHoldings() {
       const sorted = [...map.values()].sort(
         (a, b) => (b.usdValue ?? 0) - (a.usdValue ?? 0),
       );
+      // Each row names its token (symbol, name, image) as the API knows it.
       setHoldings(sorted);
-
-      // Enrich tokens missing symbol/image via the dedicated metadata endpoint
-      const needsMeta = sorted.filter((h) => !h.symbol || !h.image);
-      if (!needsMeta.length || cancelled) return;
-      const metaResults = await Promise.allSettled(
-        needsMeta.map((h) =>
-          fetchPublicMetadata(h.mint).then((meta) => ({ mint: h.mint, meta })),
-        ),
-      );
-      if (cancelled) return;
-      let didUpdate = false;
-      const enriched = new Map(sorted.map((h) => [h.mint, { ...h }]));
-      for (const r of metaResults) {
-        if (r.status !== "fulfilled") continue;
-        const { mint, meta } = r.value;
-        const h = enriched.get(mint);
-        if (!h) continue;
-        if (!h.symbol && meta.symbol) { h.symbol = meta.symbol; didUpdate = true; }
-        if (!h.name && meta.name) { h.name = meta.name; didUpdate = true; }
-        if (!h.image && meta.image) { h.image = meta.image; didUpdate = true; }
-      }
-      if (didUpdate) setHoldings([...enriched.values()]);
     })();
     return () => {
       cancelled = true;

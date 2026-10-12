@@ -27,7 +27,7 @@ export async function evmapiGet<T>(
   path: string,
   params: Record<string, string | number | boolean | undefined | null> = {},
   { timeout = 25_000 } = {},
-): Promise<{ data: T; nextCursor: string | null; status: number }> {
+): Promise<{ data: T; nextCursor: string | null; status: number; native?: unknown }> {
   const url = new URL(path.startsWith("http") ? path : `/api/raze${path.startsWith("/") ? path : `/${path}`}`,
     typeof window === "undefined" ? "http://127.0.0.1" : window.location.origin);
   for (const [k, v] of Object.entries(params)) {
@@ -66,7 +66,9 @@ export async function evmapiGet<T>(
   if (json.data == null) {
     throw new EvmapiError(404, "Not found", "not_found");
   }
-  return { data: json.data, nextCursor: json.next ?? null, status: res.status };
+  // `/holdings` carries the chain's coin beside the rows.
+  const native = (json as unknown as Record<string, unknown>).native;
+  return { data: json.data, nextCursor: json.next ?? null, status: res.status, native };
 }
 
 export function imageSrc(path: string | null | undefined): string | null {
@@ -74,15 +76,13 @@ export function imageSrc(path: string | null | undefined): string | null {
   if (
     path.startsWith("http://") ||
     path.startsWith("https://") ||
-    path.startsWith("data:") ||
-    path.startsWith("ipfs://")
+    path.startsWith("data:")
   ) {
     return path;
   }
   // Already rewritten (REST + WS both flow through here).
   if (path.startsWith("/api/raze/") || path === "/api/raze") return path;
-  // A relative API path (`/tokens/…/image`, or `/v1/tokens/…/image` with the
-  // API's prefix until 2026-10-05, dropped here).
-  const rel = (path.startsWith("/") ? path : `/${path}`).replace(/^\/v1(?=\/)/, "");
+  // A relative API path, through the same-origin proxy.
+  const rel = path.startsWith("/") ? path : `/${path}`;
   return `/api/raze${rel}`;
 }

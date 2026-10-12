@@ -182,6 +182,9 @@ export interface TokenHolding {
   name?: string;
   image?: string | null;
   usdValue?: number;
+  /** The token's main pool, USD (the API's): under $1,000 the API gives
+   *  the holding no value. */
+  liquidityUsd?: number | null;
 }
 
 export interface WalletHoldingsSummary {
@@ -200,22 +203,23 @@ export interface WalletHoldingsResponse {
   timestamp?: string;
 }
 
+/** A wallet's stats over a period; null where the API measured nothing. */
 export interface WalletSummaryItem {
   address: string;
-  totalTrades: number;
-  totalBuys: number;
-  totalSells: number;
-  buyRatio: number;
-  sellRatio: number;
-  totalVolumeSol: number;
-  totalVolumeUsd: number;
-  avgTradeSizeSol: number;
-  avgTradeSizeUsd: number;
-  realizedPnlSol: number;
-  realizedPnlUsd: number;
+  totalTrades: number | null;
+  totalBuys: number | null;
+  totalSells: number | null;
+  totalVolumeSol: number | null;
+  totalVolumeUsd: number | null;
+  avgTradeSizeSol: number | null;
+  avgTradeSizeUsd: number | null;
+  realizedPnlSol: number | null;
+  realizedPnlUsd: number | null;
   realizedPnlPct?: number | null;
-  uniqueTokensTraded: number;
-  winRate: number;
+  uniqueTokensTraded: number | null;
+  /** 0–1. */
+  winRate: number | null;
+  /** The wallet's last swap. */
   lastTradeAt?: string | null;
 }
 

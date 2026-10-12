@@ -125,16 +125,16 @@ function SpotView({
         nativeSol={nativeSol}
         totalValueUsd={totalValueUsd}
         holdingsCount={holdings.filter((h) => !h.isNative && (h.usdValue ?? 0) > 0).length}
-        pnlSol={stats?.realizedPnlSol ?? 0}
-        pnlUsd={stats?.realizedPnlUsd ?? 0}
+        pnlSol={stats?.realizedPnlSol ?? null}
+        pnlUsd={stats?.realizedPnlUsd ?? null}
         pnlPct={stats?.realizedPnlPct ?? null}
-        volumeSol={stats?.totalVolumeSol ?? 0}
-        volumeUsd={stats?.totalVolumeUsd ?? 0}
-        tradeCount={stats?.totalTrades ?? 0}
-        buys={stats?.totalBuys ?? 0}
-        sells={stats?.totalSells ?? 0}
-        winRate={stats?.winRate ?? 0}
-        uniqueTokens={stats?.uniqueTokensTraded ?? 0}
+        volumeSol={stats?.totalVolumeSol ?? null}
+        volumeUsd={stats?.totalVolumeUsd ?? null}
+        tradeCount={stats?.totalTrades ?? null}
+        buys={stats?.totalBuys ?? null}
+        sells={stats?.totalSells ?? null}
+        winRate={stats?.winRate ?? null}
+        uniqueTokens={stats?.uniqueTokensTraded ?? null}
       />
 
       <MetaStrip
@@ -472,19 +472,21 @@ function StatsRow({
   nativeSol: number;
   totalValueUsd: number;
   holdingsCount: number;
-  pnlSol: number;
-  pnlUsd: number;
+  pnlSol: number | null;
+  pnlUsd: number | null;
   pnlPct: number | null | undefined;
-  volumeSol: number;
-  volumeUsd: number;
-  tradeCount: number;
-  buys: number;
-  sells: number;
-  winRate: number;
-  uniqueTokens: number;
+  volumeSol: number | null;
+  volumeUsd: number | null;
+  tradeCount: number | null;
+  buys: number | null;
+  sells: number | null;
+  winRate: number | null;
+  uniqueTokens: number | null;
 }) {
   const isPhone = useIsPhone();
+  // Null: the API measured nothing for the period ("—", never a made-up 0).
   const pnlColor =
+    pnlSol == null ? "var(--paper-3)" :
     pnlSol > 0 ? "var(--accent)" : pnlSol < 0 ? "var(--sell)" : "var(--paper-3)";
 
   return (
@@ -505,37 +507,36 @@ function StatsRow({
       />
       <StatCard
         label={`Realized PnL · ${WINDOW_DAYS}d`}
-        primary={
+        primary={pnlSol == null ? "—" : (
           <span style={{ color: pnlColor }}>
             <SolAmount>
               {pnlSol > 0 ? "+" : ""}
               {fmtSol(pnlSol, Math.abs(pnlSol) < 10 ? 3 : 2)}
             </SolAmount>
           </span>
-        }
-        sub={
+        )}
+        sub={pnlUsd == null ? undefined : (
           <span style={{ color: pnlColor }}>
             {pnlUsd > 0 ? "+" : ""}
             {fmtUsd(pnlUsd)}
           </span>
-        }
+        )}
         hint={pnlPct != null ? <Change v={pnlPct} /> : undefined}
         loading={loading}
       />
       <StatCard
         label={`Volume · ${WINDOW_DAYS}d`}
-        primary={<SolAmount>{fmtSol(volumeSol, volumeSol < 10 ? 2 : 1)}</SolAmount>}
-        sub={fmtUsd(volumeUsd)}
+        primary={volumeSol == null ? "—" : <SolAmount>{fmtSol(volumeSol, volumeSol < 10 ? 2 : 1)}</SolAmount>}
+        sub={volumeUsd == null ? undefined : fmtUsd(volumeUsd)}
         hint={`${fmtNum(tradeCount)} trades`}
         loading={loading}
       />
       <StatCard
         label={`Win rate · ${WINDOW_DAYS}d`}
-        primary={`${Math.round(winRate * 100)}%`}
-        // The API reports tokens traded but not how many won, and buy/sell
-        // counts only for some periods: show what is known, no made-up 0s.
-        sub={`${uniqueTokens} tokens`}
-        hint={buys + sells > 0 ? (
+        primary={winRate == null ? "—" : `${Math.round(winRate * 100)}%`}
+        // Show what the API measured, no made-up 0s.
+        sub={`${uniqueTokens ?? "—"} tokens`}
+        hint={buys != null && sells != null && buys + sells > 0 ? (
           <span>
             <span style={{ color: "var(--accent)" }}>{fmtNum(buys)}B</span>
             <span style={{ color: "var(--paper-4)" }}> · </span>

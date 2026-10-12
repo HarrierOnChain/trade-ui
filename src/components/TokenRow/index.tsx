@@ -11,7 +11,6 @@ import { streamSettledDelay } from "../../lib/streamSettle";
 import { useQuickBuy } from "../../hooks/useQuickBuy";
 import { useQuickBuyAmount } from "../../hooks/useQuickBuyAmount";
 import { useBuyQuoteMint } from "../../hooks/useBuyQuoteMint";
-import { useRowImage } from "../../hooks/useRowImage";
 import { useHiddenDevs } from "../../lib/hiddenDevs";
 import { useCardStyle } from "../../contexts/CardStyleContext";
 import { useIsPhone } from "../../hooks/useMediaQuery";
@@ -54,7 +53,6 @@ export const TokenRow = memo(function TokenRow({
   // On phones the row is in a single full-width column: drop the sparkline
   // cell, and let the metric track shrink so the avatar + identity keep room.
   const sparklineCol = showSparkline && !isPhone;
-  const rowImage = useRowImage(t.mint_address, t.image, rowIndex);
   const rowTs = new Date(
     (showMigrated ? t.migrated_at : undefined) ?? t.created_at ?? 0
   ).getTime();
@@ -187,7 +185,7 @@ export const TokenRow = memo(function TokenRow({
         <TokenAvatarFrame
           mint={t.mint_address}
           symbol={t.symbol}
-          image={rowImage}
+          image={t.image}
           chain={t.chain}
           dex={t.dex}
           migrated={t.migrated_at != null || t.graduated === true}

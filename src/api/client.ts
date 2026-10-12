@@ -20,7 +20,6 @@ import {
 import { fetchNativePrices, nativeUsd } from "./native";
 import type { BatchEnrichEntry } from "../lib/batchEnrichCoordinator";
 import type {
-  ChainSentiment,
   TokenEvent,
   Trade,
   Holder,
@@ -79,15 +78,15 @@ async function get<T>(
   path: string,
   params: Params = {},
   ttlMs = 2_000,
-): Promise<{ data: T; nextCursor: string | null }> {
+): Promise<{ data: T; nextCursor: string | null; native?: unknown }> {
   const key = cacheKey(path, params);
   const hit = responseCache.get(key);
-  if (hit && Date.now() - hit.ts < ttlMs) return hit.value as { data: T; nextCursor: string | null };
+  if (hit && Date.now() - hit.ts < ttlMs) return hit.value as { data: T; nextCursor: string | null; native?: unknown };
   const existing = inFlight.get(key);
-  if (existing) return existing as Promise<{ data: T; nextCursor: string | null }>;
+  if (existing) return existing as Promise<{ data: T; nextCursor: string | null; native?: unknown }>;
   const p = evmapiGet<T>(path, params).then(
-    ({ data, nextCursor }) => {
-      const value = { data, nextCursor };
+    ({ data, nextCursor, native }) => {
+      const value = { data, nextCursor, native };
       responseCache.set(key, { ts: Date.now(), value });
       inFlight.delete(key);
       if (responseCache.size > 500) {
@@ -315,6 +314,8 @@ async function fetchCreatedTokens(creator: string, limit: number, extra: Params 
   return rows(data);
 }
 
+/** The API's `/search`: name, symbol, address, a pool's address, or a
+ *  wallet's created tokens (newest first). */
 export function fetchSearch(opts: SearchOptions): Promise<{ data: SearchResult[] }>;
 export function fetchSearch(q: string, limit?: number): Promise<{ data: SearchResult[] }>;
 export async function fetchSearch(
@@ -323,12 +324,7 @@ export async function fetchSearch(
 ): Promise<{ data: SearchResult[] }> {
   const native = await nativeUsd(chain()).catch(() => 0);
   const lim = typeof arg === "string" ? limit : (arg.limit ?? 20);
-  const creator = typeof arg === "string" ? "" : (arg.creator || "");
-  if (creator) {
-    const list = await fetchCreatedTokens(creator, lim);
-    return { data: list.map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
-  }
-  const q = typeof arg === "string" ? arg : (arg.q || "");
+  const q = typeof arg === "string" ? arg : (arg.q || arg.creator || "");
   if (!q.trim()) return { data: [] };
   const { data } = await get<unknown>("/search", { q: q.trim(), limit: Math.min(50, lim) }, 5_000);
   return { data: rows(data).map((r) => toSearchResult(r, native)).filter((r) => r.mint) };
@@ -358,24 +354,24 @@ async function fetchWalletStats(address: string, period: WalletPeriod = "30d"): 
   return data;
 }
 
+/** A wallet's tokens (identity, decimals, value, liquidity per row) and its
+ *  coin (`native`), one `/holdings` read. */
 export const fetchWalletHoldings = async (address: string) => {
-  const [holdings, stats] = await Promise.all([
-    get<unknown>(walletPath(address, "/holdings"), { limit: 100 }, 10_000),
-    fetchWalletStats(address).catch(() => null),
-  ]);
+  const holdings = await get<unknown>(walletPath(address, "/holdings"), { limit: 100 }, 10_000);
   const list = rows(holdings.data);
-  const nativeBalance = num(stats?.nativeBalance);
+  const nativeBalance = num(asRecord(holdings.native)?.amount);
   return normalizeWalletHoldingsResponse({
     success: true,
     ownerAddress: address,
     tokens: list.map((r) => ({
       mint: String(r.token ?? ""),
       amount: num(r.amount) ?? 0,
-      // Holdings carry no decimals.
-      decimals: 0,
+      decimals: num(r.decimals),
       usdValue: num(r.valueUsd),
+      liquidityUsd: num(r.liquidityUsd),
       symbol: typeof r.symbol === "string" ? r.symbol : undefined,
       name: typeof r.name === "string" ? r.name : undefined,
+      image: imageSrc(typeof r.image === "string" ? r.image : null),
       hasBalance: (num(r.amount) ?? 0) > 0,
     })),
     summary: {
@@ -412,31 +408,29 @@ export const fetchWalletTrades = async (address: string, limit = 50, cursor?: st
   };
 };
 
+/** The API's wallet stats; what it did not measure stays null (shown "—"). */
 function statsToSummary(address: string, s: Rec, native: number): WalletSummaryItem {
-  const trades = num(s.trades) ?? 0;
-  const buys = num(s.buys) ?? 0;
-  const sells = num(s.sells) ?? 0;
-  const volume = num(s.volumeUsd) ?? 0;
-  const realized = num(s.realizedPnlUsd) ?? 0;
+  const trades = num(s.trades) ?? null;
+  const volume = num(s.volumeUsd) ?? null;
+  const volumeSol = usdToNative(volume, native) ?? null;
+  const realized = num(s.realizedPnlUsd) ?? null;
   const winRate = num(s.winRatePercent);
   return {
     address,
     totalTrades: trades,
-    totalBuys: buys,
-    totalSells: sells,
-    buyRatio: buys + sells > 0 ? buys / (buys + sells) : 0,
-    sellRatio: buys + sells > 0 ? sells / (buys + sells) : 0,
-    totalVolumeSol: usdToNative(volume, native) ?? 0,
+    totalBuys: num(s.buys) ?? null,
+    totalSells: num(s.sells) ?? null,
+    totalVolumeSol: volumeSol,
     totalVolumeUsd: volume,
-    avgTradeSizeSol: trades > 0 ? (usdToNative(volume, native) ?? 0) / trades : 0,
-    avgTradeSizeUsd: trades > 0 ? volume / trades : 0,
-    realizedPnlSol: usdToNative(realized, native) ?? 0,
+    avgTradeSizeSol: trades && volumeSol != null ? volumeSol / trades : null,
+    avgTradeSizeUsd: trades && volume != null ? volume / trades : null,
+    realizedPnlSol: usdToNative(realized, native) ?? null,
     realizedPnlUsd: realized,
     realizedPnlPct: num(s.realizedPnlPercent) ?? null,
-    uniqueTokensTraded: num(s.tokensTraded) ?? 0,
+    uniqueTokensTraded: num(s.tokensTraded) ?? null,
     // The UI reads a 0–1 ratio.
-    winRate: winRate != null ? winRate / 100 : 0,
-    lastTradeAt: msToIso(s.lastActiveAt) ?? null,
+    winRate: winRate != null ? winRate / 100 : null,
+    lastTradeAt: msToIso(s.lastTradeAt) ?? null,
   };
 }
 
@@ -469,17 +463,24 @@ export const fetchWalletSummary = async (
   } satisfies WalletSummaryResponse;
 };
 
-/** PnlPoint[] (oldest first) for the seconds window [from, to]. */
+/** The API's history: 30 days hourly, 365 days daily (a range starting
+ *  further back is its 400). */
+const PNL_HISTORY_DAYS = { "1h": 30, "1d": 365 } as const;
+
+/** PnlPoint[] (oldest first) for the seconds window [from, to]: the API's
+ *  window (`from`/`to` in ms), from the bucket that holds `from`, clamped to
+ *  its history. */
 async function fetchPnlPoints(address: string, from: number, to: number, resolution: "1h" | "1d"): Promise<Rec[]> {
-  const nowSec = Date.now() / 1000;
-  const days = Math.max(1, Math.min(365, Math.ceil((nowSec - from) / 86_400)));
-  const { data } = await get<unknown>(walletPath(address, "/pnl"), { days, resolution }, 30_000);
-  const fromMs = from * 1000;
-  const toMs = (to || nowSec) * 1000;
-  return rows(data).filter((p) => {
-    const t = num(p.time) ?? 0;
-    return t >= fromMs - (resolution === "1d" ? 86_400_000 : 3_600_000) && t <= toMs;
-  });
+  const nowMs = Date.now();
+  const earliest = nowMs - PNL_HISTORY_DAYS[resolution] * 86_400_000 + 60_000;
+  const toMs = to ? Math.min(to * 1000, nowMs) : nowMs;
+  const fromMs = Math.min(Math.max(from * 1000, earliest), toMs);
+  const { data } = await get<unknown>(
+    walletPath(address, "/pnl"),
+    { from: Math.floor(fromMs), to: Math.floor(toMs), resolution },
+    30_000,
+  );
+  return rows(data);
 }
 
 export const fetchWalletPnlHistory = async (
@@ -505,22 +506,6 @@ export const fetchWalletPnlHistory = async (
       };
     }),
   }) as WalletPnlHistoryResponse;
-};
-
-export const fetchChainSentiment = async () => {
-  const { data } = await get<unknown>("/trending", { chain: chain(), limit: 20, interval: "1h" }, 30_000);
-  let buys = 0, sells = 0;
-  for (const r of rows(data)) {
-    const w = asRecord(r.window);
-    buys += num(w?.buys) ?? 0;
-    sells += num(w?.sells) ?? 0;
-  }
-  const buyRatio = buys + sells ? buys / (buys + sells) : 0.5;
-  return {
-    score: Math.round(buyRatio * 100),
-    buyRatio,
-    trades: buys + sells,
-  } satisfies ChainSentiment;
 };
 
 export interface SignerCountsResponse {
