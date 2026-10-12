@@ -12,36 +12,10 @@ export interface LivePrice {
   ts: number;
   /** Direction of last change vs previous update; drives flash highlight. */
   flash?: "up" | "down";
-  /** SOL volume accumulated from WS trades since subscribe. */
-  volumeSol: number;
-  /** SOL fees accumulated from WS trades since subscribe. */
-  feesSol: number;
-  /** Count of WS trades seen since subscribe. */
-  tradeCount: number;
-  /** Distinct signer addresses seen since subscribe. */
-  uniqueTraders: number;
-  /** Bundle % delta accumulated from WS trade + analysis events (clamped downstream). */
-  bundleAdd: number;
-  /** Sniper % delta accumulated from WS trade + analysis events. */
-  sniperAdd: number;
 }
 
 const BUFFER_SIZE = 60;
 const FLUSH_MS = 120;
-
-const TOKEN_SUPPLY = 1_000_000_000; // 1B, pump.fun / standard Solana meme supply
-
-const emptyMetrics = (): Pick<
-  LivePrice,
-  "volumeSol" | "feesSol" | "tradeCount" | "uniqueTraders" | "bundleAdd" | "sniperAdd"
-> => ({
-  volumeSol: 0,
-  feesSol: 0,
-  tradeCount: 0,
-  uniqueTraders: 0,
-  bundleAdd: 0,
-  sniperAdd: 0,
-});
 
 function applySeed(
   mint: string,
@@ -55,7 +29,6 @@ function applySeed(
     if (existing && existing.prices.length >= prices.length) return prev;
     const next = new Map(prev);
     next.set(mint, {
-      ...emptyMetrics(),
       ...(existing ?? {}),
       price: prices[prices.length - 1],
       prices,
@@ -69,40 +42,14 @@ function applySeed(
 interface Pending {
   price: number;
   ts: number;
-  volumeSolAdd: number;
-  feesSolAdd: number;
-  tradeCountAdd: number;
-  newSigners: string[];
-  bundleAddDelta: number;
-  sniperAddDelta: number;
-}
-
-/** Returns the signed delta (% of supply) contributed by a single event. */
-function analysisDelta(
-  isFlagged: boolean,
-  tokenAmount: number,
-  type: string | undefined,
-): number {
-  if (!isFlagged || !isFinite(tokenAmount) || tokenAmount <= 0) return 0;
-  const sign = String(type ?? "").toUpperCase() === "SELL" ? -1 : 1;
-  return (sign * (tokenAmount / TOKEN_SUPPLY)) * 100;
-}
-
-/** Extract tokenAmount from a WS payload; supports `number` or `{uiAmount: number}`. */
-function extractTokenAmount(v: unknown): number {
-  if (typeof v === "number") return v;
-  if (v && typeof v === "object" && "uiAmount" in v) {
-    const ui = (v as { uiAmount?: unknown }).uiAmount;
-    if (typeof ui === "number") return ui;
-  }
-  return 0;
 }
 
 /**
  * Subscribe to the Raze WS trade stream for a dynamic set of mints.
- * Returns a Map<mint, LivePrice> that includes running aggregates updated on
- * every trade — volume, fees, trade count, unique traders — in addition to
- * the price + rolling sparkline buffer.
+ * Returns a Map<mint, LivePrice>: the last traded price, its flash and a
+ * rolling sparkline buffer. Volume, trades, holders and the bundler and
+ * sniper shares are the API's (board updates, token snapshots), never
+ * counted here from the trades a client happened to see.
  *
  * @param initialPrices Optional map of mint → SOL price from the REST token
  *   list. Applied instantly as a single-point seed so tables show a price on
@@ -126,9 +73,6 @@ export function useLiveTradePrices(
   // of it (see the flush below); the raw series is kept here so a point can be
   // re-judged when its successor arrives instead of being destroyed on sight.
   const rawBufRef = useRef<Map<string, number[]>>(new Map());
-  // Per-mint Set of signers we've already counted — lets us dedupe across trades
-  // without blowing up state with a Set each update.
-  const tradersRef = useRef<Map<string, Set<string>>>(new Map());
   const initialPricesRef = useRef(initialPrices);
   initialPricesRef.current = initialPrices;
 
@@ -136,70 +80,13 @@ export function useLiveTradePrices(
     const ws = RazeWebSocket.getInstance();
     ws.connect();
 
+    // websocket.ts dispatches the mapped Trade (avgPrice: native per token).
     const unsub = ws.on("trade", (msg) => {
-      const raw = msg as Record<string, unknown>;
-      const inner = (
-        typeof raw.transaction === "object" && raw.transaction !== null
-          ? (raw.transaction as Record<string, unknown>)
-          : typeof raw.data === "object" && raw.data !== null
-          ? (raw.data as Record<string, unknown>)
-          : raw
-      ) as Record<string, unknown>;
-
-      const mint = String(
-        inner.tokenMint ?? inner.token_mint ?? inner.mint ?? raw.tokenMint ?? ""
-      );
-      if (!mint) return;
-      if (!wantedRef.current.has(mint)) return;
-
-      const price = toNum(inner.avgPrice ?? inner.avg_price);
+      const mint = String(msg.tokenMint ?? "");
+      if (!mint || !wantedRef.current.has(mint)) return;
+      const price = toNum(msg.avgPrice);
       if (!isFinite(price) || price <= 0) return;
-
-      // Per-trade deltas for the running aggregates
-      const solAmount = Math.max(0, toNum(inner.solAmount ?? inner.sol_amount));
-      const fee = Math.max(0, toNum(inner.fee ?? inner.feeSol ?? inner.fee_sol));
-      const signer = String(inner.signer ?? inner.wallet ?? "");
-
-      // Bundle/sniper delta: trade events can flag themselves as bundle / sniper
-      // transactions. Buys push the % up, sells push it down. Same formula as
-      // solana-frame: sign × (tokenAmount / supply) × 100.
-      const isBundle = Boolean(inner.isBundle ?? inner.is_bundle);
-      const isSniper = Boolean(inner.isSniper ?? inner.is_sniper);
-      const tokenAmount = extractTokenAmount(
-        inner.tokenAmount ?? inner.token_amount ?? inner.tokensAmount
-      );
-      // `type` is the event name ("trade"); the side is `transactionType`.
-      const tradeType = String(inner.transactionType ?? inner.type ?? "BUY");
-      const bundleAddDelta = analysisDelta(isBundle, tokenAmount, tradeType);
-      const sniperAddDelta = analysisDelta(isSniper, tokenAmount, tradeType);
-
-      // Track new unique signer
-      let newSigner: string | null = null;
-      if (signer) {
-        let set = tradersRef.current.get(mint);
-        if (!set) {
-          set = new Set();
-          tradersRef.current.set(mint, set);
-        }
-        if (!set.has(signer)) {
-          set.add(signer);
-          newSigner = signer;
-        }
-      }
-
-      const existing = pendingRef.current.get(mint);
-      pendingRef.current.set(mint, {
-        price,
-        ts: Date.now(),
-        volumeSolAdd: (existing?.volumeSolAdd ?? 0) + (isFinite(solAmount) ? solAmount : 0),
-        feesSolAdd: (existing?.feesSolAdd ?? 0) + (isFinite(fee) ? fee : 0),
-        tradeCountAdd: (existing?.tradeCountAdd ?? 0) + 1,
-        newSigners: newSigner
-          ? [...(existing?.newSigners ?? []), newSigner]
-          : existing?.newSigners ?? [],
-        bundleAddDelta: (existing?.bundleAddDelta ?? 0) + bundleAddDelta,
-        sniperAddDelta: (existing?.sniperAddDelta ?? 0) + sniperAddDelta,
-      });
+      pendingRef.current.set(mint, { price, ts: Date.now() });
 
       if (flushRef.current !== null) return;
       flushRef.current = setTimeout(() => {
@@ -232,18 +119,7 @@ export function useLiveTradePrices(
                 ? "down"
                 : cur?.flash;
 
-            next.set(m, {
-              price: p.price,
-              prices: newBuf,
-              ts: p.ts,
-              flash,
-              volumeSol: (cur?.volumeSol ?? 0) + p.volumeSolAdd,
-              feesSol: (cur?.feesSol ?? 0) + p.feesSolAdd,
-              tradeCount: (cur?.tradeCount ?? 0) + p.tradeCountAdd,
-              uniqueTraders: (cur?.uniqueTraders ?? 0) + p.newSigners.length,
-              bundleAdd: (cur?.bundleAdd ?? 0) + p.bundleAddDelta,
-              sniperAdd: (cur?.sniperAdd ?? 0) + p.sniperAddDelta,
-            });
+            next.set(m, { price: p.price, prices: newBuf, ts: p.ts, flash });
           });
           pendingRef.current.clear();
           return next;
@@ -252,8 +128,7 @@ export function useLiveTradePrices(
     });
 
     // The trades channel's snapshot (recent trades, newest first) seeds the
-    // sparkline and the price before the first live print. Running totals
-    // (volume, trades, traders) stay "since subscribe": the snapshot is history.
+    // sparkline and the price before the first live print.
     const unsubSnapshot = ws.on("trade_snapshot", (msg) => {
       const mint = String(msg.tokenMint ?? "");
       if (!mint || !wantedRef.current.has(mint) || !Array.isArray(msg.trades)) return;
@@ -270,7 +145,6 @@ export function useLiveTradePrices(
         rawBufRef.current.set(mint, prices);
         const next = new Map(prev);
         next.set(mint, {
-          ...emptyMetrics(),
           ...(cur ?? {}),
           price: prices[prices.length - 1]!,
           prices: despikeSeries(prices),
@@ -319,7 +193,6 @@ export function useLiveTradePrices(
         ws.unsubscribeToken(m);
         subsRef.current.delete(m);
         seededRef.current.delete(m);
-        tradersRef.current.delete(m);
         rawBufRef.current.delete(m);
       }
     });
@@ -343,7 +216,6 @@ export function useLiveTradePrices(
       seededRef.current.clear();
       wantedRef.current.clear();
       pendingRef.current.clear();
-      tradersRef.current.clear();
       rawBufRef.current.clear();
     };
   }, []);

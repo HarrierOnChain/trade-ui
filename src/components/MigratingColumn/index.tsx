@@ -49,9 +49,9 @@ export function MigratingColumn({ onSelect, maxHeight = "100%", titleSlot }: Pro
       (t) =>
         !hiddenMints.has(t.mint_address) &&
         !(t.signer && hiddenDevs.has(t.signer)) &&
-        passesFilters(t, liveMap.get(t.mint_address), f),
+        passesFilters(t, f),
     );
-    return f.spam ? dedupeByName(kept, liveMap) : kept;
+    return f.spam ? dedupeByName(kept) : kept;
   }, [tokens, liveMap, f, hiddenMints, hiddenDevs]);
   const [autoPause, setAutoPause] = useState(true);
   const { displayed, hovered, handlers } = useFreezeOnHover(filtered, autoPause);

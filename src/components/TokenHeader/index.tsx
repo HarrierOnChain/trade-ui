@@ -283,12 +283,11 @@ function StatsStrip({
   top10Pct?: number;
   migrated: boolean;
 }) {
-  const vol24USD = tokenVolumeUsd(token, solPrice, live?.volumeSol ?? 0);
+  // The API's 24h figures, kept current by the token channel's snapshots.
+  const vol24USD = tokenVolumeUsd(token, solPrice);
+  const tradeCount = token.tradeCount ?? 0;
 
-  const tradeCount =
-    (token.tradeCount ?? 0) + (live?.tradeCount ?? 0);
-
-  const { bundlePct, sniperPct, holders } = computeTokenMetrics(token, live, { top10Pct });
+  const { bundlePct, sniperPct, holders } = computeTokenMetrics(token, { top10Pct });
 
   const top10Value = top10Pct ?? 0;
 

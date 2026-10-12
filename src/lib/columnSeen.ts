@@ -45,7 +45,7 @@ export interface ColumnSeen {
 }
 
 const OBSERVERS: Array<{ key: string; observe: (t: TokenEvent, now: number) => number | boolean | undefined }> = [
-  ...RANGE_FILTERS.map((s) => ({ key: s.key, observe: (t: TokenEvent, now: number) => s.value(t, undefined, now) })),
+  ...RANGE_FILTERS.map((s) => ({ key: s.key, observe: (t: TokenEvent, now: number) => s.value(t, now) })),
   ...FLAG_FILTERS.map((s) => ({ key: s.key, observe: (t: TokenEvent) => s.observe(t) })),
 ];
 

@@ -7,7 +7,6 @@
  * imports, so `node --test` can load it (src/lib/tokenFilters.test.ts).
  */
 import type { TokenEvent } from "../types";
-import type { LivePrice } from "../hooks/useLiveTradePrices";
 
 export type ColumnKey = "trending" | "deploy" | "migrating" | "migration";
 
@@ -69,7 +68,7 @@ export interface RangeSpec {
   hint?: string;
   unit?: "pct" | "usd" | "native" | "min";
   /** The row's value; `undefined` while the API has not said. */
-  value: (t: TokenEvent, live?: LivePrice, now?: number) => number | undefined;
+  value: (t: TokenEvent, now?: number) => number | undefined;
 }
 
 export interface FlagSpec {
@@ -81,13 +80,6 @@ export interface FlagSpec {
   observe: (t: TokenEvent) => boolean | undefined;
   /** Whether the row passes with the flag on; `undefined` while unknown. */
   pass: (t: TokenEvent) => boolean | undefined;
-}
-
-/** Sum of the 24h figure and what the live trades added since, or
- *  `undefined` when neither is known yet. */
-function withLive(base: number | undefined, add: number | undefined): number | undefined {
-  if (base == null && !add) return undefined;
-  return (base ?? 0) + (add ?? 0);
 }
 
 function ageMinutes(t: TokenEvent, now = Date.now()): number | undefined {
@@ -120,17 +112,17 @@ export const RANGE_FILTERS: RangeSpec[] = [
   { key: "marketCap", tab: "metrics", label: "Market cap", unit: "usd", value: (t) => t.marketCap },
   { key: "liquidity", tab: "metrics", label: "Liquidity", unit: "usd", value: (t) => t.liquidity },
   { key: "volume24h", tab: "metrics", label: "Volume 24h", unit: "native",
-    value: (t, live) => withLive(t.totalSolVolume, live?.volumeSol) },
+    value: (t) => t.totalSolVolume },
   { key: "priceChange", tab: "metrics", label: "Price change 24h", unit: "pct", value: (t) => t.priceChange },
   { key: "tradeCount", tab: "metrics", label: "Trades 24h",
-    value: (t, live) => withLive(t.tradeCount, live?.tradeCount) },
+    value: (t) => t.tradeCount },
   { key: "buyCount", tab: "metrics", label: "Buys 24h", value: (t) => t.buyCount },
   { key: "sellCount", tab: "metrics", label: "Sells 24h", value: (t) => t.sellCount },
   { key: "holders", tab: "metrics", label: "Holders", value: (t) => t.holders },
   { key: "graduationPercent", tab: "metrics", label: "Bonding curve", unit: "pct",
     hint: "How full the launchpad curve is", value: (t) => t.graduationPercent },
   { key: "ageMinutes", tab: "metrics", label: "Age", unit: "min",
-    value: (t, _live, now) => ageMinutes(t, now) },
+    value: (t, now) => ageMinutes(t, now) },
 ];
 
 const present = (v: string | null | undefined) => Boolean(v && v.trim());
@@ -241,13 +233,11 @@ export function isFiltering(f: ColumnFilters): boolean {
  * A row with no trades and no volume. With `unknownPasses`, a row whose
  * activity the API has not reported yet is not counted as dead.
  */
-export function isSpamToken(t: TokenEvent, live?: LivePrice, unknownPasses = false): boolean {
+export function isSpamToken(t: TokenEvent, unknownPasses = false): boolean {
   const active =
     (t.tradeCount ?? 0) > 0 ||
     (t.totalSolVolume ?? 0) > 0 ||
-    (t.volume24h ?? 0) > 0 ||
-    (live?.tradeCount ?? 0) > 0 ||
-    (live?.volumeSol ?? 0) > 0;
+    (t.volume24h ?? 0) > 0;
   if (active) return false;
   const known = t.tradeCount != null || t.totalSolVolume != null || t.volume24h != null;
   return known || !unknownPasses;
@@ -274,13 +264,12 @@ export interface GateOptions {
 }
 
 /**
- * True if the token passes every filter of the column. Live WS figures
- * (`live`) add to the REST ones where they exist. A filter on a value the row
- * does not have fails it, unless `optimistic`.
+ * True if the token passes every filter of the column, on the row's own
+ * figures (the API's, kept current by board updates). A filter on a value the
+ * row does not have fails it, unless `optimistic`.
  */
 export function passesFilters(
   t: TokenEvent,
-  live: LivePrice | undefined,
   f: ColumnFilters,
   opts: GateOptions = {},
 ): boolean {
@@ -288,7 +277,7 @@ export function passesFilters(
   const hidden = f.hiddenPlatforms[t.chain ?? ""];
   if (hidden && hidden.length > 0 && hidden.includes(platformKey(t.dex))) return false;
 
-  if (f.spam && isSpamToken(t, live, optimistic)) return false;
+  if (f.spam && isSpamToken(t, optimistic)) return false;
 
   const include = parseKeywords(f.search);
   if (include.length > 0 && !matchesAnyKeyword(t, include)) return false;
@@ -299,7 +288,7 @@ export function passesFilters(
   for (const s of RANGE_FILTERS) {
     const r = f[s.key];
     if (!isRangeSet(r)) continue;
-    const v = s.value(t, live, now);
+    const v = s.value(t, now);
     if (v == null) {
       if (optimistic) continue;
       return false;

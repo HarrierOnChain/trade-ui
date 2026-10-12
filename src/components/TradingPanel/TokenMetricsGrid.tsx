@@ -2,7 +2,6 @@
 
 import React, { useMemo } from "react";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
-import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import { computeTokenMetrics } from "../../lib/tokenMetrics";
 import { fmtNum } from "../../lib/format";
 import { fluidColsFit } from "../../lib/responsive";
@@ -16,18 +15,16 @@ interface Props {
 export function TokenMetricsGrid({ mint }: Props) {
   const isPhone = useIsPhone();
   const { info } = useTokenInfo(mint);
-  const liveMap = useLiveTradePrices(useMemo(() => [mint], [mint]));
-  const live = liveMap.get(mint);
   const token = (info ?? {}) as TokenEvent;
 
   // The API's shares: the ten largest holders (pools, curves and burns left
   // out), and the creator with its linked wallets.
   const metrics = useMemo(
-    () => computeTokenMetrics(token, live, {
+    () => computeTokenMetrics(token, {
       top10Pct: token.top10Percent,
       devHoldPct: token.devPercent ?? null,
     }),
-    [token, live],
+    [token],
   );
 
   const cells: Array<{

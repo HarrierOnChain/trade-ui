@@ -84,7 +84,7 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
         return { t, old, view: old ? mergeLiveFrame(old, t) : t };
       });
       const wanted = (gate
-        ? rows.filter((r) => passesFilters(r.view, undefined, gate, { optimistic: true }))
+        ? rows.filter((r) => passesFilters(r.view, gate, { optimistic: true }))
         : rows)
         .sort((a, b) => orderRef.current(a.view, b.view))
         .slice(0, MAX);

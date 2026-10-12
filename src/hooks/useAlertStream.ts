@@ -45,7 +45,7 @@ export function useAlertStream(filters?: ColumnFilters, period: TrendingPeriod =
         // Keep row identity across frames that change nothing it shows.
         const old = renderedRef.current.get(t.mint_address);
         const view = old ? mergeLiveFrame(old, t) : t;
-        if (gate && !passesFilters(view, undefined, gate, { optimistic: true })) continue;
+        if (gate && !passesFilters(view, gate, { optimistic: true })) continue;
         next.push(old && sameRow(old, view) ? old : view);
         if (next.length >= MAX) break;
       }

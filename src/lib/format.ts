@@ -71,27 +71,17 @@ export function fmtUsd(raw?: number | null): string {
   return `$${v.toFixed(4)}`;
 }
 
+/** A token's 24h volume in USD: the API's (`volume24h`), else its native
+ *  volume at the coin's price; undefined when neither is known. */
 export function tokenVolumeUsd(
   token: Pick<TokenEvent, "totalSolVolume" | "volume24h">,
   solPrice?: number | null,
-  liveVolumeSol = 0,
 ): number | undefined {
-  const restVolumeUsd =
-    token.totalSolVolume != null && token.totalSolVolume > 0
-      ? solPrice && solPrice > 0
-        ? token.totalSolVolume * solPrice
-        : undefined
-      : token.volume24h != null && token.volume24h > 0
-      ? token.volume24h
-      : undefined;
-
-  const liveVolumeUsd =
-    solPrice && solPrice > 0 && liveVolumeSol > 0
-      ? liveVolumeSol * solPrice
-      : 0;
-
-  if (restVolumeUsd != null) return restVolumeUsd + liveVolumeUsd;
-  return liveVolumeUsd > 0 ? liveVolumeUsd : undefined;
+  if (token.volume24h != null && token.volume24h > 0) return token.volume24h;
+  if (token.totalSolVolume != null && token.totalSolVolume > 0 && solPrice && solPrice > 0) {
+    return token.totalSolVolume * solPrice;
+  }
+  return undefined;
 }
 
 export function shortAddr(a?: string | null, n = 4): string {

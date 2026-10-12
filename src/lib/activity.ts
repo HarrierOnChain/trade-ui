@@ -1,16 +1,8 @@
 import type { TokenEvent } from "../types";
-import type { LivePrice } from "../hooks/useLiveTradePrices";
 
-/**
- * Effective "volume" score for a token — combines REST totals with live WS
- * delta so the higher-value duplicate wins even before enrichment lands.
- */
-function volumeScore(t: TokenEvent, live?: LivePrice): number {
-  return (
-    (t.totalSolVolume ?? 0) +
-    (t.volume24h ?? 0) +
-    (live?.volumeSol ?? 0)
-  );
+/** A token's 24h volume (native, else USD): the higher-volume duplicate wins. */
+function volumeScore(t: TokenEvent): number {
+  return (t.totalSolVolume ?? 0) + (t.volume24h ?? 0);
 }
 
 /**
@@ -18,15 +10,12 @@ function volumeScore(t: TokenEvent, live?: LivePrice): number {
  * the highest-volume entry; drop the rest. Preserves original ordering of the
  * first occurrence so visually it feels stable.
  */
-export function dedupeByName(
-  tokens: TokenEvent[],
-  liveMap?: Map<string, LivePrice>,
-): TokenEvent[] {
+export function dedupeByName(tokens: TokenEvent[]): TokenEvent[] {
   const best = new Map<string, { token: TokenEvent; score: number; index: number }>();
   tokens.forEach((t, i) => {
     const key = normalizeName(t.name, t.symbol, t.mint_address);
     if (!key) { best.set(`__mint:${t.mint_address}`, { token: t, score: -1, index: i }); return; }
-    const score = volumeScore(t, liveMap?.get(t.mint_address));
+    const score = volumeScore(t);
     const cur = best.get(key);
     if (!cur || score > cur.score) {
       best.set(key, { token: t, score, index: cur?.index ?? i });

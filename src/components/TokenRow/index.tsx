@@ -60,18 +60,9 @@ export const TokenRow = memo(function TokenRow({
   // Tokens the creator launched (the API reports launches, not graduations).
   const hasDevRow = t.creatorDeploys != null;
 
-  // Bundle/sniper — merge REST baseline with the live WS delta and clamp to [0,100],
-  // matching solana-frame's monitor behavior.
-  const liveBundleAdd = live?.bundleAdd ?? 0;
-  const liveSniperAdd = live?.sniperAdd ?? 0;
-  const bundle = Math.max(
-    0,
-    Math.min(100, Number(t.bundlePercentage ?? 0) + liveBundleAdd)
-  );
-  const sniper = Math.max(
-    0,
-    Math.min(100, Number(t.sniperPercentage ?? 0) + liveSniperAdd)
-  );
+  // Bundle/sniper: the API's shares, clamped to [0,100].
+  const bundle = Math.max(0, Math.min(100, Number(t.bundlePercentage ?? 0)));
+  const sniper = Math.max(0, Math.min(100, Number(t.sniperPercentage ?? 0)));
   const change = t.priceChange;
 
   const { lastSeen } = useLastSeen();
@@ -79,24 +70,17 @@ export const TokenRow = memo(function TokenRow({
 
   const [hovered, setHovered] = useState(false);
 
-  // Activity tiles — merge the 24h REST baseline with live WS deltas so the
-  // numbers tick up as new trades stream in.
-  const liveVolumeSol  = live?.volumeSol ?? 0;
-  const liveTradeCount = live?.tradeCount ?? 0;
-  const liveTraders    = live?.uniqueTraders ?? 0;
-
-  const effectiveVolumeUsd = tokenVolumeUsd(t, solPrice, liveVolumeSol);
-  const effectiveTrades  = (t.tradeCount     ?? 0) + liveTradeCount;
-  // Holders: take max of known holder count vs live unique-signer count (live
-  // signers may already be in the REST total; summing would double-count).
-  const effectiveHolders = Math.max(t.holders ?? 0, liveTraders);
+  // Activity tiles: the API's 24h figures and holder count, which the
+  // board's updates keep current (a trader is not a holder).
+  const effectiveVolumeUsd = tokenVolumeUsd(t, solPrice);
+  const effectiveTrades  = t.tradeCount ?? 0;
+  const effectiveHolders = t.holders ?? 0;
 
   const metricTiles: Array<{ label: string; value: string; live?: boolean; accent?: string; tone?: "warn" | "green" }> = [];
   if (effectiveVolumeUsd != null && effectiveVolumeUsd > 0) {
     metricTiles.push({
       label: "V",
       value: fmtUsd(effectiveVolumeUsd),
-      live: liveVolumeSol > 0,
       accent: "var(--info)",
     });
   }
@@ -104,7 +88,6 @@ export const TokenRow = memo(function TokenRow({
     metricTiles.push({
       label: "TX",
       value: fmtNum(effectiveTrades),
-      live: liveTradeCount > 0,
       accent: "var(--paper-3)",
     });
   }
@@ -112,24 +95,21 @@ export const TokenRow = memo(function TokenRow({
     metricTiles.push({
       label: "H",
       value: fmtNum(effectiveHolders),
-      live: liveTraders > 0 && liveTraders > (t.holders ?? 0),
       accent: "var(--accent)",
     });
   }
-  if (t.bundlePercentage != null || liveBundleAdd !== 0) {
+  if (t.bundlePercentage != null) {
     metricTiles.push({
       label: "B",
       value: `${bundle.toFixed(0)}%`,
-      live: liveBundleAdd !== 0,
       accent: "var(--sell)",
       tone: bundle > 10 ? "warn" : undefined,
     });
   }
-  if (t.sniperPercentage != null || liveSniperAdd !== 0) {
+  if (t.sniperPercentage != null) {
     metricTiles.push({
       label: "S",
       value: `${sniper.toFixed(0)}%`,
-      live: liveSniperAdd !== 0,
       accent: "var(--warn)",
       tone: sniper > 8 ? "warn" : undefined,
     });

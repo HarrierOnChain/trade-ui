@@ -43,24 +43,25 @@ export function usdToNative(usd: unknown, native: number): number | undefined {
   return v / native;
 }
 
-const NATIVE_QUOTES: Record<string, string[]> = {
-  sol: ["SOL", "WSOL"],
-  eth: ["ETH", "WETH"],
-  base: ["ETH", "WETH"],
-  robinhood: ["ETH", "WETH"],
-  bsc: ["BNB", "WBNB"],
+/** The chain's coin as the API names a quote paid in it (its wrapped token
+ *  reads as the coin: SOL, ETH, BNB, never WSOL, WETH or WBNB). */
+const NATIVE_QUOTES: Record<string, string> = {
+  sol: "SOL",
+  eth: "ETH",
+  base: "ETH",
+  robinhood: "ETH",
+  bsc: "BNB",
 };
 
-/** True when a trade's quote is the chain's own coin (so its amount is native). */
+/** True when a quote is the chain's own coin (so its amount is native). */
 export function isNativeQuote(symbol: unknown, chain: string): boolean {
-  if (typeof symbol !== "string") return false;
-  return (NATIVE_QUOTES[chain] ?? NATIVE_QUOTES.sol).includes(symbol.toUpperCase());
+  return typeof symbol === "string" && symbol === (NATIVE_QUOTES[chain] ?? NATIVE_QUOTES.sol);
 }
 
 function quoteKind(symbol: unknown, chain: string): string | undefined {
   if (typeof symbol !== "string" || !symbol) return undefined;
   const s = symbol.toUpperCase();
-  if (isNativeQuote(s, chain)) return chain === "sol" ? "SOL" : s.replace(/^W/, "");
+  if (isNativeQuote(symbol, chain)) return symbol;
   if (s === "USDC" || s === "USDT") return s;
   return "OTHER";
 }
