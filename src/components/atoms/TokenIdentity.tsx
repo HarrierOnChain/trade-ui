@@ -42,6 +42,10 @@ interface Props {
   chartToken?: TokenEvent;
   chartLive?: LivePrice;
   chartSolPrice?: number;
+  /** Read the token's identity when the props lack it (a row known only by
+   *  its mint). Off for rows the API names (wallet trades carry the token's
+   *  name, symbol and image): they show what they carry. */
+  lookup?: boolean;
 }
 
 const SIZE = {
@@ -73,6 +77,7 @@ export function TokenIdentity({
   chartToken,
   chartLive,
   chartSolPrice,
+  lookup = true,
 }: Props) {
   const { navigate } = useClientNav();
   const isPhone = useIsPhone();
@@ -88,7 +93,7 @@ export function TokenIdentity({
   const metrics = SIZE[size];
 
   useEffect(() => {
-    if (!cleanMint) {
+    if (!cleanMint || !lookup) {
       setMeta(null);
       return;
     }
@@ -118,7 +123,7 @@ export function TokenIdentity({
     return () => {
       cancelled = true;
     };
-  }, [cleanMint, image, initialName, initialSymbol, symbolLooksTruncated]);
+  }, [cleanMint, image, initialName, initialSymbol, symbolLooksTruncated, lookup]);
 
   const display = useMemo(() => {
     const metaSymbol = meta?.symbol || "";

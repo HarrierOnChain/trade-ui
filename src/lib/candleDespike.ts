@@ -1,11 +1,7 @@
 /**
- * Candle despike — the client half of the corroboration rule.
- *
- * This is a faithful port of the server's `history/src/db/ohlcv_despike.rs`.
- * The two MUST stay in step: the chart draws bars from three sources — the
- * REST history, the server-pushed `ohlcv` candle, and the live trade tape — and
- * if they disagree the chart visibly rewrites itself as a bar ages from one
- * source to the next. One rule, one set of constants, three call sites.
+ * Candle despike — the filter behind `despikeSeries`, the token rows'
+ * sparklines (hooks/useLiveTradePrices). The chart no longer runs it: the API
+ * cuts stray wicks with one rule on REST, the snapshot and the forming candle.
  *
  * ## The rule
  *
@@ -78,7 +74,7 @@ function clampInto(v: number, loRef: number, hiRef: number, band: number): numbe
  * neighbour's excursion. This is also what makes the function IDEMPOTENT, which
  * is what lets it run safely on bars the server already filtered.
  */
-export function despikeBars(bars: OhlcLike[]): number {
+function despikeBars(bars: OhlcLike[]): number {
   if (bars.length < 2) return 0;
 
   const closes = bars.map((b) => b.close);

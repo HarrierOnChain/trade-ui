@@ -3,7 +3,8 @@ import React, { useCallback, useRef } from "react";
 import { useWalletTrades } from "../../hooks/useWalletTrades";
 import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { TokenIdentity } from "../atoms";
-import { tradeLegKeyAcrossTokens, tradeNative } from "../../lib/trades";
+import { tradeKeyAcrossTokens, tradeNative } from "../../lib/trades";
+import type { WalletTradeRow } from "../../api/client";
 import type { Trade } from "../../types";
 import styles from "../TradesTable/styles.module.css";
 
@@ -12,12 +13,6 @@ interface Props {
   solPrice?: number;
   limit?: number;
   onTokenClick?: (mint: string) => void;
-}
-
-function toMs(raw: string | number): number {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!isNaN(n) && n > 0) return n > 1e15 ? n / 1000 : n > 1e12 ? n : n * 1000;
-  return new Date(raw as string).getTime();
 }
 
 function fmtAge(ms: number): string {
@@ -98,15 +93,16 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
             {!loading && !error && trades.length === 0 && (
               <tr><td data-label="" colSpan={6} className={styles.empty}>{address ? "No trades" : "Enter a wallet address"}</td></tr>
             )}
-            {trades.map((t) => {
+            {trades.map((row) => {
+              const t = row as WalletTradeRow;
               const isBuy = t.transactionType === "buy";
               const mint = t.tokenMint;
               return (
                 <tr
-                  key={tradeLegKeyAcrossTokens(t)}
+                  key={tradeKeyAcrossTokens(t)}
                   className={`${styles.tradeRow} ${isBuy ? styles.buy : styles.sell}`}
                 >
-                  <td data-label="Time" className={styles.time}>{fmtAge(toMs(t.timestamp))}</td>
+                  <td data-label="Time" className={styles.time}>{fmtAge(t.timestamp)}</td>
                   <td data-label="Type" className={styles.typeCell}>
                     <span className={`${styles.badge} ${isBuy ? styles.buyBadge : styles.sellBadge}`}>
                       {isBuy ? "BUY" : "SELL"}
@@ -115,6 +111,10 @@ export function WalletTrades({ address, solPrice = 0, limit = 50, onTokenClick }
                   <td data-label="Token">
                     <TokenIdentity
                       mint={mint}
+                      name={t.tokenName}
+                      symbol={t.tokenSymbol}
+                      image={t.tokenImage}
+                      lookup={false}
                       showImage
                       compact
                       size="xs"

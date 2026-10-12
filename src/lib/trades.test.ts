@@ -1,5 +1,7 @@
 /**
- * Row identity and merge rules of the trade lists.
+ * Row identity and merge rules of the trade lists: rows are keyed on the
+ * API's `id` (the same on REST pages, the trades snapshot, live frames and
+ * retracts).
  * Run: `npm test` (or `node --test src/lib/trades.test.ts`) from trade-ui/.
  * Kept out of tsconfig, like candleDespike.parity.test.ts: Node needs the
  * `.ts` extension in the import below.
@@ -9,13 +11,13 @@ import assert from "node:assert/strict";
 import {
   addLiveTrade,
   appendTradePage,
+  applyTradeTags,
   dropRetracted,
   mergeTradeBatch,
   mergeTradeLists,
+  tradeIdentityKey,
   tradeKey,
   tradeKeyAcrossTokens,
-  tradeLegKey,
-  tradeLegKeyAcrossTokens,
   tradeNative,
 } from "./trades.ts";
 import type { Trade } from "../types";
@@ -23,16 +25,15 @@ import type { Trade } from "../types";
 const MINT = "9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump";
 const SIG = "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW";
 const SIG2 = "4hXTCkRzt9WyecNzV1XPgCDfGAZzQKNxLXgynz5QDuWWPSAZBZSHptvWRL3BjCvzUXRdKvHL2b5yV6vjqYsLjvSD";
-const FEE_PAYER = "7Ppgch9d4XRAygVNJP4bDkc7V6htYXGfghX4zzG9r4cH";
 const OWNER = "HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH";
 const COSIGNER = "Bv2xTxD3nrvXyWCkPjQZz6mLyzK9WbjPyzrmCF5Fr8pM";
 
-const EVM_TX = "0xAbC0000000000000000000000000000000000000000000000000000000000001";
-const EVM_MAKER = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed";
-const EVM_TOKEN = "0x6b175474e89094c44da98b954eedeac495271d0f";
+const EVM_TX = "0xabc0000000000000000000000000000000000000000000000000000000000001";
+const EVM_MAKER = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
 
 function trade(over: Partial<Trade>): Trade {
   return {
+    id: `${SIG}:${OWNER}`,
     signature: SIG,
     tokenMint: MINT,
     signer: OWNER,
@@ -45,34 +46,27 @@ function trade(over: Partial<Trade>): Trade {
   };
 }
 
-const wallets = (rows: Trade[]) => rows.map((t) => t.signer);
+const ids = (rows: Trade[]) => rows.map((t) => t.id);
 
 // ── identity ──────────────────────────────────────────────────────────
 
-test("co-signers of one transaction are two identities", () => {
-  assert.notEqual(tradeKey(trade({ signer: OWNER })), tradeKey(trade({ signer: COSIGNER })));
+test("a row is its id; one the UI made falls back to signature and wallet", () => {
+  assert.equal(tradeKey(trade({ id: "a" })), "a");
+  assert.equal(tradeKey(trade({ id: undefined })), `${SIG}:${OWNER}`);
 });
 
-test("EVM keys ignore case, base58 keys do not", () => {
-  assert.equal(
-    tradeKey(trade({ signature: EVM_TX, signer: EVM_MAKER })),
-    tradeKey(trade({ signature: EVM_TX.toLowerCase(), signer: EVM_MAKER.toLowerCase() })),
-  );
-  assert.notEqual(tradeKey(trade({ signer: OWNER })), tradeKey(trade({ signer: OWNER.toLowerCase() })));
-});
-
-test("on EVM two swap logs of one wallet in one transaction are two legs", () => {
-  const a = trade({ signature: EVM_TX, signer: EVM_MAKER, solAmount: 0.4, tokensAmount: 400 });
-  const b = trade({ signature: EVM_TX, signer: EVM_MAKER, solAmount: 0.6, tokensAmount: 590 });
-  assert.equal(tradeKey(a), tradeKey(b));
-  assert.notEqual(tradeLegKey(a), tradeLegKey(b));
+test("on EVM two swap logs of one wallet in one transaction are two rows", () => {
+  const a = trade({ id: `${EVM_TX}:3`, signature: EVM_TX, signer: EVM_MAKER });
+  const b = trade({ id: `${EVM_TX}:7`, signature: EVM_TX, signer: EVM_MAKER });
+  assert.notEqual(tradeKey(a), tradeKey(b));
+  assert.equal(mergeTradeBatch([], [a, b]).length, 2);
 });
 
 test("a token-to-token swap is one row per token in a wallet's list", () => {
   const sell = trade({ transactionType: "sell", tokenMint: MINT });
   const buy = trade({ transactionType: "buy", tokenMint: "SAPL1NGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
   assert.notEqual(tradeKeyAcrossTokens(sell), tradeKeyAcrossTokens(buy));
-  assert.notEqual(tradeLegKeyAcrossTokens(sell), tradeLegKeyAcrossTokens(buy));
+  assert.notEqual(tradeIdentityKey(sell), tradeIdentityKey(buy));
 });
 
 test("unknown volume stays unknown", () => {
@@ -83,59 +77,19 @@ test("unknown volume stays unknown", () => {
 
 // ── a batch (REST page, WS snapshot) against what the list holds ───────
 
-test("a snapshot naming another wallet for a live swap replaces it, not doubles it", () => {
-  // The firehose names the owner whose balance moved; GMGN names the fee payer.
-  const live = addLiveTrade([], trade({ signer: OWNER }));
-  const merged = mergeTradeBatch(live, [trade({ signer: FEE_PAYER })]);
-  assert.deepEqual(wallets(merged), [FEE_PAYER]);
+test("a batch replaces the rows it holds by id and adds the others", () => {
+  let rows = addLiveTrade([], trade({ id: "a", solAmount: 0.1 }));
+  rows = mergeTradeBatch(rows, [trade({ id: "a", solAmount: 0.2 }), trade({ id: "b" })]);
+  assert.deepEqual(ids(rows), ["a", "b"]);
+  assert.equal(rows[0].solAmount, 0.2);
 });
 
-test("a live frame for a swap an API answer already holds is not added", () => {
-  const held = mergeTradeBatch([], [trade({ signer: FEE_PAYER })]);
-  const after = addLiveTrade(held, trade({ signer: OWNER }));
-  assert.deepEqual(wallets(after), [FEE_PAYER]);
-});
-
-test("co-signer rows survive live frames, a snapshot and a REST page", () => {
-  let rows = addLiveTrade([], trade({ signer: OWNER }));
-  rows = addLiveTrade(rows, trade({ signer: COSIGNER }));
-  assert.deepEqual(new Set(wallets(rows)), new Set([OWNER, COSIGNER]));
-  rows = mergeTradeBatch(rows, [trade({ signer: OWNER }), trade({ signer: COSIGNER })]);
+test("co-signers of one transaction are two rows", () => {
+  let rows = addLiveTrade([], trade({ id: `${SIG}:${OWNER}` }));
+  rows = addLiveTrade(rows, trade({ id: `${SIG}:${COSIGNER}`, signer: COSIGNER }));
   assert.equal(rows.length, 2);
-  rows = mergeTradeBatch(rows, [trade({ signer: OWNER }), trade({ signer: COSIGNER }), trade({ signature: SIG2 })]);
-  assert.equal(rows.length, 3);
-});
-
-test("rows of other transactions are kept when a batch arrives", () => {
-  const rows = addLiveTrade([], trade({ signature: SIG2, signer: COSIGNER }));
-  const merged = mergeTradeBatch(rows, [trade({ signer: FEE_PAYER })]);
-  assert.deepEqual(new Set(merged.map((t) => t.signature)), new Set([SIG, SIG2]));
-});
-
-test("the same live frame twice (socket and SSE) is one row", () => {
-  const f = trade({});
-  assert.equal(addLiveTrade(addLiveTrade([], f), { ...f }).length, 1);
-  const e = trade({ signature: EVM_TX, signer: EVM_MAKER });
-  assert.equal(addLiveTrade(addLiveTrade([], e), { ...e }).length, 1);
-});
-
-test("EVM: both legs of a split route survive a batch", () => {
-  const legs = [
-    trade({ signature: EVM_TX, signer: EVM_MAKER, tokenMint: EVM_TOKEN, solAmount: 0.4, tokensAmount: 400 }),
-    trade({ signature: EVM_TX, signer: EVM_MAKER, tokenMint: EVM_TOKEN, solAmount: 0.6, tokensAmount: 590 }),
-  ];
-  const rows = mergeTradeBatch([], legs);
+  rows = mergeTradeBatch(rows, [trade({ id: `${SIG}:${OWNER}` }), trade({ id: `${SIG}:${COSIGNER}`, signer: COSIGNER })]);
   assert.equal(rows.length, 2);
-  assert.equal(rows.reduce((s, t) => s + (t.solAmount ?? 0), 0), 1.0);
-});
-
-test("EVM: a buy and a sell leg through the token in one transaction both survive", () => {
-  const legs = [
-    trade({ signature: EVM_TX, signer: EVM_MAKER, transactionType: "buy", solAmount: 0.5, tokensAmount: 500 }),
-    trade({ signature: EVM_TX, signer: EVM_MAKER, transactionType: "sell", solAmount: 0.5, tokensAmount: 500 }),
-  ];
-  assert.equal(mergeTradeBatch([], legs).length, 2);
-  assert.equal(addLiveTrade(addLiveTrade([], legs[0]), legs[1]).length, 2);
 });
 
 test("an exact duplicate inside one batch is one row", () => {
@@ -143,98 +97,78 @@ test("an exact duplicate inside one batch is one row", () => {
   assert.equal(mergeTradeBatch([], [t, { ...t }]).length, 1);
 });
 
-// ── flags and tags learnt later ───────────────────────────────────────
+// ── live frames ───────────────────────────────────────────────────────
 
-test("tags a later snapshot carries reach the row already shown", () => {
-  const rows = addLiveTrade([], trade({ tags: ["bundle"], isBundle: true }));
-  const merged = mergeTradeBatch(rows, [trade({ tags: ["sniper", "insider"], isSniper: true })]);
-  assert.equal(merged.length, 1);
-  assert.deepEqual(new Set(merged[0].tags), new Set(["bundle", "sniper", "insider"]));
-  assert.equal(merged[0].isBundle, true);
-  assert.equal(merged[0].isSniper, true);
+test("the same live frame twice (socket and SSE) is one row and changes nothing", () => {
+  const f = trade({ tags: ["mev"] });
+  const rows = addLiveTrade([], f);
+  assert.equal(rows.length, 1);
+  assert.equal(addLiveTrade(rows, { ...f }), rows);
 });
 
-test("tags a later live frame carries reach the row already shown", () => {
-  const rows = mergeTradeBatch([], [trade({ tags: [] })]);
-  const after = addLiveTrade(rows, trade({ tags: ["mev"], isProTrader: true }));
+test("a later copy of a row (the frame of a row a page holds) updates it in place", () => {
+  const rows = mergeTradeBatch([], [trade({ id: "a", tags: [] })]);
+  const after = addLiveTrade(rows, trade({ id: "a", tags: ["mev"], isProTrader: true }));
   assert.equal(after.length, 1);
   assert.deepEqual(after[0].tags, ["mev"]);
   assert.equal(after[0].isProTrader, true);
 });
 
-test("a duplicate frame with nothing new leaves the list untouched", () => {
-  const rows = addLiveTrade([], trade({ tags: ["mev"] }));
-  assert.equal(addLiveTrade(rows, trade({ tags: ["mev"] })), rows);
+test("a tags frame replaces the tags of the rows it names", () => {
+  const rows = mergeTradeBatch([], [trade({ id: "a", tags: ["bundle"], isBundle: true }), trade({ id: "b" })]);
+  const after = applyTradeTags(rows, [{ id: "a", tags: ["sniper"] }]);
+  assert.deepEqual(after[0].tags, ["sniper"]);
+  assert.equal(after[0].isBundle, false);
+  assert.equal(after[0].isSniper, true);
+  assert.equal(after[1], rows[1]);
+  assert.equal(applyTradeTags(rows, [{ id: "zzz", tags: ["sniper"] }]), rows);
 });
 
 // ── lists merged for display ──────────────────────────────────────────
 
-test("display merge keeps the tape's EVM legs and gives each row a unique key", () => {
-  const tape = mergeTradeBatch([], [
-    trade({ signature: EVM_TX, signer: EVM_MAKER, solAmount: 0.4, tokensAmount: 400 }),
-    trade({ signature: EVM_TX, signer: EVM_MAKER, solAmount: 0.6, tokensAmount: 590 }),
-  ]);
-  const extra = [trade({ signature: SIG2 })];
-  const rows = mergeTradeLists(extra, tape);
-  assert.equal(rows.length, 3);
-  assert.equal(new Set(rows.map(tradeLegKey)).size, 3);
-});
-
-test("display merge drops a later list's copy of a row an earlier list has", () => {
-  const demo = [trade({ solAmount: 0.002 })];
-  const tape = [trade({ solAmount: 0.001 }), trade({ signer: COSIGNER })];
+test("display merge takes a row from the first list that has it", () => {
+  const demo = [trade({ id: "a", solAmount: 0.002 })];
+  const tape = [trade({ id: "a", solAmount: 0.001 }), trade({ id: "b" })];
   const rows = mergeTradeLists(demo, tape);
-  assert.equal(rows.length, 2);
+  assert.deepEqual(ids(rows), ["a", "b"]);
   assert.equal(rows[0].solAmount, 0.002);
 });
 
 // ── wallet pages ──────────────────────────────────────────────────────
 
 const page = (n: number, from = 0) =>
-  Array.from({ length: n }, (_, i) => trade({ signature: `${SIG.slice(0, 80)}${String(from + i).padStart(8, "0")}` }));
+  Array.from({ length: n }, (_, i) => trade({ id: `row-${from + i}` }));
 
-test("a full wallet page keeps the list paging on scroll", () => {
-  const r = appendTradePage([], page(50), { cap: 500, limit: 50 });
-  assert.equal(r.rows.length, 50);
-  assert.equal(r.autoMore, true);
-});
-
-test("an empty or sparse wallet page stops paging on scroll", () => {
-  const first = appendTradePage([], page(50), { cap: 500, limit: 50 });
-  assert.equal(appendTradePage(first.rows, [], { cap: 500, limit: 50 }).autoMore, false);
-  assert.equal(appendTradePage(first.rows, page(3, 50), { cap: 500, limit: 50 }).autoMore, false);
-  // A page of rows already held adds nothing either.
-  assert.equal(appendTradePage(first.rows, page(50), { cap: 500, limit: 50 }).autoMore, false);
+test("a wallet page adds the rows not held", () => {
+  const first = appendTradePage([], page(50), { cap: 500 });
+  assert.equal(first.length, 50);
+  assert.equal(appendTradePage(first, page(50), { cap: 500 }).length, 50);
+  assert.equal(appendTradePage(first, page(10, 45), { cap: 500 }).length, 55);
 });
 
 test("wallet pages stop at the cap", () => {
   let rows: Trade[] = [];
-  for (let p = 0; p < 12; p++) rows = appendTradePage(rows, page(50, p * 50), { cap: 500, limit: 50 }).rows;
+  for (let p = 0; p < 12; p++) rows = appendTradePage(rows, page(50, p * 50), { cap: 500 });
   assert.equal(rows.length, 500);
 });
 
 // ── retracted slots ───────────────────────────────────────────────────
 
 test("a retract drops the named rows only, and the copy then comes in as new", () => {
-  const voided = trade({ live: true, solAmount: 0.5, tokensAmount: 500 });
-  const cosigner = trade({ live: true, signer: COSIGNER });
-  const other = trade({ signature: SIG2, live: true });
+  const voided = trade({ id: `${SIG}:${OWNER}`, live: true, solAmount: 0.5 });
+  const cosigner = trade({ id: `${SIG}:${COSIGNER}`, live: true, signer: COSIGNER });
+  const other = trade({ id: `${SIG2}:${OWNER}`, signature: SIG2, live: true });
   const prev = [voided, cosigner, other];
-  // Before the retract a copy with the same signature is the same row.
-  const copy = trade({ solAmount: 0.45, tokensAmount: 480, timestamp: voided.timestamp + 400 });
-  assert.equal(addLiveTrade(prev, copy)[0].solAmount, 0.5);
-  const after = dropRetracted(prev, [{ signature: SIG, wallet: OWNER }]);
-  assert.deepEqual(wallets(after), [COSIGNER, OWNER]);
-  assert.equal(after[1].signature, SIG2);
+  const after = dropRetracted(prev, [{ id: `${SIG}:${OWNER}` }]);
+  assert.deepEqual(ids(after), [`${SIG}:${COSIGNER}`, `${SIG2}:${OWNER}`]);
+  const copy = trade({ id: `${SIG}:${OWNER}`, solAmount: 0.45 });
   const withCopy = addLiveTrade(after, copy);
   assert.equal(withCopy.length, 3);
   assert.equal(withCopy[0].solAmount, 0.45);
-  assert.equal(withCopy[0].tokensAmount, 480);
 });
 
-test("a retract without a wallet drops every row of the signature; nothing named keeps the list", () => {
-  const prev = [trade({}), trade({ signer: COSIGNER }), trade({ signature: SIG2 })];
-  assert.deepEqual(dropRetracted(prev, [{ signature: SIG }]).map((t) => t.signature), [SIG2]);
-  assert.equal(dropRetracted(prev, [{ signature: "nope", wallet: OWNER }]), prev);
+test("a retract naming nothing held keeps the list", () => {
+  const prev = [trade({}), trade({ id: "b" })];
+  assert.equal(dropRetracted(prev, [{ id: "nope" }]), prev);
   assert.equal(dropRetracted(prev, []), prev);
 });

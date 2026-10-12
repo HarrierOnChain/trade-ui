@@ -3,8 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTrades, fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { friendlyFetchError } from "../api/chainError";
-import { num } from "../api/mappers";
-import { addLiveTrade, dropRetracted, mergeTradeBatch } from "../lib/trades";
+import { addLiveTrade, applyTradeTags, dropRetracted, mergeTradeBatch } from "../lib/trades";
 import type { Trade } from "../types";
 
 const PAGE = 50;
@@ -34,53 +33,9 @@ function extractTrades(res: TradesResponse | null | undefined): Trade[] {
   return Array.isArray(res?.data) ? res!.data : [];
 }
 
-function tradeTimestampMs(raw: string | number): number {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!isNaN(n) && n > 0) return n > 1e15 ? n / 1000 : n > 1e12 ? n : n * 1000;
-  return new Date(raw as string).getTime();
-}
-
 function sortTrades(trades: Trade[], sort: "asc" | "desc"): Trade[] {
-  return [...trades].sort((a, b) => {
-    const ta = tradeTimestampMs(a.timestamp);
-    const tb = tradeTimestampMs(b.timestamp);
-    return sort === "asc" ? ta - tb : tb - ta;
-  });
-}
-
-function normalizeWsTrade(msg: Record<string, unknown>): Trade | null {
-  const inner =
-    (msg.transaction && typeof msg.transaction === "object" && !Array.isArray(msg.transaction))
-      ? (msg.transaction as Record<string, unknown>)
-      : (msg.data && typeof msg.data === "object" && !Array.isArray(msg.data))
-        ? (msg.data as Record<string, unknown>)
-        : msg;
-
-  const tokenMint = String(
-    inner.tokenMint ?? inner.token_mint ?? inner.mint ?? inner.address ?? msg.tokenMint ?? ""
-  );
-  if (!tokenMint) return null;
-
-  return {
-    signature:       String(inner.signature       ?? msg.signature       ?? ""),
-    tokenMint,
-    signer:          String(inner.signer ?? inner.wallet ?? msg.signer ?? msg.wallet ?? ""),
-    transactionType: ((): "buy" | "sell" => {
-      const raw = String(inner.transactionType ?? inner.transaction_type ?? inner.type ?? msg.transactionType ?? "buy");
-      return raw.toLowerCase() === "sell" ? "sell" : "buy";
-    })(),
-    tokensAmount:    Number(inner.tokensAmount     ?? inner.tokenAmount   ?? 0),
-    avgPrice:        num(inner.avgPrice ?? inner.avg_price) ?? null,
-    solAmount:       num(inner.solAmount ?? inner.sol_amount) ?? null,
-    timestamp:       (inner.timestamp ?? msg.timestamp ?? Date.now()) as string | number,
-    usdValue:        inner.usdValue != null ? Number(inner.usdValue) : undefined,
-    avgPriceUSD:     inner.avgPriceUSD != null ? Number(inner.avgPriceUSD) : undefined,
-    marketCap:       inner.marketCap != null ? Number(inner.marketCap) : undefined,
-    isBundle:        Boolean(inner.isBundle        ?? inner.is_bundle),
-    isSniper:        Boolean(inner.isSniper        ?? inner.is_sniper),
-    isProTrader:     Boolean(inner.isProTrader     ?? inner.proTrade       ?? inner.pro_trade),
-    tags:            Array.isArray(inner.tags) ? inner.tags.map((t) => String(t).toLowerCase()) : undefined,
-  };
+  return [...trades].sort((a, b) =>
+    sort === "asc" ? a.timestamp - b.timestamp : b.timestamp - a.timestamp);
 }
 
 export function useTrades(
@@ -108,9 +63,8 @@ export function useTrades(
   }, []);
   useEffect(() => clearPause, [clearPause]);
 
-  // Initial / filter-change fetch — re-runs whenever sort flips so the
-  // server returns the actually-oldest trades, not just "oldest among the
-  // first page of desc". asc pagination uses `time >` predicate server-side.
+  // Initial / filter-change fetch. The API pages newest first only (a time
+  // range is its window): `sort` re-orders what is loaded.
   useEffect(() => {
     clearPause();
     if (!mint) {
@@ -201,9 +155,11 @@ export function useTrades(
     // The token being viewed: keep it streaming over SSE if the socket is down.
     ws.subscribeToken(mint, ["trades"], { sse: true });
 
+    // websocket.ts dispatches the mapped Trade with its event fields.
     function handleTrade(msg: Record<string, unknown>) {
-      const trade = normalizeWsTrade(msg);
-      if (!trade || trade.tokenMint !== mint) return;
+      const { type: _type, mint: _mint, wallet: _wallet, ...rest } = msg;
+      const trade = rest as unknown as Trade;
+      if (trade.tokenMint !== mint) return;
       setTrades((prev) => {
         const next = addLiveTrade(prev, trade);
         return next === prev ? prev : next.slice(0, CAP);
@@ -222,18 +178,27 @@ export function useTrades(
     // the transaction landed, if any, comes as a new trade.
     function handleRetract(msg: Record<string, unknown>) {
       if (msg.tokenMint !== mint || !Array.isArray(msg.rows)) return;
-      const gone = msg.rows as { signature: string; wallet: string }[];
+      const gone = msg.rows as { id: string }[];
       setTrades((prev) => dropRetracted(prev, gone));
+    }
+
+    // Tags the API learnt after it sent the rows (late flags, a maker's tags).
+    function handleTags(msg: Record<string, unknown>) {
+      if (msg.tokenMint !== mint || !Array.isArray(msg.rows)) return;
+      const rows = msg.rows as { id: string; tags: string[] }[];
+      setTrades((prev) => applyTradeTags(prev, rows));
     }
 
     const unsub1 = ws.on("trade",          handleTrade);
     const unsub2 = ws.on("trade_snapshot", handleSnapshot);
     const unsub4 = ws.on("trade_retract",  handleRetract);
+    const unsub5 = ws.on("trade_tags",     handleTags);
 
     return () => {
       unsub1();
       unsub2();
       unsub4();
+      unsub5();
       ws.unsubscribeToken(mint, ["trades"], { sse: true });
       prevMint.current = null;
     };

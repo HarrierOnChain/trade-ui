@@ -33,7 +33,7 @@ function bool(v: unknown): boolean | undefined {
 export function msToIso(v: unknown): string | undefined {
   const n = num(v);
   if (n == null || n <= 0) return undefined;
-  return new Date(n > 1e12 ? n : n * 1000).toISOString();
+  return new Date(n).toISOString();
 }
 
 /** USD → native coin, or undefined when either side is unknown. */
@@ -171,17 +171,14 @@ export function defined<T extends object>(o: T): Partial<T> {
   return out;
 }
 
-/** Trade (token tape) or WalletTrade → Trade. */
-export function apiTradeToTrade(row: Rec, native: number, fallbackMint = ""): Trade {
-  const chain = str(row.chain) ?? getActiveChain();
+/** Trade (token tape) or WalletTrade → Trade: the native amounts are the
+ *  API's (`volumeNative`, `priceNative`, SOL/ETH/BNB at the trade). */
+export function apiTradeToTrade(row: Rec, fallbackMint = ""): Trade {
   const priceUsd = num(row.priceUsd);
   const volumeUsd = num(row.volumeUsd);
-  const quoteAmount = num(row.quoteAmount);
   const tags = Array.isArray(row.tags) ? row.tags.map((t) => String(t).toLowerCase()) : [];
-  const solAmount = isNativeQuote(row.quoteSymbol, chain) && quoteAmount != null
-    ? quoteAmount
-    : usdToNative(volumeUsd, native);
   return {
+    id: String(row.id ?? ""),
     signature: String(row.signature ?? ""),
     tokenMint: String(row.token ?? fallbackMint),
     signer: String(row.wallet ?? ""),
@@ -189,9 +186,9 @@ export function apiTradeToTrade(row: Rec, native: number, fallbackMint = ""): Tr
     tokensAmount: num(row.amount) ?? 0,
     // Unpriced rows (a token-quoted swap with no fresh quote price) keep
     // null: shown as "–", never as a 0 SOL trade.
-    avgPrice: usdToNative(priceUsd, native) ?? null,
-    solAmount: solAmount ?? null,
-    timestamp: num(row.time) ?? Date.now(),
+    avgPrice: num(row.priceNative) ?? null,
+    solAmount: num(row.volumeNative) ?? null,
+    timestamp: num(row.time) ?? 0,
     usdValue: volumeUsd,
     avgPriceUSD: priceUsd,
     isBundle: tags.includes("bundle"),
@@ -206,10 +203,11 @@ export function apiHolderToHolder(row: Rec, native: number, rank: number): Holde
   const buys = num(row.buys);
   const sells = num(row.sells);
   const label = str(row.label);
+  const kind = str(row.kind) as Holder["kind"];
   return {
     address: String(row.wallet ?? ""),
     amount: num(row.amount) ?? 0,
-    percentage: num(row.percent) ?? 0,
+    percentage: num(row.percent) ?? null,
     rank,
     buySol: usdToNative(row.boughtUsd, native),
     sellSol: usdToNative(row.soldUsd, native),
@@ -217,8 +215,9 @@ export function apiHolderToHolder(row: Rec, native: number, rank: number): Holde
     sellCount: sells,
     trades: buys != null || sells != null ? (buys ?? 0) + (sells ?? 0) : undefined,
     lastTrade: msToIso(row.lastActiveAt),
-    // `label` names an exchange or a pool: not a person.
-    isLiquidityPool: Boolean(label),
+    isLiquidityPool: kind === "pool" || kind === "curve",
+    isSystemAccount: kind === "burn" || kind === "program",
+    kind,
     label,
     valueUsd: num(row.valueUsd),
     unrealizedPnlUsd: num(row.unrealizedPnlUsd),
@@ -259,17 +258,15 @@ export function apiHolderToTrader(row: Rec, native: number): TopTrader {
   };
 }
 
-/** Candle → the datafeed's bar fields (ms time). */
-export function apiCandle(row: Rec): { time: number; open: number; high: number; low: number; close: number; volume: number } | null {
-  const time = num(row.time);
-  const close = num(row.close);
-  if (time == null || close == null) return null;
+/** Candle → the datafeed's bar fields (ms time), as the API sends it: one
+ *  candle per interval start, opening at the previous close, positive. */
+export function apiCandle(row: Rec): { time: number; open: number; high: number; low: number; close: number; volume: number } {
   return {
-    time,
-    open: num(row.open) ?? close,
-    high: num(row.high) ?? close,
-    low: num(row.low) ?? close,
-    close,
-    volume: num(row.volume) ?? 0,
+    time: Number(row.time),
+    open: Number(row.open),
+    high: Number(row.high),
+    low: Number(row.low),
+    close: Number(row.close),
+    volume: Number(row.volume),
   };
 }

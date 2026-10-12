@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchTradesBySignerMint } from "../api/client";
 import { RazeWebSocket } from "../api/websocket";
 import { tradeKey } from "../lib/trades";
+import type { Trade } from "../types";
 import { useTokenInfo } from "./useTokenInfo";
 import { useLiveTradePrices } from "./useLiveTradePrices";
 import { useUserWallets } from "./useUserWallets";
@@ -35,8 +36,8 @@ export function useTokenPnl(mint: string): TokenPnlData {
   const [platformSold, setPlatformSold] = useState(0);
   const [platformLoading, setPlatformLoading] = useState(false);
 
-  // (signature, wallet): two of the user's wallets co-signing one transaction
-  // are two fills, both counted.
+  // By the API's row id: two of the user's wallets co-signing one
+  // transaction, or one wallet's two swap logs on EVM, are two fills.
   const seenRef = useRef(new Set<string>());
 
   // ── Platform: paginated history ─────────────────────────────────────
@@ -62,7 +63,6 @@ export function useTokenPnl(mint: string): TokenPnlData {
           try {
             const res = await fetchTradesBySignerMint(pubkey, mint, PAGE_SIZE, cursor, "desc");
             for (const t of res?.data ?? []) {
-              if (!t.signature) continue;
               const key = tradeKey(t);
               if (seenRef.current.has(key)) continue;
               seenRef.current.add(key);
@@ -103,34 +103,16 @@ export function useTokenPnl(mint: string): TokenPnlData {
 
     const pubkeySet = new Set(pubkeys);
 
+    // websocket.ts dispatches the mapped Trade.
     function handleMsg(msg: Record<string, unknown>) {
-      const inner = (
-        (msg.transaction && typeof msg.transaction === "object" ? msg.transaction : null) ??
-        (msg.data && typeof msg.data === "object" ? msg.data : null) ??
-        msg
-      ) as Record<string, unknown>;
-
-      const tokenMint = String(inner.tokenMint ?? inner.token_mint ?? inner.mint ?? msg.tokenMint ?? "");
-      if (tokenMint !== mint) return;
-
-      const signer = String(inner.signer ?? msg.signer ?? "");
-      if (!pubkeySet.has(signer)) return;
-
-      const sig = String(inner.signature ?? msg.signature ?? "");
-      if (sig) {
-        const key = tradeKey({ signature: sig, signer, timestamp: 0 });
-        if (seenRef.current.has(key)) return;
-        seenRef.current.add(key);
-      }
-
-      const solAmount = Number(inner.solAmount ?? inner.sol_amount ?? 0);
+      const t = msg as unknown as Trade;
+      if (t.tokenMint !== mint || !pubkeySet.has(t.signer)) return;
+      const key = tradeKey(t);
+      if (seenRef.current.has(key)) return;
+      seenRef.current.add(key);
+      const solAmount = t.solAmount ?? 0;
       if (!Number.isFinite(solAmount) || solAmount <= 0) return;
-
-      const type = String(
-        inner.transactionType ?? inner.transaction_type ?? inner.type ?? "buy",
-      ).toLowerCase();
-
-      if (type === "sell") setPlatformSold((v) => v + solAmount);
+      if (t.transactionType === "sell") setPlatformSold((v) => v + solAmount);
       else setPlatformBought((v) => v + solAmount);
     }
 

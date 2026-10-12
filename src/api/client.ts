@@ -194,18 +194,14 @@ export const fetchMigrating = (limit = 100) => listBoard("graduating", limit);
 
 type TimeRange = { fromMs?: number | null; toMs?: number | null };
 
-function inRange(t: Trade, range?: TimeRange): boolean {
-  if (!range) return true;
-  const ts = Number(t.timestamp);
-  if (range.fromMs != null && Number.isFinite(range.fromMs) && ts < range.fromMs) return false;
-  if (range.toMs != null && Number.isFinite(range.toMs) && ts > range.toMs) return false;
-  return true;
-}
+const finite = (v: number | null | undefined): number | undefined =>
+  v != null && Number.isFinite(v) ? v : undefined;
 
 /**
- * Newest first, paged by the API's `next`. The API has no oldest-first order
- * and no time filter: `sort` only re-orders a page and a time range filters
- * the page it got.
+ * Newest first, paged by the API's `next`. A time range is the API's window
+ * (`from` inclusive, `to` exclusive, Unix ms; the UI's `toMs` is inclusive):
+ * its cursor stays in the window, and the page that reaches `from` has no
+ * `next`. The API has no oldest-first order: `sort` only re-orders.
  */
 export const fetchTrades = async (
   mint: string,
@@ -216,13 +212,16 @@ export const fetchTrades = async (
   wallet?: string,
 ) => {
   const c = chain();
-  const native = await nativeUsd(c).catch(() => 0);
+  const to = finite(timeRange?.toMs);
   const { data, nextCursor } = await get<unknown>(tokenPath(mint, "/trades", c), {
     limit: Math.min(200, limit),
     cursor: cursor || undefined,
     wallet: wallet || undefined,
+    // A cursor carries its window.
+    from: cursor ? undefined : finite(timeRange?.fromMs),
+    to: cursor || to == null ? undefined : to + 1,
   });
-  const trades = rows(data).map((r) => apiTradeToTrade(r, native, mint)).filter((t) => inRange(t, timeRange));
+  const trades = rows(data).map((r) => apiTradeToTrade(r, mint));
   return { data: trades, nextCursor, hasMore: Boolean(nextCursor) };
 };
 
@@ -238,36 +237,15 @@ export const fetchTradesBySignerMint = async (
 
 // ── holders / traders ──────────────────────────────────────────────────────
 
-export const fetchHolders = async (mint: string, limit = 200) => {
+/** The 100 largest holders (the API has no next page), one row per wallet. */
+export const fetchHolders = async (mint: string, limit = 100) => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);
-  const [token, firstPage] = await Promise.all([
+  const [token, page] = await Promise.all([
     fetchTokenRaw(mint, c).catch(() => null),
     get<unknown>(tokenPath(mint, "/holders", c), { limit: Math.min(100, limit) }, 5_000),
   ]);
-  const raw = rows(firstPage.data);
-  const seen = new Set(raw.map((h) => String(h.wallet ?? "")));
-  let cursor = firstPage.nextCursor;
-  // Pages of ≤100 until `limit`. Deduped by wallet, and a page that adds no
-  // new wallet ends the walk: today the API's holders `next` cursor hands
-  // back the first page again, which doubled every top holder.
-  while (cursor && raw.length < limit) {
-    try {
-      const page = await get<unknown>(tokenPath(mint, "/holders", c), { limit: Math.min(100, limit - raw.length), cursor }, 5_000);
-      const fresh = rows(page.data).filter((h) => {
-        const w = String(h.wallet ?? "");
-        if (!w || seen.has(w)) return false;
-        seen.add(w);
-        return true;
-      });
-      if (!fresh.length) break;
-      raw.push(...fresh);
-      cursor = page.nextCursor;
-    } catch {
-      break;
-    }
-  }
-  const holders: Holder[] = raw.slice(0, limit).map((h, i) => apiHolderToHolder(h, native, i + 1));
+  const holders: Holder[] = rows(page.data).map((h, i) => apiHolderToHolder(h, native, i + 1));
   const supply = num(token?.circulatingSupply) ?? num(token?.totalSupply);
   return {
     holders,
@@ -437,10 +415,11 @@ export const fetchPriceChanges = async (mint: string) => {
   return result;
 };
 
+/** The supply `/tokens` prices the market cap over; null when not known. */
 export const fetchTokenSupply = async (mint: string) => {
   const data = await fetchTokenRaw(mint);
-  const supply = num(data.circulatingSupply) ?? num(data.totalSupply) ?? 1_000_000_000;
-  return { supply, decimals: num(data.decimals) ?? 6 };
+  const supply = num(data.circulatingSupply) ?? num(data.totalSupply) ?? null;
+  return { supply, decimals: num(data.decimals) ?? null };
 };
 
 // ── wallets ────────────────────────────────────────────────────────────────
@@ -480,21 +459,25 @@ export const fetchWalletHoldings = async (address: string) => {
   }) as WalletHoldingsResponse;
 };
 
-export type WalletTradeRow = Trade & { tokenSymbol?: string | null; tokenImage?: string | null };
+export type WalletTradeRow = Trade & {
+  tokenName?: string | null;
+  tokenSymbol?: string | null;
+  tokenImage?: string | null;
+};
 
 /** A wallet's swaps, newest first; pass the previous page's `nextCursor` as
  *  `cursor` for the next one. */
 export const fetchWalletTrades = async (address: string, limit = 50, cursor?: string | null) => {
   const c = chain();
-  const native = await nativeUsd(c).catch(() => 0);
   const { data, nextCursor } = await get<unknown>(walletPath(address, "/trades", c), {
     limit: Math.min(100, limit),
     cursor: cursor || undefined,
   });
   return {
     data: rows(data).map((r): WalletTradeRow => ({
-      ...apiTradeToTrade(r, native),
+      ...apiTradeToTrade(r),
       signer: address,
+      tokenName: typeof r.tokenName === "string" ? r.tokenName : null,
       tokenSymbol: typeof r.tokenSymbol === "string" ? r.tokenSymbol : null,
       tokenImage: imageSrc(typeof r.tokenImage === "string" ? r.tokenImage : null),
     })),
@@ -653,12 +636,19 @@ export interface ApiCandle { time: number; open: number; high: number; low: numb
 
 /**
  * OHLCV from the API, oldest first. `to` pages back (pass the oldest `time`
- * you have). `unit`: `usd` = USD price, `marketCap` = USD market cap.
- * Volume is USD either way.
+ * you have). `unit`: `usd` = price, `marketCap` = market cap; `currency`:
+ * `usd`, or `native` for the chain's coin at each candle's end (volume too).
  */
 export const fetchCandles = async (
   mint: string,
-  opts: { interval: OhlcTimeframe; limit?: number; from?: number; to?: number; unit?: "usd" | "marketCap" },
+  opts: {
+    interval: OhlcTimeframe;
+    limit?: number;
+    from?: number;
+    to?: number;
+    unit?: "usd" | "marketCap";
+    currency?: "usd" | "native";
+  },
 ): Promise<ApiCandle[]> => {
   const { data } = await get<unknown>(tokenPath(mint, "/candles"), {
     interval: opts.interval,
@@ -666,9 +656,7 @@ export const fetchCandles = async (
     from: opts.from,
     to: opts.to,
     unit: opts.unit ?? "usd",
+    currency: opts.currency === "native" ? "native" : undefined,
   });
-  return rows(data)
-    .map((r) => apiCandle(r))
-    .filter((c): c is ApiCandle => c != null)
-    .sort((a, b) => a.time - b.time);
+  return rows(data).map((r) => apiCandle(r));
 };

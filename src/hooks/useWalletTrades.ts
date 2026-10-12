@@ -6,8 +6,7 @@ import type { Trade } from "../types";
 
 const CAP = 500; // soft cap, as the token tape's infinite scroll
 
-// The API serves at most 100 rows a page (client.ts caps the ask).
-const pageOpts = (limit: number) => ({ cap: CAP, limit: Math.min(100, limit) });
+const pageOpts = { cap: CAP };
 
 /** A wallet's swaps, paged by the API's `next` cursor. */
 export function useWalletTrades(address: string | null, limit = 50) {
@@ -18,7 +17,8 @@ export function useWalletTrades(address: string | null, limit = 50) {
   const [error, setError] = useState<string | null>(null);
   // A failed next page: auto-paging stops until the caller retries.
   const [moreError, setMoreError] = useState<string | null>(null);
-  // Off after a page that added few rows: the next page then waits for a click.
+  // Off after a page that added no row while the API had more (a wallet's
+  // swaps can sit pages deep): the next page then waits for a click.
   const [autoMore, setAutoMore] = useState(true);
   const rowsRef = useRef<Trade[]>([]);
   // Drops answers that land after the address changed or a refresh started.
@@ -32,10 +32,10 @@ export function useWalletTrades(address: string | null, limit = 50) {
     try {
       const res = await fetchWalletTrades(address, limit);
       if (gen !== genRef.current) return;
-      const page = appendTradePage([], res.data, pageOpts(limit));
-      rowsRef.current = page.rows;
-      setTrades(page.rows);
-      setAutoMore(page.autoMore);
+      const rows = appendTradePage([], res.data, pageOpts);
+      rowsRef.current = rows;
+      setTrades(rows);
+      setAutoMore(rows.length > 0);
       setCursor(res.nextCursor ?? null);
       setError(null);
     } catch (e) {
@@ -54,10 +54,10 @@ export function useWalletTrades(address: string | null, limit = 50) {
     try {
       const res = await fetchWalletTrades(address, limit, cursor);
       if (gen !== genRef.current) return;
-      const page = appendTradePage(rowsRef.current, res.data, pageOpts(limit));
-      rowsRef.current = page.rows;
-      setTrades(page.rows);
-      setAutoMore(page.autoMore);
+      const rows = appendTradePage(rowsRef.current, res.data, pageOpts);
+      setAutoMore(rows.length > rowsRef.current.length);
+      rowsRef.current = rows;
+      setTrades(rows);
       setCursor(res.nextCursor ?? null);
     } catch (e) {
       // The cursor is kept, so a retry asks for the same page.

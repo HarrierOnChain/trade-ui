@@ -2,13 +2,8 @@
 
 import React, { useMemo } from "react";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
-import { useHolders } from "../../hooks/useHolders";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
-import {
-  computeTokenMetrics,
-  devHoldPct,
-  top10HoldPct,
-} from "../../lib/tokenMetrics";
+import { computeTokenMetrics } from "../../lib/tokenMetrics";
 import { fmtNum } from "../../lib/format";
 import { fluidColsFit } from "../../lib/responsive";
 import { useIsPhone } from "../../hooks/useMediaQuery";
@@ -21,19 +16,19 @@ interface Props {
 export function TokenMetricsGrid({ mint }: Props) {
   const isPhone = useIsPhone();
   const { info } = useTokenInfo(mint);
-  const { holders: holderRows, supply } = useHolders(mint);
   const liveMap = useLiveTradePrices(useMemo(() => [mint], [mint]));
   const live = liveMap.get(mint);
   const token = (info ?? {}) as TokenEvent;
 
-  const metrics = useMemo(() => {
-    const top10 = top10HoldPct(holderRows, supply);
-    const devPct = devHoldPct(holderRows, token.signer);
-    return computeTokenMetrics(token, live, {
-      top10Pct: top10 > 0 ? top10 : undefined,
-      devHoldPct: devPct,
-    });
-  }, [token, live, holderRows, supply]);
+  // The API's shares: the ten largest holders (pools, curves and burns left
+  // out), and the creator with its linked wallets.
+  const metrics = useMemo(
+    () => computeTokenMetrics(token, live, {
+      top10Pct: token.top10Percent,
+      devHoldPct: token.devPercent ?? null,
+    }),
+    [token, live],
+  );
 
   const cells: Array<{
     icon: React.ReactNode;
@@ -43,7 +38,7 @@ export function TokenMetricsGrid({ mint }: Props) {
   }> = [
     {
       icon: <UsersIcon size={12} />,
-      value: holderRows.length > 0 ? `${metrics.top10Pct.toFixed(1)}%` : "—",
+      value: token.top10Percent != null ? `${metrics.top10Pct.toFixed(1)}%` : "—",
       label: "Top 10 H.",
       tone: metrics.top10Pct > 50 ? "warn" : "paper",
     },

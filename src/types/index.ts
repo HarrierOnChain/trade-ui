@@ -60,6 +60,9 @@ export interface TokenEvent {
 }
 
 export interface Trade {
+  /** The API's row key (openapi `Trade.id`): the same on REST pages, the
+   *  trades snapshot, live frames and retracts. None on a row the UI makes. */
+  id?: string;
   signature: string;
   tokenMint: string;
   signer: string;
@@ -70,7 +73,7 @@ export interface Trade {
   /** Native coin volume; null when the API has no volume for the row
    *  (e.g. a token-quoted swap with no fresh quote price). Never a made-up 0. */
   solAmount: number | null;
-  timestamp: string | number; // ISO string from REST, may be unix ms from WS
+  timestamp: number; // Unix ms
   usdValue?: number;
   avgPriceUSD?: number | string;
   marketCap?: number;
@@ -87,7 +90,8 @@ export interface Trade {
 export interface Holder {
   address: string;
   amount: number;
-  percentage: number;
+  /** Share of the supply, percent (the API's); null when not measured. */
+  percentage: number | null;
   rank: number;
   buySol?: number;
   sellSol?: number;
@@ -95,9 +99,12 @@ export interface Holder {
   buyCount?: number;
   sellCount?: number;
   lastTrade?: string;
+  /** A pool or a launchpad curve (the API's `kind`). */
   isLiquidityPool?: boolean;
-  /** Pump.fun system PDA — excluded from concentration metrics. */
+  /** A burn address or a program account (the API's `kind`). */
   isSystemAccount?: boolean;
+  /** What the holder is (the API's `Holder.kind`). */
+  kind?: "wallet" | "exchange" | "pool" | "curve" | "burn" | "program";
   /** Exchange or pool name when the holder is not a person. */
   label?: string;
   /** Current value of the position, USD. */

@@ -21,7 +21,8 @@ interface Props {
 
 export function TopTradersTable({
   mint: mintProp,
-  supply = 1_000_000_000,
+  // 0: not known (the share bar is hidden).
+  supply = 0,
   onAddressClick,
 }: Props) {
   const { selectedMint } = useSelectedToken();
@@ -243,12 +244,14 @@ const TraderRow = React.memo(function TraderRow({
           ) : remainingTokens >= 1 ? (
             <>
               <span className={styles.primary}>{fmtNum(remainingTokens)}</span>
-              <div className={styles.pctWrap}>
-                <div className={styles.pctBarBg}>
-                  <div className={styles.pctBar} style={{ width: `${Math.min(remainingPct, 100)}%`, background: barColor }} />
+              {supply > 0 && (
+                <div className={styles.pctWrap}>
+                  <div className={styles.pctBarBg}>
+                    <div className={styles.pctBar} style={{ width: `${Math.min(remainingPct, 100)}%`, background: barColor }} />
+                  </div>
+                  <span className={styles.pctLabel} style={{ color: barColor }}>{remainingPct.toFixed(2)}%</span>
                 </div>
-                <span className={styles.pctLabel} style={{ color: barColor }}>{remainingPct.toFixed(2)}%</span>
-              </div>
+              )}
             </>
           ) : (
             <span className={styles.sub}>exited</span>

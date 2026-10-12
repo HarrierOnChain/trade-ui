@@ -9,12 +9,10 @@ import type { Trade } from "../../types";
 import { useSolPrice } from "../../hooks/useSolPrice";
 import { useTokenInfo } from "../../hooks/useTokenInfo";
 import { useTrades } from "../../hooks/useTrades";
-import { useHolders } from "../../hooks/useHolders";
 import { useUserWallets } from "../../hooks/useUserWallets";
 import { useLastSeen } from "../../contexts/LastSeenContext";
 import { solPriceToChartAxis } from "../../lib/chartAxis";
 import { mergeTradeLists, tradeLegKey } from "../../lib/trades";
-import { top10HoldPct } from "../../lib/tokenMetrics";
 import { useUserPreference } from "../../hooks/useUserPreference";
 import { PREF_KEYS } from "../TradingPanel/presets";
 import { TradeCategoryFilter } from "../TradeCategoryFilter";
@@ -136,18 +134,17 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
   useEffect(() => {
     fetchTokenSupply(mint)
       .then((res) => {
-        const s = res.supply ?? 0;
-        setSupply(s >= 1_000_000 ? s : 1_000_000_000);
+        // 0 is "not known" to the consumers.
+        setSupply(res.supply ?? 0);
       })
       .catch(() => {});
   }, [mint]);
 
-  // Page-level fetches feed chart marks (trades) and the top-10 % (holders). The corresponding tables run their own copies of these hooks;
+  // Page-level fetches feed chart marks (trades). The corresponding tables run their own copies of these hooks;
   // REST duplication is collapsed by the cachedRazeGet wrapper in
   // src/api/client.ts, and WS subscriptions are ref-counted in websocket.ts,
   // so the on-the-wire cost is a single fetch + a single subscribe per mint.
   const { trades, loading: tradesLoading } = useTrades(mint);
-  const { holders } = useHolders(mint);
 
   // ── Chart marks: dev / own-wallet trades ────────────────────────────────
   const { info } = useTokenInfo(mint);
@@ -233,8 +230,8 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
 
   const chartMarks = useMemo<TradeMark[]>(() => {
     // Merge the live trade feed with the dev-specific and filtered-wallet
-    // histories (a row held by an earlier list, same signature and wallet, is
-    // taken from it), then classify each trade. Filter wins over
+    // histories (a row held by an earlier list, same id, is taken from it),
+    // then classify each trade. Filter wins over
     // dev/user so the active filter stands out visually.
     const merged = mergeTradeLists(trades, devTrades, userTrades, filteredTrades);
 
@@ -245,11 +242,7 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
       else if (devSigner && t.signer === devSigner) kind = "dev";
       else if (userAddrs.has(t.signer)) kind = "user";
       if (!kind) continue;
-      const raw = t.timestamp;
-      const ts =
-        typeof raw === "number"
-          ? raw > 1e12 ? raw : raw * 1000
-          : raw ? new Date(raw).getTime() : 0;
+      const ts = t.timestamp;
       if (!ts) continue;
       // Price converted to the chart's current y-axis scale so the
       // horizontal line sits at the same level as the candle body at the
@@ -287,7 +280,8 @@ export function TokenLayout({ mint }: TokenLayoutProps) {
   // while the token is still on its bonding curve.
   const onBondingCurve = getActiveChain() === "sol" && info?.dex === "Pumpfun" && info?.graduated === false;
 
-  const top10Pct = top10HoldPct(holders, supply > 0 ? supply : undefined);
+  // The API's share of the ten largest holders (pools, curves and burns left out).
+  const top10Pct = info?.top10Percent ?? 0;
 
   // Build bundle/sniper signer sets from the live trade feed for holder flagging
   const bundleSigners = useMemo(

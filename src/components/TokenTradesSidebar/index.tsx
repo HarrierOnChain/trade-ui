@@ -13,14 +13,6 @@ import { tradeLegKey, tradeNative } from "../../lib/trades";
 /// `useTrades(mint)` — no extra REST fetch or WS subscription.
 export const TOKEN_TRADES_SIDEBAR_WIDTH = 240;
 
-// Normalize the polymorphic Trade.timestamp (ISO string from REST, unix ms or
-// seconds from WS) to epoch-ms. Same heuristic the TradesTable / useTrades use.
-function toMs(raw: string | number): number {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!isNaN(n) && n > 0) return n > 1e15 ? n / 1000 : n > 1e12 ? n : n * 1000;
-  return new Date(raw as string).getTime();
-}
-
 // Live-ticking age cell driven by the shared 1Hz ageRegistry interval (no
 // per-row React re-render). Preview trades (deploy form plan) are frozen —
 // static clock time, never registered with the ticking interval.
@@ -152,7 +144,7 @@ export function TokenTradesSidebar({
                 color: "var(--paper-2)",
                 lineHeight: 1.4,
               }}>
-                <span style={{ color: "var(--paper-3)" }}><AgeCell tsMs={toMs(t.timestamp)} frozen={!!t.signature?.startsWith("preview-")} /></span>
+                <span style={{ color: "var(--paper-3)" }}><AgeCell tsMs={t.timestamp} frozen={!!t.signature?.startsWith("preview-")} /></span>
                 <span style={{
                   textAlign: "right",
                   color: isBuy ? "var(--buy)" : "var(--sell)",

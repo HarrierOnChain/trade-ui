@@ -2,7 +2,16 @@
 
 import { CHAIN_CHANGED_EVENT, getActiveChain } from "../lib/chains";
 import { markStreamOpen } from "../lib/streamSettle";
-import { apiCandle, apiTokenToEvent, apiTradeToTrade, asRecord, num, type Rec } from "./mappers";
+import {
+  apiCandle,
+  apiHolderToHolder,
+  apiHolderToTrader,
+  apiTokenToEvent,
+  apiTradeToTrade,
+  asRecord,
+  num,
+  type Rec,
+} from "./mappers";
 import { fetchNativePrices, nativeUsdSync, setNativePrices } from "./native";
 
 /**
@@ -16,12 +25,17 @@ import { fetchNativePrices, nativeUsdSync, setNativePrices } from "./native";
  * | `migration`      | launchpad board=graduated  | same                                                 |
  * | `trade`          | trades                     | a Trade, flat                                        |
  * | `trade_snapshot` | trades                     | `{tokenMint, trades}` newest first, on (re)subscribe  |
- * | `trade_retract`  | trades                     | `{tokenMint, rows: [{signature, wallet}]}`: rows of a slot whose fork was lost |
- * | `candle`         | candles                    | `{tokenMint, interval, unit, kind, candles | candle}` |
+ * | `trade_retract`  | trades                     | `{tokenMint, rows: [{id, signature, wallet}]}`: rows of a slot whose fork was lost |
+ * | `trade_tags`     | trades                     | `{tokenMint, rows: [{id, tags}]}`: tags the API learnt after sending the rows |
+ * | `candle`         | candles                    | `{tokenMint, interval, unit, currency, kind, candles | candle}` |
  * | `token`          | token                      | `{tokenMint, token: TokenEvent, raw}` (snapshot)      |
  * | `tick`           | token                      | `{tokenMint, time, priceUsd, marketCapUsd, liquidityUsd, lastPrice}` |
  * | `prices`         | prices                     | `{sol, eth, bnb}` USD                                |
  * | `wallet_trade`   | wallet (Solana)            | `{wallet, trade}` or `{wallet, snapshot, trades}`    |
+ * | `holders`        | holders                    | `{tokenMint, rows: Holder[]}`, again when the list changed |
+ * | `traders`        | traders                    | `{tokenMint, rows: TopTrader[]}`, again when the list changed |
+ * | `trending`       | trending                   | `{chain, interval, kind: snapshot, rows}` or `{kind: add/update/remove, row}` (TokenEvent with `rank`) |
+ * | `trending_summary` | trending                 | `{chain, interval, summary}`: buys, sells, trades, buysPercent… of the ranking |
  */
 export type WsEventType =
   | "deploy"
@@ -30,18 +44,32 @@ export type WsEventType =
   | "trade"
   | "trade_snapshot"
   | "trade_retract"
+  | "trade_tags"
   | "candle"
   | "token"
   | "tick"
   | "prices"
-  | "wallet_trade";
+  | "wallet_trade"
+  | "holders"
+  | "traders"
+  | "trending"
+  | "trending_summary";
 
 export type WsHandler = (data: Record<string, unknown>) => void;
 
 /** Per-token channels a caller can hold. `candles` has its own method. */
-export type TokenChannel = "trades" | "token";
+export type TokenChannel = "trades" | "token" | "holders" | "traders";
 
-type Channel = "trades" | "candles" | "token" | "launchpad" | "prices" | "wallet";
+type Channel =
+  | "trades"
+  | "candles"
+  | "token"
+  | "launchpad"
+  | "prices"
+  | "wallet"
+  | "holders"
+  | "traders"
+  | "trending";
 
 interface Spec {
   channel: Channel;
@@ -49,6 +77,11 @@ interface Spec {
   token?: string;
   interval?: string;
   unit?: string;
+  /** Candles in the chain's coin (`native`); absent is USD. */
+  currency?: string;
+  /** Trending: the ranking's sort and how many rows (0: the summary only). */
+  sort?: string;
+  limit?: number;
   board?: string;
   wallet?: string;
 }
@@ -87,6 +120,9 @@ function ssePriority(spec: Spec): number {
     case "candles": return 1;
     case "prices": return 2;
     case "token": return 3;
+    case "holders":
+    case "traders": return 3;
+    case "trending": return spec.limit === 0 ? 8 : 7;
     case "launchpad": return spec.board === "new" ? 4 : spec.board === "graduating" ? 5 : 6;
     default: return 7;
   }
@@ -94,7 +130,16 @@ function ssePriority(spec: Spec): number {
 const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 function sidOf(spec: Spec): string {
-  return [spec.channel, spec.chain ?? "", spec.board ?? spec.token ?? spec.wallet ?? "", spec.interval ?? "", spec.unit ?? ""]
+  return [
+    spec.channel,
+    spec.chain ?? "",
+    spec.board ?? spec.token ?? spec.wallet ?? "",
+    spec.interval ?? "",
+    spec.unit ?? "",
+    spec.currency ?? "",
+    spec.sort ?? "",
+    spec.limit ?? "",
+  ]
     .join("|")
     .replace(/\|+$/, "");
 }
@@ -517,14 +562,13 @@ export class RazeWebSocket {
         return;
       }
       case "trades": {
-        const native = nativeUsdSync(chain);
         const mint = spec.token ?? "";
         if (type === "snapshot") {
           const rows = Array.isArray(f.data) ? f.data : [];
           this.dispatch("trade_snapshot", {
             type: "trade_snapshot",
             tokenMint: mint,
-            trades: rows.map((r) => apiTradeToTrade(asRecord(r) ?? {}, native, mint)),
+            trades: rows.map((r) => apiTradeToTrade(asRecord(r) ?? {}, mint)),
           });
           return;
         }
@@ -533,29 +577,44 @@ export class RazeWebSocket {
           // transaction that landed in another slot comes later as a trade.
           const rows = (Array.isArray(f.data) ? f.data : [])
             .map((r) => asRecord(r) ?? {})
-            .map((r) => ({ signature: String(r.signature ?? ""), wallet: String(r.wallet ?? "") }))
-            .filter((r) => r.signature);
+            .map((r) => ({ id: String(r.id ?? ""), signature: String(r.signature ?? ""), wallet: String(r.wallet ?? "") }))
+            .filter((r) => r.id);
           if (rows.length) this.dispatch("trade_retract", { type: "trade_retract", tokenMint: mint, rows });
+          return;
+        }
+        if (type === "tags") {
+          const rows = (Array.isArray(f.data) ? f.data : [])
+            .map((r) => asRecord(r) ?? {})
+            .map((r) => ({
+              id: String(r.id ?? ""),
+              tags: Array.isArray(r.tags) ? r.tags.map((t) => String(t).toLowerCase()) : [],
+            }))
+            .filter((r) => r.id);
+          if (rows.length) this.dispatch("trade_tags", { type: "trade_tags", tokenMint: mint, rows });
           return;
         }
         const row = asRecord(f.data);
         if (!row) return;
-        const trade = apiTradeToTrade(row, native, mint);
+        const trade = apiTradeToTrade(row, mint);
         this.dispatch("trade", { ...trade, type: "trade", mint: trade.tokenMint, wallet: trade.signer });
         return;
       }
       case "candles": {
-        const base = { type: "candle", tokenMint: spec.token, interval: spec.interval, unit: spec.unit ?? "usd", kind: type };
+        const base = {
+          type: "candle",
+          tokenMint: spec.token,
+          interval: spec.interval,
+          unit: spec.unit ?? "usd",
+          currency: spec.currency ?? "usd",
+          kind: type,
+        };
         if (type === "snapshot") {
           const rows = Array.isArray(f.data) ? f.data : [];
-          this.dispatch("candle", {
-            ...base,
-            candles: rows.map((r) => apiCandle(asRecord(r) ?? {})).filter(Boolean),
-          });
+          this.dispatch("candle", { ...base, candles: rows.map((r) => apiCandle(asRecord(r) ?? {})) });
           return;
         }
-        const candle = apiCandle(asRecord(f.data) ?? {});
-        if (candle) this.dispatch("candle", { ...base, candle });
+        const row = asRecord(f.data);
+        if (row) this.dispatch("candle", { ...base, candle: apiCandle(row) });
         return;
       }
       case "token": {
@@ -585,14 +644,48 @@ export class RazeWebSocket {
         }
         return;
       }
-      case "wallet": {
+      case "holders":
+      case "traders": {
+        if (type !== "snapshot") return;
         const native = nativeUsdSync(chain);
+        const rows = (Array.isArray(f.data) ? f.data : []).map((r) => asRecord(r) ?? {});
+        this.dispatch(spec.channel, {
+          type: spec.channel,
+          tokenMint: spec.token,
+          rows: spec.channel === "holders"
+            ? rows.map((r, i) => apiHolderToHolder(r, native, i + 1))
+            : rows.map((r) => apiHolderToTrader(r, native)),
+        });
+        return;
+      }
+      case "trending": {
+        const native = nativeUsdSync(chain);
+        const base = { type: "trending", chain, interval: spec.interval, sort: spec.sort };
+        if (type === "summary") {
+          this.dispatch("trending_summary", { ...base, type: "trending_summary", summary: asRecord(f.data) ?? {} });
+          return;
+        }
+        if (type === "snapshot") {
+          const rows = (Array.isArray(f.data) ? f.data : [])
+            .map((r) => apiTokenToEvent(asRecord(r) ?? {}, native))
+            .filter((t) => t.mint_address);
+          this.dispatch("trending", { ...base, kind: "snapshot", rows });
+          return;
+        }
+        const row = asRecord(f.data);
+        if (!row) return;
+        const token = apiTokenToEvent(row, native);
+        if (token.mint_address) this.dispatch("trending", { ...base, kind: type, row: token });
+        return;
+      }
+      case "wallet": {
         const wallet = spec.wallet ?? "";
         const map = (r: unknown) => {
           const row = asRecord(r) ?? {};
           return {
-            ...apiTradeToTrade(row, native),
+            ...apiTradeToTrade(row),
             signer: wallet,
+            tokenName: row.tokenName ?? null,
             tokenSymbol: row.tokenSymbol ?? null,
             tokenImage: row.tokenImage ?? null,
           };
@@ -663,15 +756,44 @@ export class RazeWebSocket {
     }
   }
 
-  /** The API's forming bar for (mint, interval, unit): `candle` events. */
-  subscribeCandles(mint: string, interval: string, unit: "usd" | "marketCap" = "usd"): void {
-    if (!mint) return;
+  /**
+   * The ranking of `chain` (`trending` events: a snapshot with each row's
+   * `rank`, then add/update/remove), and with every read its summary
+   * (`trending_summary`). `limit` 0 sends the summary only.
+   */
+  subscribeTrending(chain: string, interval: string, limit: number, sort = "trades"): void {
     this.connect();
-    this.retain({ channel: "candles", chain: getActiveChain(), token: mint, interval, unit }, true);
+    this.retain({ channel: "trending", chain, interval, sort, limit }, limit > 0);
   }
 
-  unsubscribeCandles(mint: string, interval: string, unit: "usd" | "marketCap" = "usd"): void {
-    const sid = this.findSid((s) => s.channel === "candles" && s.token === mint && s.interval === interval && (s.unit ?? "usd") === unit);
+  unsubscribeTrending(chain: string, interval: string, limit: number, sort = "trades"): void {
+    this.release(sidOf({ channel: "trending", chain, interval, sort, limit }), limit > 0);
+  }
+
+  /** The API's forming bar for (mint, interval, unit, currency): `candle`
+   *  events. `native` prices the candles in the chain's coin. */
+  subscribeCandles(
+    mint: string,
+    interval: string,
+    unit: "usd" | "marketCap" = "usd",
+    currency: "usd" | "native" = "usd",
+  ): void {
+    if (!mint) return;
+    this.connect();
+    const spec: Spec = { channel: "candles", chain: getActiveChain(), token: mint, interval, unit };
+    if (currency === "native") spec.currency = currency;
+    this.retain(spec, true);
+  }
+
+  unsubscribeCandles(
+    mint: string,
+    interval: string,
+    unit: "usd" | "marketCap" = "usd",
+    currency: "usd" | "native" = "usd",
+  ): void {
+    const sid = this.findSid((s) =>
+      s.channel === "candles" && s.token === mint && s.interval === interval
+        && (s.unit ?? "usd") === unit && (s.currency ?? "usd") === currency);
     if (sid) this.release(sid, true);
   }
 

@@ -2,11 +2,13 @@
  * SolanaDatafeed – IBasicDataFeed implementation over the market-data API.
  *
  *  - History: `/tokens/{chain}/{address}/candles`, `unit=marketCap` for the
- *    market-cap display and `unit=usd` for price; SOL display divides by the
- *    native coin's USD price. Scroll-back pages with `to` = oldest bar − 1.
- *  - Live: the `candles` channel for the chart's (interval, unit) — the API's
- *    forming bar, folded from the same trades the tape shows.
- *  - Proper _lastBar continuity for real-time bars.
+ *    market-cap display and `unit=usd` for price; SOL display asks
+ *    `currency=native` (each candle at the coin's price at its end).
+ *    Scroll-back pages with `to` = oldest bar − 1. The API's candles are drawn
+ *    as sent: one per interval start, opening at the previous close, stray
+ *    wicks already cut.
+ *  - Live: the `candles` channel for the chart's (interval, unit, currency) —
+ *    the API's forming bar, folded from the same trades the tape shows.
  */
 import type {
   IExternalDatafeed,
@@ -31,11 +33,9 @@ export type MarksProvider = (from: number, to: number) => Mark[];
 export interface ATHInfo { price: number; time: number }
 type ATHCallback = (ath: ATHInfo | null) => void;
 import { fetchCandles, type ApiCandle, type OhlcTimeframe } from "../../api/client";
-import { nativeUsd } from "../../api/native";
 import { RazeWebSocket } from "../../api/websocket";
 import { fetchPublicMetadata, getCachedPublicMetadata } from "../../api/metadata";
 import { CHAIN_CHANGED_EVENT } from "../../lib/chains";
-import { despikeBars } from "../../lib/candleDespike";
 
 // ── resolution helpers ────────────────────────────────────────────────────────
 
@@ -59,23 +59,6 @@ function getApiTimeframe(resolution: string): string {
     case "240": return "4h";
     case "1D":  return "1d";
     default:    return "1m";
-  }
-}
-
-function timeframeToMs(timeframe: string): number {
-  switch (timeframe) {
-    case "1s":  return 1_000;
-    case "5s":  return 5_000;
-    case "15s": return 15_000;
-    case "30s": return 30_000;
-    case "1m":  return 60_000;
-    case "5m":  return 300_000;
-    case "15m": return 900_000;
-    case "30m": return 1_800_000;
-    case "1h":  return 3_600_000;
-    case "4h":  return 14_400_000;
-    case "1d":  return 86_400_000;
-    default:    return 60_000;
   }
 }
 
@@ -123,10 +106,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   // down or interval changes.
   private _athListeners = new Map<string, Set<ATHCallback>>();
 
-  // SOL price
-  private _solPrice          = 0;
-  private _solPriceTs        = 0;
-  private _solPriceInflight: Promise<number> | null = null;
   // display label cache: mint → "SYMBOL NAME"
   private _tokenLabel = new Map<string, string>();
 
@@ -214,71 +193,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     for (const cb of set) cb(ath);
   }
 
-  /**
-   * Despike a batch of bars, then re-apply open→close continuity.
-   *
-   * The rule itself lives in `lib/candleDespike` and is a port of the server's
-   * `history/src/db/ohlcv_despike.rs` — ONE rule, same constants, so a bar and
-   * its refetched self agree instead of the chart rewriting its own history.
-   *
-   * This replaced a client-only heuristic (mcap-bucketed body/wick ratios down
-   * to 1.015 at large cap, median-of-3 windows). It was dropped because:
-   *  - it was a SECOND, different rule, so history disagreed with the live bar
-   *    and with what the server now serves;
-   *  - its thresholds were never measured — at >$1B mcap it trimmed any wick
-   *    beyond 1.5%, well inside genuine intra-bar volatility;
-   *  - collapsing an outlier body to `open = close = local` mutated the very
-   *    closes the next bar used as its reference, so it was not idempotent and
-   *    a re-run (every scroll-back re-clamps the whole merged array) could
-   *    cascade.
-   *
-   * Continuity runs AFTER the despike — it overwrites each open with the
-   * previous close, which can push the open outside the bar's own range, so the
-   * OHLC invariants are re-asserted at the end. The old code skipped that.
-   */
-  private _sanitizeBars(bars: Bar[]): number {
-    const touched = despikeBars(bars);
-    for (let i = 1; i < bars.length; i++) {
-      const b = bars[i]!;
-      b.open = bars[i - 1]!.close;
-      b.high = Math.max(b.high, b.open, b.close);
-      b.low  = Math.min(b.low,  b.open, b.close);
-    }
-    return touched;
-  }
-
-  /** Sort, drop zero/NaN closes (they paint as holes on a mcap axis), merge
-   *  duplicate timestamps, then despike + continuity. */
-  private _finalizeHistory(bars: Bar[]): Bar[] {
-    bars.sort((a, b) => a.time - b.time);
-    const out: Bar[] = [];
-    for (const b of bars) {
-      if (!(b.close > 0) || !Number.isFinite(b.close) || !Number.isFinite(b.time)) continue;
-      b.high = Math.max(b.high, b.open, b.close);
-      b.low  = Math.min(b.low,  b.open, b.close);
-      const last = out[out.length - 1];
-      if (last && last.time === b.time) {
-        last.high = Math.max(last.high, b.high);
-        last.low = Math.min(last.low, b.low);
-        last.close = b.close;
-        last.volume = (last.volume || 0) + (b.volume || 0);
-      } else {
-        out.push(b);
-      }
-    }
-    this._sanitizeBars(out);
-    return out;
-  }
-
-  // NOTE: `_usdMcapFactor` was removed with the mcap-bucketed spike thresholds
-  // it existed to feed. It also carried a latent bug worth recording: in
-  // SOL-denominated mode `_loadBars` never fetched the SOL price (it is only
-  // needed for USD display), so the factor was computed with solPrice = 1 and
-  // every mcap estimate came out ~140x too low — landing on a much looser
-  // threshold bucket exactly where the tight one was intended. The
-  // corroboration rule needs no marketcap at all, so the whole class of bug
-  // goes with it.
-
   /** Walk a bar batch and raise the stored ATH if any bar's high beats it. */
   private _maybeUpdateATHFromBars(baseKey: string, bars: Bar[]): void {
     let bestPrice = -Infinity;
@@ -356,11 +270,7 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   ): Promise<void> {
     try {
       // Label is cosmetic — fire in background, don't block resolution on it.
-      // Pre-fetch solPrice in parallel with bars so the placeholder branch never
-      // sees _solPrice=0 (which would make the initial mcap bar show as $0).
       void this._getTokenLabel(mint);
-      // The native price in parallel with the candles (SOL display needs it).
-      void this._getSolPrice();
       await this._loadBars(mint, "1m", `${mint}-1m`);
 
       const cached     = this._cache.get(`${mint}-1m`);
@@ -534,25 +444,14 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     return this._display === "mcap" ? "marketCap" : "usd";
   }
 
-  /** API candles (USD price or USD market cap) → display bars. SOL display
-   *  divides by the native coin's current USD price: the API has no
-   *  per-candle native price. */
-  private _toBars(items: ApiCandle[], timeframe: string, div: number): Bar[] {
-    const frameMs = timeframeToMs(timeframe);
-    return items.map((c) => ({
-      time:   Math.floor(c.time / frameMs) * frameMs,
-      open:   c.open  / div,
-      high:   c.high  / div,
-      low:    c.low   / div,
-      close:  c.close / div,
-      volume: c.volume,
-    }));
+  /** The API currency behind the current display. */
+  private _apiCurrency(): "usd" | "native" {
+    return this._currency === "sol" ? "native" : "usd";
   }
 
-  /** 1 in USD display; the native price in SOL display (0 = not known yet). */
-  private async _divisor(): Promise<number> {
-    if (this._currency === "usd") return 1;
-    return this._getSolPrice();
+  /** API candles → display bars, unchanged (copies: the cache owns them). */
+  private _toBars(items: ApiCandle[]): Bar[] {
+    return items.map((c) => ({ ...c }));
   }
 
   /** Fetches the initial batch of OHLCV data from the API into _cache */
@@ -570,13 +469,13 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
       let items: ApiCandle[] = [];
       let collected: Bar[] = [];
       try {
-        const [bars, div] = await Promise.all([
-          fetchCandles(mint, { interval: timeframe as OhlcTimeframe, limit: INITIAL_LIMIT, unit: this._unit() }),
-          this._divisor(),
-        ]);
-        // SOL display with no native price yet: nothing we could draw right.
-        items = div > 0 ? bars : [];
-        collected = this._toBars(items, timeframe, div || 1);
+        items = await fetchCandles(mint, {
+          interval: timeframe as OhlcTimeframe,
+          limit: INITIAL_LIMIT,
+          unit: this._unit(),
+          currency: this._apiCurrency(),
+        });
+        collected = this._toBars(items);
       } catch {
         items = [];
         collected = [];
@@ -594,7 +493,7 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
         this._oldestCursor.set(baseKey, items[0]!.time);
       }
 
-      const ready = this._finalizeHistory(collected);
+      const ready = collected;
       this._cache.set(baseKey, { data: ready, ts: Date.now() });
       this._maybeUpdateATHFromBars(baseKey, ready);
 
@@ -649,9 +548,8 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     }
 
     const fetchPromise = (async () => {
-      const div = await this._divisor();
-      if (!(div > 0)) return;
-      const newBars: Bar[] = [];
+      // Older pages, each prepended: oldest first, as the API sends a page.
+      let newBars: Bar[] = [];
       let cur: number = cursor;
 
       for (let page = 0; page < 10; page++) {
@@ -664,6 +562,7 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
             limit: CHUNK,
             to: cur - 1,
             unit: this._unit(),
+            currency: this._apiCurrency(),
           });
         } catch {
           break;
@@ -674,10 +573,10 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
           this._oldestCursor.set(baseKey, null);
           break;
         }
-        newBars.push(...this._toBars(items, timeframe, div));
+        newBars = [...this._toBars(items), ...newBars];
 
         const oldest = items[0]!.time;
-        if (items.length < CHUNK || oldest >= cur) {
+        if (items.length < CHUNK) {
           this._hasMore.set(baseKey, false);
           this._oldestCursor.set(baseKey, null);
           break;
@@ -691,10 +590,11 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
 
       if (!newBars.length) return;
 
-      // Merge with existing, drop zeros / duplicate timestamps, despike.
-      // Re-running over the WHOLE merged array is safe because `despikeBars` is
-      // idempotent.
-      const deduped = this._finalizeHistory([...existing, ...newBars]);
+      // Older bars before the cache as it is now (a _loadBars refresh may
+      // have replaced it meanwhile).
+      const current = this._cache.get(baseKey)?.data ?? [];
+      const head = current[0]?.time;
+      const deduped = [...newBars.filter((b) => head == null || b.time < head), ...current];
 
       // Keep original ts so TTL-based refresh of recent data still works
       this._cache.set(baseKey, { data: deduped, ts: this._cache.get(baseKey)?.ts ?? Date.now() });
@@ -765,18 +665,19 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   private _connectWs(mint: string, resolution: string): void {
     const interval = getApiTimeframe(resolution);
     const unit = this._unit();
-    const key = `${mint}|${interval}|${unit}`;
+    const currency = this._apiCurrency();
+    const key = `${mint}|${interval}|${unit}|${currency}`;
     if (this._wireSub && this._wireSubKey === key) return;
     if (this._wireSub) this._closeWs();
     this._wireSubKey = key;
     const ws = RazeWebSocket.getInstance();
     ws.connect();
-    ws.subscribeCandles(mint, interval, unit);
-    const off = ws.on("candle", (msg) => { void this._handleCandle(msg, mint, interval, unit); });
+    ws.subscribeCandles(mint, interval, unit, currency);
+    const off = ws.on("candle", (msg) => { this._handleCandle(msg, mint, interval, unit, currency); });
     this._wireSub = {
       cancel: () => {
         off();
-        ws.unsubscribeCandles(mint, interval, unit);
+        ws.unsubscribeCandles(mint, interval, unit, currency);
       },
     };
   }
@@ -787,9 +688,6 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
     this._oldestCursor.clear();
     this._inflightRequests.clear();
     this._lastBar.clear();
-    this._solPrice = 0;
-    this._solPriceTs = 0;
-    this._solPriceInflight = null;
     this._closeWs();
     if (this._currentSymbol && this._currentResolution) {
       this._connectWs(this._currentSymbol, this._currentResolution);
@@ -807,47 +705,32 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
   /**
    * A `candle` frame: the API's forming bar (`kind: "candle"`), or its recent
    * bars on (re)subscribe (`kind: "snapshot"`, which is what fills a gap after
-   * a reconnect). Bars older than the live head are ignored — TradingView only
-   * takes the head or a newer bar.
+   * a reconnect), drawn as sent. Bars older than the live head are ignored —
+   * TradingView only takes the head or a newer bar.
    */
-  private async _handleCandle(
+  private _handleCandle(
     msg: Record<string, unknown>,
     mint: string,
     interval: string,
     unit: string,
-  ): Promise<void> {
+    currency: string,
+  ): void {
     if (msg.tokenMint !== mint || msg.interval !== interval || msg.unit !== unit) return;
+    if (msg.currency !== currency) return;
     const currentSymbol     = this._currentSymbol;
     const currentResolution = this._currentResolution;
     if (!currentSymbol || !currentResolution || currentSymbol !== mint) return;
     if (getApiTimeframe(currentResolution) !== interval || this._unit() !== unit) return;
-
-    const div = await this._divisor();
-    if (!(div > 0)) return;
-    // Re-verify nothing changed while we were awaiting
-    if (this._currentSymbol !== currentSymbol || this._currentResolution !== currentResolution) return;
+    if (this._apiCurrency() !== currency) return;
 
     const raw = msg.kind === "snapshot"
       ? (Array.isArray(msg.candles) ? msg.candles as ApiCandle[] : [])
       : (msg.candle ? [msg.candle as ApiCandle] : []);
     const barKey = `${currentSymbol}-${currentResolution}`;
-    for (const next of this._toBars(raw, interval, div)) {
-      if (!(next.close > 0)) continue;
+    for (const bar of this._toBars(raw)) {
       const lastBar = this._lastBar.get(barKey);
       // Never rewind the live head.
-      if (lastBar && next.time < lastBar.time) continue;
-      const sameBar = !!lastBar && next.time === lastBar.time;
-      // Continuity: a new bar opens at the previous close, as history does
-      // after `_finalizeHistory`; the forming bar keeps the open it started with.
-      const open = sameBar ? lastBar!.open : (lastBar ? lastBar.close : next.open);
-      const bar: Bar = {
-        time:   next.time,
-        open,
-        high:   Math.max(next.high, open, next.close),
-        low:    Math.min(next.low,  open, next.close),
-        close:  next.close,
-        volume: next.volume,
-      };
+      if (lastBar && bar.time < lastBar.time) continue;
       this._lastBar.set(barKey, bar);
       this._emit(bar);
     }
@@ -857,25 +740,7 @@ export class SolanaDatafeed implements IExternalDatafeed, IDatafeedChartApi {
    *  so the chart is ready when TradingView resolves the symbol. */
   prefetchMint(mint: string): void {
     if (!mint) return;
-    void this._getSolPrice();
     void this._loadBars(mint, "1m", `${mint}-1m`);
-  }
-
-  // ── SOL price & supply ────────────────────────────────────────────────────
-
-  /** The active chain's native coin in USD (SOL / ETH / BNB). */
-  private _getSolPrice(): Promise<number> {
-    if (this._solPrice && Date.now() - this._solPriceTs < 15_000) return Promise.resolve(this._solPrice);
-    if (this._solPriceInflight) return this._solPriceInflight;
-    this._solPriceInflight = (async () => {
-      try {
-        const price = await nativeUsd();
-        if (price > 0) { this._solPrice = price; this._solPriceTs = Date.now(); }
-      } catch { /* keep stale */ }
-      this._solPriceInflight = null;
-      return this._solPrice;
-    })();
-    return this._solPriceInflight;
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────

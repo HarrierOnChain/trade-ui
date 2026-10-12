@@ -48,12 +48,6 @@ interface Props {
   onAddressClick?: (address: string) => void;
 }
 
-function toMs(raw: string | number): number {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!isNaN(n) && n > 0) return n > 1e15 ? n / 1000 : n > 1e12 ? n : n * 1000;
-  return new Date(raw as string).getTime();
-}
-
 function formatClock(tsMs: number): string {
   const d = new Date(tsMs);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -103,9 +97,6 @@ export function TradesTable({
     () => ({ fromMs: timestampMinMs, toMs: timestampMaxMs }),
     [timestampMinMs, timestampMaxMs],
   );
-  const serverTimeFilter =
-    (timestampMinMs != null && isFinite(timestampMinMs)) ||
-    (timestampMaxMs != null && isFinite(timestampMaxMs));
   const { trades, loading, loadingMore, hasMore, morePaused, error, loadMore } =
     useTrades(mint ?? null, signer, sortAsc ? "asc" : "desc", timeRange);
   const [timeMode, setTimeMode] = useState<TimeMode>("age");
@@ -126,24 +117,18 @@ export function TradesTable({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [timestampFilterOpen]);
 
-  // One row per leg (co-signers, EVM legs stay), sorted; then the category /
-  // amount filters apply.
+  // One row per id, sorted; then the category / amount filters apply. A
+  // time range is the API's window (useTrades sends it).
   const merged = useMemo(() => {
     const out = mergeTradeLists(trades);
-    return out.sort((a, b) => {
-      const ta = toMs(a.timestamp);
-      const tb = toMs(b.timestamp);
-      return sortAsc ? ta - tb : tb - ta;
-    });
+    return out.sort((a, b) => (sortAsc ? a.timestamp - b.timestamp : b.timestamp - a.timestamp));
   }, [trades, sortAsc]);
 
   const sorted = useMemo(() => {
     const hasCatFilter = categorySigners && categorySigners.size > 0;
     const hasMin = amountMinSol != null && isFinite(amountMinSol);
     const hasMax = amountMaxSol != null && isFinite(amountMaxSol);
-    const hasTsMin = !serverTimeFilter && timestampMinMs != null && isFinite(timestampMinMs);
-    const hasTsMax = !serverTimeFilter && timestampMaxMs != null && isFinite(timestampMaxMs);
-    if (!hasCatFilter && !hasMin && !hasMax && !hasTsMin && !hasTsMax) return merged;
+    if (!hasCatFilter && !hasMin && !hasMax) return merged;
     return merged.filter((t) => {
       if (hasCatFilter && !categorySigners!.has(t.signer)) return false;
       if (hasMin || hasMax) {
@@ -153,12 +138,9 @@ export function TradesTable({
         if (hasMin && amt < (amountMinSol as number)) return false;
         if (hasMax && amt > (amountMaxSol as number)) return false;
       }
-      const ts = toMs(t.timestamp);
-      if (hasTsMin && ts < (timestampMinMs as number)) return false;
-      if (hasTsMax && ts > (timestampMaxMs as number)) return false;
       return true;
     });
-  }, [merged, categorySigners, amountMinSol, amountMaxSol, timestampMinMs, timestampMaxMs, serverTimeFilter]);
+  }, [merged, categorySigners, amountMinSol, amountMaxSol]);
 
   const { displayed: displayedTrades, hovered: tableHovered, handlers: freezeHandlers } =
     useFreezeSnapshotOnHover(sorted);
@@ -330,7 +312,7 @@ export function TradesTable({
               </tr>
             )}
             {displayedTrades.map((t) => {
-              const tsMs = toMs(t.timestamp);
+              const tsMs = t.timestamp;
               const isFresh = tsMs > mountTime.current && Date.now() - tsMs < 3000;
               return (
                 <TradeRow

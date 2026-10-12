@@ -12,6 +12,15 @@ import type { Holder } from "../../types";
 import styles from "./styles.module.css";
 
 const CHUNK = 30;
+
+/** What a holder that is not a person is (the API's `Holder.kind`). */
+const KIND_TAG: Partial<Record<NonNullable<Holder["kind"]>, string>> = {
+  pool: "LP",
+  curve: "Curve",
+  burn: "Burn",
+  program: "Program",
+  exchange: "Exchange",
+};
 const COL_COUNT = 6;
 
 interface Props {
@@ -182,7 +191,9 @@ const HolderRow = React.memo(function HolderRow({
             </button>
           </Tooltip>
           <span className={styles.walletFlags}>
-            {holder.isLiquidityPool && <span className={styles.lpTag}>LP</span>}
+            {holder.kind && KIND_TAG[holder.kind] && (
+              <span className={styles.lpTag}>{KIND_TAG[holder.kind]}</span>
+            )}
             {isBundle && (
               <Tooltip content="Bundle trader">
                 <span className={styles.flag}>{Icon.bundle(11)}</span>
