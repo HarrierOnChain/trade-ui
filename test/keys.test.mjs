@@ -9,7 +9,6 @@ import {
   fromBase58,
   generateKey,
   isSolanaAddress,
-  parseAddress,
   parseSecret,
   solanaSign,
   toBase58,
@@ -70,14 +69,9 @@ describe("keys", () => {
     assert.throws(() => parseSecret("0x" + "0".repeat(64)), { code: "invalid_secret" });
   });
 
-  test("watch addresses: the family from the format, EVM checksummed", () => {
-    assert.deepEqual(parseAddress("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"), {
-      family: "evm",
-      address: "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-    });
-    const sol = generateKey("sol").address;
-    assert.deepEqual(parseAddress(` ${sol} `), { family: "sol", address: sol });
-    assert.throws(() => parseAddress("nope"), { code: "invalid_address" });
+  test("an address is not a key", () => {
+    assert.throws(() => parseSecret("0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed"), { code: "looks_like_address" });
+    assert.throws(() => parseSecret(generateKey("sol").address), { code: "looks_like_address" });
     assert.ok(!isSolanaAddress("1111111111111111111111111111111111111111111111111"));
   });
 

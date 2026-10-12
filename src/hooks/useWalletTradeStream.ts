@@ -32,6 +32,9 @@ export interface WalletTradeAlert {
   walletId: string;
   /** Token mint that was traded. */
   tokenMint: string;
+  /** The token's ticker and image, as the API sends them with the trade. */
+  tokenSymbol?: string | null;
+  tokenImage?: string | null;
   /** Trade direction. */
   side: "buy" | "sell";
   /** SOL amount swapped. */
@@ -86,7 +89,7 @@ function alertId(t: { signature?: string; tokenMint?: string; transactionType?: 
 
 /** Convert a REST/WS Trade into a WalletTradeAlert anchored to a wallet. */
 function tradeToAlert(
-  trade: Trade,
+  trade: Trade & { tokenSymbol?: string | null; tokenImage?: string | null },
   wallet: StreamWallet,
   live: boolean,
 ): WalletTradeAlert | null {
@@ -104,6 +107,8 @@ function tradeToAlert(
     walletLabel: wallet.label,
     walletId: wallet.id,
     tokenMint: trade.tokenMint,
+    tokenSymbol: trade.tokenSymbol ?? null,
+    tokenImage: trade.tokenImage ?? null,
     side: trade.transactionType === "sell" ? "sell" : "buy",
     solAmount: Number(trade.solAmount) || 0,
     tokensAmount: Number(trade.tokensAmount) || 0,

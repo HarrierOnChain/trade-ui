@@ -110,28 +110,34 @@ export function TextInput({
 /* ── Tab nav (the bar at the top of tab bodies) ──────────────────────── */
 
 export function TabBar<T extends string>({
-  tabs, value, onChange,
+  tabs, value, onChange, trailing,
 }: {
   tabs: Array<{ value: T; label: string; count?: number }>;
   value: T;
   onChange: (v: T) => void;
+  /** Shown at the bar's right end. */
+  trailing?: React.ReactNode;
 }) {
   return (
-    <nav style={{ display: "flex", borderBottom: "1px solid var(--line-soft)" }}>
+    <nav role="tablist" style={{ display: "flex", alignItems: "center", borderBottom: "1px solid var(--line-soft)", flexShrink: 0, minWidth: 0 }}>
       {tabs.map((t) => {
         const on = t.value === value;
         return (
           <button
             key={t.value}
+            type="button"
+            role="tab"
+            aria-selected={on}
             onClick={() => onChange(t.value)}
             style={{
-              padding: "10px 16px 12px",
+              padding: "8px 2px 10px",
+              marginRight: 20,
               position: "relative",
               background: "transparent",
-              color: on ? "var(--paper)" : "var(--paper-3)",
+              color: on ? "var(--paper)" : "var(--paper-4)",
               border: "none",
               cursor: "pointer",
-              fontSize: 13, fontWeight: on ? 600 : 500,
+              fontSize: 13, fontWeight: 500,
               fontFamily: "var(--font-ui)",
               letterSpacing: "-0.005em",
               display: "inline-flex", alignItems: "center", gap: 7,
@@ -140,25 +146,18 @@ export function TabBar<T extends string>({
           >
             {t.label}
             {t.count !== undefined && (
-              <span style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                padding: "1px 7px", borderRadius: 999,
-                background: on ? "var(--accent-w)" : "var(--ink-2)",
-                color: on ? "var(--accent)" : "var(--paper-4)",
-                fontSize: 10, fontFamily: "var(--font-mono)",
-                fontWeight: 600,
-              }}>{t.count}</span>
+              <span style={{ color: "var(--paper-4)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{t.count}</span>
             )}
             {on && (
               <span style={{
                 position: "absolute", bottom: -1, left: 0, right: 0,
-                height: 2, background: "var(--accent)",
-                borderRadius: "2px 2px 0 0",
+                height: 1, background: "var(--paper)",
               }} />
             )}
           </button>
         );
       })}
+      {trailing && <div style={{ marginLeft: "auto", paddingLeft: 12, paddingBottom: 4, minWidth: 0 }}>{trailing}</div>}
     </nav>
   );
 }

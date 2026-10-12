@@ -28,12 +28,14 @@ function fmtVal(currency: Currency, usd: number, sol: number): string {
 }
 
 export function PnlCalendarModal({
-  open, onClose, addresses, solPrice, refreshKey = 0,
+  open, onClose, addresses, solPrice, native = "SOL", refreshKey = 0,
 }: {
   open: boolean;
   onClose: () => void;
   addresses: string[];
   solPrice: number;
+  /** The chain's native coin, for the second currency's label. */
+  native?: string;
   refreshKey?: number;
 }) {
   const [monthDate, setMonthDate] = useState(() => {
@@ -116,7 +118,7 @@ export function PnlCalendarModal({
           <MiniToggle<Currency>
             value={currency}
             onChange={setCurrency}
-            options={[{ value: "USD", label: "USD" }, { value: "SOL", label: "SOL" }]}
+            options={[{ value: "USD", label: "USD" }, { value: "SOL", label: native }]}
           />
         </div>
 

@@ -11,7 +11,6 @@
  *
  * Active selection: the wallets the next trade signs with, kept per chain in
  * localStorage. Several can be active at once (one trade each, all at once).
- * Only wallets with a key can be active: watch-only wallets never trade.
  *
  * Side-effect: mirrors the wallets into localStorage under
  * PORTFOLIO_STORAGE_KEY for the code that reads it synchronously
@@ -36,9 +35,8 @@ import { WALLETS_EVENT, cachedWallets, vault, type VaultWallet } from "../lib/va
 const WALLETS_CHANGED_EVENT = "terminal:wallets-changed";
 const ACTIVE_WALLETS_STORAGE_KEY = "trade.active-wallets.v2";
 
-function defaultLabel(w: { label: string | null; pubkey: string; kind: ChainWallet["kind"] }): string {
-  if (w.label) return w.label;
-  return `${w.kind === "WATCH" ? "Watch" : "Wallet"} ${w.pubkey.slice(0, 4)}`;
+function defaultLabel(w: { label: string | null; pubkey: string }): string {
+  return w.label || `Wallet ${w.pubkey.slice(0, 4)}`;
 }
 
 let lastMirrorPayload = "";
@@ -89,13 +87,11 @@ function writeActiveSet(chainId: ChainId, ids: Set<string>) {
 
 export interface UserWallet extends ChainWallet {
   displayLabel: string;
-  /** an address without its key: shows balances, never trades */
-  watchOnly: boolean;
 }
 
 function decorate(w: VaultWallet, chain: ChainId): UserWallet {
   const b = toChainWallet(w, chain);
-  return { ...b, displayLabel: defaultLabel(b), watchOnly: w.watchOnly };
+  return { ...b, displayLabel: defaultLabel(b) };
 }
 
 export interface WalletBalance {
@@ -220,10 +216,10 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
     writeActiveSet(chainId, activeIds);
   }, [chainId, activeIds, loading]);
 
-  // Drop selected ids that no longer exist or cannot sign.
+  // Drop selected ids that no longer exist.
   useEffect(() => {
     if (loading) return;
-    const tradeable = new Set(wallets.filter((w) => !w.watchOnly).map((w) => w.id));
+    const tradeable = new Set(wallets.map((w) => w.id));
     setActiveIdsState((prev) => {
       const kept = [...prev].filter((id) => tradeable.has(id));
       return kept.length === prev.size ? prev : new Set(kept);
@@ -325,7 +321,7 @@ export function UserWalletsProvider({ children }: { children: React.ReactNode })
   // Read from the vault's cache, not React state: a wallet created a moment
   // ago can be selected before this provider re-renders with it.
   const tradeableIds = useCallback(
-    () => new Set(cachedWallets().filter((w) => w.family === familyOf(chainId) && !w.watchOnly).map((w) => w.id)),
+    () => new Set(cachedWallets().filter((w) => w.family === familyOf(chainId)).map((w) => w.id)),
     [chainId],
   );
 

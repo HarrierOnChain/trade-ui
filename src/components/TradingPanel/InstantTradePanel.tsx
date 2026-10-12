@@ -102,7 +102,7 @@ export function InstantTradePanel({ isOpen, onClose, mint, buyQuote, pnl, onTrad
   // ── Wallet data ──────────────────────────────────────────────────────
   const activeWallets = userWallets.activeWallets.length
     ? userWallets.activeWallets
-    : userWallets.wallets.filter((w) => !w.watchOnly);
+    : userWallets.wallets;
   const quoteBalance = activeWallets.reduce((s, w) => {
     const bal = userWallets.balances[w.id];
     if (!bal) return s;

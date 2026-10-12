@@ -30,7 +30,7 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
   const { navigate } = useClientNav();
   const manage = () => {
     onClose();
-    navigate("/wallets");
+    navigate("/portfolio");
   };
   const popupRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
@@ -62,7 +62,7 @@ export function WalletSelectorPopup({ anchorRef, onClose, inline = false, footer
     };
   }, [anchorRef, onClose]);
 
-  const platformWallets = userWallets.wallets.filter((w) => w.kind === "PLATFORM");
+  const platformWallets = userWallets.wallets;
   const activePlatformCount = platformWallets.filter((w) => activeIds.has(w.id)).length;
   const noPlatforms = platformWallets.length === 0;
 

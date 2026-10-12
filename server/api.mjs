@@ -13,7 +13,7 @@
  *   GET  /api/config                 session: what this server talks to (no secrets)
  *   GET  /api/wallets                session: the wallets, without secrets
  *   POST /api/wallets/generate       session
- *   POST /api/wallets/import         session: keys and watch addresses
+ *   POST /api/wallets/import         session: private keys
  *   PATCH /api/wallets/:id           session: label
  *   POST /api/wallets/:id/delete     session + password
  *   POST /api/wallets/:id/export     session + password
@@ -358,19 +358,17 @@ export function createApi({ vault, auth, solana, quotes, evm, config, setupToken
     // lives. A lock ends it, and an unlock elsewhere does not bring it back.
     const stillUnlocked = () => auth.sessionOf(req) === token;
     if (action === "delete") {
-      // A wallet with a key is money: the password again, like a device asks.
-      if (!w.watchOnly) await requirePassword(token, body.password);
+      // A key is money: the password again, like a device asks.
+      await requirePassword(token, body.password);
       await vault.remove(id);
       auth.touch();
       return sendJson(res, 200, { ok: true });
     }
     if (action === "export") {
-      if (w.watchOnly) throw new HttpError(400, "watch_only", "Watch-only wallet: there is no key to export");
       await requirePassword(token, body.password);
       auth.touch();
       return sendJson(res, 200, { id: w.id, family: w.family, address: w.address, ...exportFormats(w.family, w.secret) });
     }
-    if (w.watchOnly) throw new HttpError(400, "watch_only", "Watch-only wallet: import its key to trade or send");
     if (w.family === "evm") {
       if (action !== "swap") throw new HttpError(400, "unsupported_chain", "Sending runs on Solana for now: EVM wallets swap");
       const kept = evm.book.get(body.quoteToken);

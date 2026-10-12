@@ -90,7 +90,7 @@ function base64ToBytes(b64: string): number[] | null {
  * import items, each with the stored entry it came from. Solana keys were
  * base64 there; a base58 key imported through its bulk importer could end up
  * stored as an "address": anything that long is offered back as the key it
- * is. Demo wallets are skipped.
+ * is. Entries without a key (demo wallets, watched addresses) are skipped.
  */
 export function legacyEntries(storage: Pick<Storage, "getItem"> | null): Array<{ item: ImportItem; source: unknown }> {
   if (!storage) return [];
@@ -114,7 +114,6 @@ export function legacyEntries(storage: Pick<Storage, "getItem"> | null): Array<{
       continue;
     }
     if (/^[1-9A-HJ-NP-Za-km-z]{80,120}$/.test(w.pubkey)) out.push({ item: { secret: w.pubkey, label }, source: w });
-    else out.push({ item: { address: w.pubkey, label }, source: w });
   }
   return out;
 }

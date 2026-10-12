@@ -10,9 +10,9 @@ Run it in the browser from a server you own (a VPS), or as a desktop app on
 Windows, macOS and Linux. There is no account and no third-party login: one
 Raze API key in the server's configuration, and one password for the vault.
 
-| Lock screen | Wallets |
+| Lock screen | Portfolio and wallets |
 | --- | --- |
-| ![The lock screen](.github/assets/lock.png) | ![The wallet page](.github/assets/wallets.png) |
+| ![The lock screen](.github/assets/lock.png) | ![The portfolio page, one wallet in view](.github/assets/portfolio.png) |
 
 ## Contents
 
@@ -210,31 +210,39 @@ answer receipts there. New blocks come from publicnode's WebSockets.
 **The password** is chosen on the first run and asked on every visit, by every
 browser. Wrong passwords slow down. **Lock** (the padlock in the top bar, or
 Ctrl/Cmd+L on desktop) ends every session at once, with every stream and
-WebSocket they had open; so does the idle delay (Wallets → Lock
-automatically: 5 minutes to 4 hours, or never) and a restart.
+WebSocket they had open; so does the idle delay (Portfolio → *Security* →
+Lock automatically: 5 minutes to 4 hours, or never) and a restart.
 Change the password from the same panel; the recovery key keeps working.
 
 **Forgot the password?** On the lock screen, *Forgot your password?* → enter
 the recovery key and a new password. The wallets stay as they are; every other
 open Trade UI goes back to the lock screen. The recovery key keeps working
 afterwards, like a hardware wallet's recovery phrase. Lost it, or think
-someone saw it? Wallets → Security → *New recovery key* (asks the password)
+someone saw it? Portfolio → *Security* → *New recovery key* (asks the password)
 retires the old one. Without both the password and the recovery key the vault
 stays closed: keep exported keys as a last backup.
 
-**The Wallets page** (top bar → Wallets):
+**The Portfolio page** (top bar → Portfolio) is where the wallets live. Its
+head shows the value, the cash (SOL / ETH / BNB, USDC, USD1) and the realized
+PnL of the wallets in view; below, the wallet column beside the Holdings and
+Activity tabs (on a phone the column is a third tab, *Wallets*). Each wallet
+shows its value on this chain. A click puts that wallet alone in view (value,
+PnL, holdings, activity) and opens its actions; *All wallets* goes back to the
+sum. The view never changes which wallets trade: the trading switch does.
+Under the column: *Security* (auto-lock, password, recovery key) and *Lock*.
+`/wallets`, the old page, redirects here.
+
+Every wallet is a key in the vault: there are no watch-only addresses (an
+older vault's are left out when it opens) and no demo wallets.
 
 - **New wallet** — Solana or EVM; several at once, numbered.
 - **Import key** — Solana: base58 (Phantom, Solflare, Backpack export) or a
   keypair file (`solana-keygen`, `id.json`). EVM: the hex key (MetaMask,
   Rabby). One per line for many, or load a file. Seed phrases are not
   supported: export the account's private key from your wallet.
-- **Watch address** — balances and holdings of an address you do not hold the
-  key of. It never trades.
 - **Export key** (password) — base58 and the keypair JSON, or EVM hex.
 - **Send SOL** (password) — to any address, or everything ("Max").
-- **Delete** (password, for a wallet with a key) — the key leaves the vault for
-  good.
+- **Delete** (password) — the key leaves the vault for good.
 - **Trading switch** — which wallets the panels and quick buys trade with
   (also in the top bar's wallet picker). Several at once: one trade each.
 
@@ -242,7 +250,7 @@ One EVM key is the same address on Ethereum, BNB Chain, Base and Robinhood,
 and trades on all four. Sending coins runs on Solana for now.
 
 Upgrading from a version that kept wallets in the browser (unencrypted, in
-`localStorage`): the Wallets page offers to move them into the vault and then
+`localStorage`): the Portfolio page offers to move them into the vault and then
 erases the browser copy. An entry the vault refuses stays in the browser, with
 the reason, until you discard it. The desktop app starts from an empty
 browser: import those keys by hand.
@@ -325,7 +333,7 @@ directly: the API routes refuse to serve without the lock in front of them.
 | --- | --- |
 | `server.mjs` | The server: Next.js behind the gate. |
 | `server/` | The lock (`auth.mjs`), the vault (`vault.mjs`, `keys.mjs`), the routes (`api.mjs`), the gate (`gate.mjs`), kept quotes (`quotes.mjs`), swaps and transfers (`solana.mjs`), the WebSocket proxies. |
-| `src/app/` | Pages (`monitor`, `token`, `portfolio`, `wallets`, `swap`) and the proxy routes under `api/`. |
+| `src/app/` | Pages (`monitor`, `token`, `portfolio` with the wallets, `swap`) and the proxy routes under `api/`. |
 | `src/components/shell/LockGate.tsx` | The lock screen and first run. |
 | `src/lib/vault/` | The browser's client for the lock and the wallets. |
 | `electron/` | The desktop shell and its first-run window. |

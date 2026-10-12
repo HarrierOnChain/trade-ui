@@ -2,20 +2,15 @@
  * The wallets of this Trade UI, as the terminal's components see them: read
  * from the vault on this Trade UI's server (src/lib/vault/client.ts), which
  * keeps the keys. A Solana wallet shows on Solana; an EVM wallet shows on
- * every EVM chain (one key, one address). Watch-only wallets carry no key:
- * they show balances and never trade.
+ * every EVM chain (one key, one address). Every wallet has its key.
  */
 import { getActiveChain, type ChainId } from "../lib/chains";
 import { evmapiGet } from "./evmapi";
 import { cachedWallets, type VaultWallet, type WalletFamily } from "../lib/vault/client";
 
-/** PLATFORM: a key in the vault, can trade. WATCH: an address only. */
-export type WalletKind = "PLATFORM" | "WATCH";
-
 /** A vault wallet as shown on one chain. */
 export interface ChainWallet {
   id: string;
-  kind: WalletKind;
   /** Chain this wallet is shown on. */
   chainId: ChainId;
   pubkey: string;
@@ -30,7 +25,6 @@ export function familyOf(chain: string): WalletFamily {
 export function toChainWallet(w: VaultWallet, chain: ChainId): ChainWallet {
   return {
     id: w.id,
-    kind: w.watchOnly ? "WATCH" : "PLATFORM",
     chainId: chain,
     pubkey: w.address,
     label: w.label,
@@ -44,14 +38,13 @@ export function evmWallet(walletId: string): { id: string; address: string } {
   const w = cachedWallets().find((x) => x.id === walletId);
   if (!w) throw new Error("Wallet not found: reload the wallet list");
   if (w.family !== "evm") throw new Error("Not an EVM wallet");
-  if (w.watchOnly) throw new Error("Watch-only wallet: import its key to trade with it");
   return { id: w.id, address: w.address };
 }
 
 /** Solana wallets that can sign, from the last list the server returned. */
 export function solanaSigners(): Array<{ id: string; pubkey: string; label: string | null }> {
   return cachedWallets()
-    .filter((w) => w.family === "sol" && !w.watchOnly)
+    .filter((w) => w.family === "sol")
     .map((w) => ({ id: w.id, pubkey: w.address, label: w.label }));
 }
 
@@ -60,7 +53,6 @@ export function solanaWallet(walletId: string): { id: string; address: string } 
   const w = cachedWallets().find((x) => x.id === walletId);
   if (!w) throw new Error("Wallet not found: reload the wallet list");
   if (w.family !== "sol") throw new Error("Not a Solana wallet");
-  if (w.watchOnly) throw new Error("Watch-only wallet: import its key to trade with it");
   return { id: w.id, address: w.address };
 }
 

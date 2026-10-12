@@ -54,7 +54,7 @@ describe("wallets of an older Trade UI", () => {
     getItem: (k: string) => (k === LEGACY_WALLETS_KEY ? JSON.stringify({ wallets }) : null),
   });
 
-  test("keys become importable secrets, addresses watch-only, demo wallets stay behind", () => {
+  test("keys become importable secrets; addresses and demo wallets stay behind", () => {
     const b64 = Buffer.from(Uint8Array.from(BYTES)).toString("base64");
     const items = readLegacyWallets(store([
       { kind: "PLATFORM", chainId: "sol", pubkey: "So1", label: "Main", secret: b64 },
@@ -66,7 +66,6 @@ describe("wallets of an older Trade UI", () => {
     assert.deepEqual(items, [
       { secret: JSON.stringify(BYTES), label: "Main" },
       { secret: `0x${"ab".repeat(32)}`, label: undefined },
-      { address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM", label: "Watched" },
       // Unreadable: sent as it is, so the server names the problem and it is kept.
       { secret: Buffer.from("short").toString("base64"), label: undefined },
     ]);

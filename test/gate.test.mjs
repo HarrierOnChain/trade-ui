@@ -213,9 +213,10 @@ describe("the gate", () => {
     const [w] = r.json.wallets;
     const k = generateKey("sol");
     r = await call("POST", "/api/wallets/import", { items: [{ secret: toBase58(k.secret) }, { address: generateKey("sol").address }] });
-    assert.equal(r.json.created.length, 2);
+    assert.equal(r.json.created.length, 1);
+    assert.deepEqual(r.json.errors.map((e) => e.code), ["bad_request"]);
     r = await call("GET", "/api/wallets");
-    assert.equal(r.json.wallets.length, 3);
+    assert.equal(r.json.wallets.length, 2);
     assert.ok(!r.text.includes(toBase58(k.secret)));
 
     r = await call("POST", `/api/wallets/${w.id}/export`, {});
@@ -230,11 +231,11 @@ describe("the gate", () => {
     assert.equal(r.json.wallet.label, "Renamed");
     r = await call("POST", `/api/wallets/${w.id}/delete`, { password: "wrong password" });
     assert.equal(r.status, 403);
-    assert.equal((await call("GET", "/api/wallets")).json.wallets.length, 3);
+    assert.equal((await call("GET", "/api/wallets")).json.wallets.length, 2);
   });
 
   test("quotes stay on the server: the swap is built from the router's own quote", async () => {
-    const wallet = (await call("GET", "/api/wallets")).json.wallets.find((w) => w.family === "sol" && !w.watchOnly);
+    const wallet = (await call("GET", "/api/wallets")).json.wallets.find((w) => w.family === "sol");
     const qs = `inputMint=${SOL}&outputMint=${USDC}&amount=1000000&slippageBps=50&maxHops=2&apiKey=leak`;
     let r = await call("GET", `/api/swap/quote?${qs}`);
     assert.equal(r.status, 200);
@@ -290,7 +291,7 @@ describe("the gate", () => {
     const r = await call("POST", "/api/auth/unlock", { password: PW });
     takeCookie(r.set);
     const token = (await call("GET", `/api/swap/quote?inputMint=${SOL}&outputMint=${USDC}&amount=5`)).json.quoteToken;
-    const wallet = (await call("GET", "/api/wallets")).json.wallets.find((w) => w.family === "sol" && !w.watchOnly);
+    const wallet = (await call("GET", "/api/wallets")).json.wallets.find((w) => w.family === "sol");
 
     const stream = await new Promise((resolve, reject) => {
       const u = new URL(base);
@@ -330,7 +331,7 @@ describe("the gate", () => {
     r = await call("POST", "/api/auth/unlock", { password: PW });
     assert.equal(r.status, 200);
     takeCookie(r.set);
-    assert.equal((await call("GET", "/api/wallets")).json.wallets.length, 3);
+    assert.equal((await call("GET", "/api/wallets")).json.wallets.length, 2);
     assert.equal((await call("GET", "/api/auth/status")).json.unlocked, true);
   });
 
@@ -355,7 +356,7 @@ describe("the gate", () => {
     const old = cookie;
     takeCookie(r.set);
     assert.equal((await call("GET", "/api/wallets", undefined, { headers: { cookie: old }, auth: false })).status, 401);
-    assert.equal((await call("GET", "/api/wallets")).json.wallets.length, 3);
+    assert.equal((await call("GET", "/api/wallets")).json.wallets.length, 2);
     assert.equal((await call("POST", "/api/auth/unlock", { password: PW })).json.error.code, "bad_password");
     assert.equal((await call("POST", "/api/auth/unlock", { password: "a new password" })).status, 200);
   });

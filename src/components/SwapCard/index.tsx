@@ -520,10 +520,10 @@ export function SwapCard() {
       {!signer && (
         <div style={{ ...box, padding: "10px 12px", fontSize: 12, color: "var(--paper-3)", lineHeight: 1.5 }}>
           No Solana wallet with a key yet.{" "}
-          <button type="button" onClick={() => navigate("/wallets")} style={{
+          <button type="button" onClick={() => navigate("/portfolio")} style={{
             background: "transparent", border: 0, padding: 0, color: "var(--accent)", cursor: "pointer", fontSize: 12,
           }}>Create or import one</button>{" "}
-          in Wallets: it signs on this Trade UI's server, without a prompt.
+          in Portfolio: it signs on this Trade UI's server, without a prompt.
         </div>
       )}
 

@@ -49,8 +49,6 @@ interface StoredWallet {
   address: string;
   createdAt: string;
   active?: boolean;
-  /** Wallet kind; WATCH has no key (no quick trade). */
-  kind?: "PLATFORM" | "WATCH";
 }
 
 function readStoredPage(): SidebarPage {
@@ -172,7 +170,6 @@ function useSidebarWallets() {
           address: w.pubkey,
           createdAt: w.createdAt,
           active: userWallets.activeIds.has(w.id),
-          kind: w.kind,
         })),
     [userWallets.wallets, userWallets.activeIds],
   );
@@ -289,7 +286,7 @@ function HoldingsPage() {
         {holdingRows.length === 0 ? (
           <div style={emptyStyle}>
             {wallets.length === 0
-              ? "No wallets available. Create or import them in the Wallets tab."
+              ? "No wallets available. Create or import them on the Portfolio page."
               : hasLiveBalances
                 ? "No tokens held across your wallets."
                 : "Waiting for balances…"}
@@ -374,7 +371,7 @@ function WalletsPage() {
       <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         {wallets.length === 0 ? (
           <div style={emptyStyle}>
-            No wallets available. Create or import them in the Wallets tab.
+            No wallets available. Create or import them on the Portfolio page.
           </div>
         ) : (
           wallets.map((w) => {
@@ -530,8 +527,8 @@ function WalletRow({
     .map((s) => String(s).replace(/%/g, ""))
     .filter((s) => isValidPresetValue(s));
 
-  // Quick trades need a key and a chain the router swaps on.
-  const canTrade = hasToken && swapsOn() && wallet.kind !== "WATCH";
+  // Quick trades need a chain the router swaps on.
+  const canTrade = hasToken && swapsOn();
   const canSell = canTrade && balanceKnown && tokenBalance > 0;
 
   return (

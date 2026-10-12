@@ -24,7 +24,6 @@ import { TokenPageHost } from "./TokenPageHost";
 // ── lazy pages ──────────────────────────────────────────────────────────────
 const MonitorPage = lazy(() => import("../../app/monitor/page"));
 const PortfolioPage = lazy(() => import("../../app/portfolio/page"));
-const WalletsPage = lazy(() => import("../../app/wallets/page"));
 const SwapPage = lazy(() => import("../../app/swap/page"));
 
 interface PageDef {
@@ -41,7 +40,6 @@ interface PageDef {
 const PAGES: PageDef[] = [
   { id: "monitor",    path: "/monitor",    title: "Monitor",    Component: MonitorPage },
   { id: "portfolio",  path: "/portfolio",  title: "Portfolio",  Component: PortfolioPage },
-  { id: "wallets",    path: "/wallets",    title: "Wallets",    Component: WalletsPage },
   { id: "swap",       path: "/swap",       title: "Swap",       Component: SwapPage },
 ];
 

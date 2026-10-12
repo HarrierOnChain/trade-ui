@@ -6,19 +6,30 @@
  *
  * The functional contract (which trades belong, how PnL is reconciled)
  * lives in page.tsx — these components just project that into rows.
+ * With more than one wallet in view, each row also says which wallets it
+ * belongs to.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { Trade, TokenHolding } from "../../../types";
 import type { WalletTradeAlert } from "../../../hooks/useWalletTradeStream";
+import type { WalletTradeRow } from "../../../api/client";
 import { TokenIdentity } from "../../../components/atoms";
 import { useSolPrice } from "../../../hooks/useSolPrice";
-import { fmtUsd, fmtMcap } from "../../../lib/format";
+import { useIsPhone } from "../../../hooks/useMediaQuery";
+import { fmtUsd } from "../../../lib/format";
 import { formatAge } from "../../../lib/ageRegistry";
 import { tradeIdentityKey, tradeKeyAcrossTokens } from "../../../lib/trades";
-import { useIsPhone } from "../../../hooks/useMediaQuery";
-import { EmptyHero } from "./atoms";
+import { walletAvatarColor } from "../../../lib/walletAvatar";
+import { Tooltip } from "../../../components/atoms";
 import { DataTable, dataCell, dataCellRight, PillSearch, MiniToggle, EmptyRow } from "./ui";
+import { fmtNative } from "./money";
+
+/** A wallet as a table shows it. */
+export interface WalletTag {
+  label: string;
+  avatarIndex: number;
+}
 
 function tradeMs(t: Trade | string | number | null | undefined): number {
   if (t == null) return 0;
@@ -28,25 +39,12 @@ function tradeMs(t: Trade | string | number | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function tradeMarketCap(t: Trade): number | undefined {
-  if (t.marketCap != null && Number.isFinite(t.marketCap) && t.marketCap > 0) {
-    return t.marketCap;
-  }
-  const avgPriceUsd =
-    typeof t.avgPriceUSD === "number"
-      ? t.avgPriceUSD
-      : typeof t.avgPriceUSD === "string"
-      ? Number(t.avgPriceUSD)
-      : undefined;
-  return avgPriceUsd != null && Number.isFinite(avgPriceUsd) && avgPriceUsd > 0
-    ? avgPriceUsd * 1_000_000_000
-    : undefined;
-}
-
-function alertToTrade(a: WalletTradeAlert): Trade {
+function alertToTrade(a: WalletTradeAlert): WalletTradeRow {
   return {
     signature: a.signature,
     tokenMint: a.tokenMint,
+    tokenSymbol: a.tokenSymbol,
+    tokenImage: a.tokenImage,
     signer: a.signer,
     transactionType: a.side,
     tokensAmount: a.tokensAmount,
@@ -54,7 +52,6 @@ function alertToTrade(a: WalletTradeAlert): Trade {
     solAmount: a.solAmount,
     timestamp: a.timestamp,
     usdValue: a.usdValue,
-    marketCap: a.marketCap,
   };
 }
 
@@ -81,21 +78,32 @@ function dataRowStyle(highlight?: boolean): React.CSSProperties {
 const cellStyle = dataCell;
 const cellRight = dataCellRight;
 
+/** Rows drawn at first: wallets carry hundreds of dust tokens, and drawing
+ *  every one froze the page (13k nodes, under 2 fps). The rest on request. */
+const HOLDINGS_PAGE = 50;
+
 /* ── Holdings tab ────────────────────────────────────────────────────── */
 
 export function HoldingsTab({
-  holdings, liveMap, loading,
+  holdings, liveMap, loading, native, holders,
   onTokenClick,
 }: {
   holdings: TokenHolding[];
   liveMap: Map<string, import("../../../hooks/useLiveTradePrices").LivePrice>;
   loading: boolean;
+  /** SOL / ETH / BNB: the second currency of the value column. */
+  native: string;
+  /** mint → the wallets in view that hold it; a column only when set. */
+  holders?: Map<string, WalletTag[]>;
   onTokenClick: (mint: string) => void;
 }) {
   const solPrice = useSolPrice() ?? 0;
-  const isPhone = useIsPhone();
+  // A phone gets two columns: the token, and its value with the amount under it.
+  const phone = useIsPhone();
   const [search, setSearch] = useState("");
   const [ccy, setCcy] = useState<"USD" | "SOL">("USD");
+  const [limit, setLimit] = useState(HOLDINGS_PAGE);
+  useEffect(() => { setLimit(HOLDINGS_PAGE); }, [search]);
 
   const rows = useMemo(() => {
     return holdings.map((h) => {
@@ -121,53 +129,45 @@ export function HoldingsTab({
   const valueText = (usd: number) =>
     ccy === "SOL"
       ? (solPrice > 0
-        ? `${(usd / solPrice).toFixed(4)} ◎`
-        : usd === 0 ? "0.0000 ◎" : "—")
+        ? `${fmtNative(usd / solPrice)} ${native}`
+        : usd === 0 ? `0 ${native}` : "—")
       : fmtUsd(usd);
+  const showWallets = !!holders && !phone;
+  const columns = phone ? 2 : showWallets ? 4 : 3;
 
   if (loading && rows.length === 0) {
     return <TableSkeleton columns={3} rows={6} />;
   }
   if (rows.length === 0) {
-    return (
-      <EmptyHero
-        title="No spot holdings."
-        body="Buy a token from the trading panel or the Swap page. Once a bag opens, it shows up here with live USD value, share-of-portfolio bar, and one-click access to the token page."
-      />
-    );
+    return <Empty>No tokens yet. Buy one from a token page or Swap, and it shows here.</Empty>;
   }
   return (
-    <div style={{
-      background: "var(--ink-1)", border: "1px solid var(--line-soft)",
-      borderRadius: 12, overflow: "hidden", boxShadow: "var(--shadow-sm)",
-    }}>
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-        padding: "10px 14px", borderBottom: "1px solid var(--line-soft)", background: "var(--ink-2)",
-      }}>
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", paddingBottom: 12 }}>
         <PillSearch value={search} onChange={setSearch} placeholder="Search by name or address" width={240} />
         <div style={{ flex: 1 }} />
         <MiniToggle<"USD" | "SOL">
           value={ccy}
           onChange={setCcy}
-          options={[{ value: "USD", label: "USD" }, { value: "SOL", label: "SOL" }]}
+          options={[{ value: "USD", label: "USD" }, { value: "SOL", label: native }]}
         />
       </div>
-      <DataTable headers={[
+      <DataTable cards={false} headers={[
         { key: "token",  label: "Token" },
-        { key: "amount", label: "Amount", align: "right" },
-        { key: "value",  label: "Value", align: "right" },
+        ...(showWallets ? [{ key: "wallets", label: "Wallets" }] : []),
+        ...(phone ? [] : [{ key: "amount", label: "Amount", align: "right" as const }]),
+        { key: "value",  label: "Value", align: "right" as const },
       ]}>
         {filtered.length === 0 ? (
-          <EmptyRow colSpan={3} title="No tokens match" body={search ? `Nothing matches “${search}”.` : undefined} />
-        ) : filtered.map(({ holding: h, usd }) => {
+          <EmptyRow colSpan={columns} title="No tokens match" body={search ? `Nothing matches “${search}”.` : undefined} />
+        ) : filtered.slice(0, limit).map(({ holding: h, usd }) => {
           const pct = totalUsd > 0 ? (usd / totalUsd) * 100 : 0;
           return (
             <tr
               key={h.mint}
               style={dataRowStyle()}
               onClick={() => onTokenClick(h.mint)}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-1)"; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
             >
               <td data-label="Token" style={cellStyle}>
@@ -177,6 +177,7 @@ export function HoldingsTab({
                   name={h.name}
                   image={h.image}
                   showImage
+                  showCopy={false}
                   compact
                   size="xs"
                   onOpen={onTokenClick}
@@ -184,38 +185,39 @@ export function HoldingsTab({
                   chartSolPrice={solPrice}
                 />
               </td>
-              <td data-label="Amount" style={cellRight}>{formatAmount(h.amount)}</td>
+              {showWallets && (
+                <td data-label="Wallets" style={cellStyle}>
+                  <AvatarStack wallets={holders!.get(h.mint) ?? []} />
+                </td>
+              )}
+              {!phone && <td data-label="Amount" style={cellRight}>{formatAmount(h.amount)}</td>}
               <td data-label="Value" style={cellRight}>
-                <div style={{
-                  display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4,
-                }}>
-                  <span style={{ fontWeight: 500 }}>{valueText(usd)}</span>
-                  {pct > 0 && (
-                    <div style={{
-                      position: "relative",
-                      width: isPhone ? 80 : 120, height: 12, borderRadius: 999,
-                      background: "var(--ink-0)", border: "1px solid var(--line-soft)",
-                      overflow: "hidden",
-                    }}>
-                      <span style={{
-                        position: "absolute", left: 0, top: 0, bottom: 0,
-                        width: `${Math.min(pct, 100)}%`,
-                        background: "var(--accent)",
-                        opacity: 0.7,
-                      }} />
-                      <span style={{
-                        position: "absolute", inset: 0,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 9, color: "var(--paper)", fontWeight: 600,
-                        fontFamily: "var(--font-mono)",
-                      }}>{pct.toFixed(1)}%</span>
-                    </div>
-                  )}
-                </div>
+                {valueText(usd)}
+                {phone ? (
+                  <div style={{ fontSize: 10.5, color: "var(--paper-4)", marginTop: 2 }}>{formatAmount(h.amount)}</div>
+                ) : (
+                  <span style={{ display: "inline-block", minWidth: 44, color: "var(--paper-4)", fontSize: 11 }}>
+                    {pct >= 0.1 ? `${pct.toFixed(1)}%` : ""}
+                  </span>
+                )}
               </td>
             </tr>
           );
         })}
+        {filtered.length > limit && (
+          <tr>
+            <td data-label="" colSpan={columns} style={{ padding: 10, textAlign: "center", borderBottom: "1px solid var(--line-soft)" }}>
+              <button type="button" onClick={() => setLimit((n) => n + HOLDINGS_PAGE * 4)} style={{
+                padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                background: "transparent", border: 0,
+                color: "var(--paper-3)", fontSize: 12, fontWeight: 500,
+              }}>
+                Show {Math.min(filtered.length - limit, HOLDINGS_PAGE * 4)} more
+                <span style={{ color: "var(--paper-4)" }}> · {filtered.length - limit} left</span>
+              </button>
+            </td>
+          </tr>
+        )}
       </DataTable>
     </div>
   );
@@ -224,22 +226,24 @@ export function HoldingsTab({
 /* ── Activity tab ────────────────────────────────────────────────────── */
 
 interface SpotActivityRow {
-  trade: Trade;
-  isLive: boolean;
+  trade: WalletTradeRow;
   isNew: boolean;
   ms: number;
 }
 
 export function ActivityTab({
-  trades, liveAlerts = [], solPrice = 0, loading,
+  trades, liveAlerts = [], solPrice = 0, loading, walletOf,
   onTokenClick,
 }: {
   trades: Trade[];
   liveAlerts?: WalletTradeAlert[];
   solPrice?: number;
   loading: boolean;
+  /** The wallet a fill belongs to; a column only when set. */
+  walletOf?: (signer: string) => WalletTag | undefined;
   onTokenClick: (mint: string) => void;
 }) {
+  const phone = useIsPhone();
   const spotRows = useMemo<SpotActivityRow[]>(() => {
     // One row per (signature, wallet, token): two scoped wallets co-signing a
     // transaction are two fills.
@@ -249,139 +253,157 @@ export function ActivityTab({
       const trade = alertToTrade(a);
       if (trade.signature) seen.add(tradeKeyAcrossTokens(trade));
       out.push({
-        trade, isLive: true, isNew: Boolean(a.isNew),
+        trade, isNew: Boolean(a.isNew),
         ms: a.timestamp || tradeMs(trade),
       });
     }
     for (const t of trades) {
       if (t.signature && seen.has(tradeKeyAcrossTokens(t))) continue;
-      out.push({ trade: t, isLive: false, isNew: false, ms: tradeMs(t) });
+      out.push({ trade: t as WalletTradeRow, isNew: false, ms: tradeMs(t) });
     }
     out.sort((x, y) => y.ms - x.ms);
     return out.slice(0, 80);
   }, [trades, liveAlerts]);
 
   if (loading && spotRows.length === 0) {
-    return <TableSkeleton columns={6} rows={8} />;
+    return <TableSkeleton columns={phone ? 2 : walletOf ? 6 : 5} rows={8} />;
+  }
+  if (spotRows.length === 0) {
+    return <Empty>No trades yet for the wallets in view.</Empty>;
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Spot activity */}
-      <div style={{
-        background: "var(--ink-1)", border: "1px solid var(--line-soft)",
-        borderRadius: 12, overflow: "hidden",
-      }}>
-        <div style={{
-          padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between",
-          borderBottom: "1px solid var(--line-soft)",
-        }}>
-          <span className="eyebrow" style={{ fontSize: 10, color: "var(--paper-3)" }}>
-            Spot fills ({spotRows.length})
-          </span>
-        </div>
-        {spotRows.length === 0 ? (
-          <div style={{
-            padding: "32px 16px", textAlign: "center",
-            fontSize: 12, color: "var(--paper-4)",
-          }}>No spot trades in the selected window.</div>
-        ) : (
-          <DataTable headers={[
-            { key: "age",    label: "Age" },
-            { key: "side",   label: "Side" },
-            { key: "token",  label: "Token" },
-            { key: "tokens", label: "Tokens", align: "right" },
-            { key: "mc",     label: "MC", align: "right" },
-            { key: "value",  label: "Value", align: "right" },
-          ]}>
-            {spotRows.map((row) => {
-              const t = row.trade;
-              const isBuy = t.transactionType === "buy";
-              const usdValue =
-                typeof t.usdValue === "number" && t.usdValue > 0
-                  ? t.usdValue
-                  : solPrice > 0 && t.solAmount != null
-                  ? t.solAmount * solPrice
-                  : null;
-              return (
-                <tr
-                  key={tradeIdentityKey(t)}
-                  style={dataRowStyle(row.isNew)}
-                  onClick={() => onTokenClick(t.tokenMint)}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = row.isNew ? "color-mix(in oklch, var(--accent) 6%, transparent)" : "transparent"; }}
-                >
-                  <td data-label="Age" style={{ ...cellStyle, fontFamily: "var(--font-mono)", color: "var(--paper-3)", fontSize: 11 }}>
-                    {row.ms ? formatAge(row.ms) : "—"}
-                  </td>
-                  <td data-label="Side" style={cellStyle}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <SidePill side={isBuy ? "buy" : "sell"} />
-                      {row.isLive && (
-                        <span style={{
-                          fontSize: 8, padding: "1px 5px", borderRadius: 3,
-                          background: "var(--accent-w)", color: "var(--accent)",
-                          letterSpacing: "0.08em", textTransform: "uppercase",
-                          fontFamily: "var(--font-mono)", fontWeight: 600,
-                          border: "1px solid color-mix(in oklch, var(--accent) 40%, transparent)",
-                        }}>Live</span>
-                      )}
-                    </span>
-                  </td>
-                  <td data-label="Token" style={cellStyle}>
-                    <TokenIdentity
-                      mint={t.tokenMint}
-                      showImage
-                      compact
-                      size="xs"
-                      onOpen={onTokenClick}
-                      chartToken={{ mint_address: t.tokenMint, name: "", symbol: "", dex: "", created_at: "" }}
-                      chartSolPrice={solPrice}
-                    />
-                  </td>
-                  <td data-label="Tokens" style={cellRight}>{formatAmount(t.tokensAmount)}</td>
-                  <td data-label="MC" style={cellRight}>{fmtMcap(tradeMarketCap(t))}</td>
-                  <td data-label="Value" style={cellRight}>{usdValue != null ? fmtUsd(usdValue) : "—"}</td>
-                </tr>
-              );
-            })}
-          </DataTable>
-        )}
-      </div>
-
-    </div>
+    <DataTable cards={false} headers={phone ? [
+      { key: "token",  label: "Trade" },
+      { key: "value",  label: "Value", align: "right" as const },
+    ] : [
+      { key: "age",    label: "Age" },
+      ...(walletOf ? [{ key: "wallet", label: "Wallet" }] : []),
+      { key: "side",   label: "Side" },
+      { key: "token",  label: "Token" },
+      { key: "tokens", label: "Tokens", align: "right" as const },
+      { key: "value",  label: "Value", align: "right" as const },
+    ]}>
+      {spotRows.map((row) => {
+        const t = row.trade;
+        const isBuy = t.transactionType === "buy";
+        const usdValue =
+          typeof t.usdValue === "number" && t.usdValue > 0
+            ? t.usdValue
+            : solPrice > 0 && t.solAmount != null
+            ? t.solAmount * solPrice
+            : null;
+        return (
+          <tr
+            key={tradeIdentityKey(t)}
+            style={dataRowStyle(row.isNew)}
+            onClick={() => onTokenClick(t.tokenMint)}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-1)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = row.isNew ? "color-mix(in oklch, var(--accent) 6%, transparent)" : "transparent"; }}
+          >
+            {!phone && (
+              <td data-label="Age" style={{ ...cellStyle, fontFamily: "var(--font-mono)", color: "var(--paper-4)", fontSize: 11 }}>
+                {row.ms ? formatAge(row.ms) : "—"}
+              </td>
+            )}
+            {walletOf && !phone && (
+              <td data-label="Wallet" style={cellStyle}>
+                <WalletChip wallet={walletOf(t.signer)} />
+              </td>
+            )}
+            {!phone && (
+              <td data-label="Side" style={{ ...cellStyle, color: isBuy ? "var(--buy)" : "var(--sell)", fontWeight: 500 }}>
+                {isBuy ? "Buy" : "Sell"}
+              </td>
+            )}
+            <td data-label="Token" style={phone ? { ...cellStyle, display: "flex", alignItems: "center", gap: 8 } : cellStyle}>
+              {phone && (
+                <span style={{ color: isBuy ? "var(--buy)" : "var(--sell)", fontWeight: 500, width: 30, flexShrink: 0 }}>{isBuy ? "Buy" : "Sell"}</span>
+              )}
+              <TokenIdentity
+                mint={t.tokenMint}
+                symbol={t.tokenSymbol ?? undefined}
+                image={t.tokenImage ?? undefined}
+                showImage
+                showCopy={false}
+                showHide={false}
+                compact
+                size="xs"
+                onOpen={onTokenClick}
+                chartToken={{ mint_address: t.tokenMint, name: "", symbol: t.tokenSymbol ?? "", dex: "", created_at: "" }}
+                chartSolPrice={solPrice}
+              />
+            </td>
+            {!phone && <td data-label="Tokens" style={cellRight}>{formatAmount(t.tokensAmount)}</td>}
+            <td data-label="Value" style={cellRight}>
+              {usdValue != null ? fmtUsd(usdValue) : "—"}
+              {phone && row.ms > 0 && (
+                <div style={{ fontSize: 10.5, color: "var(--paper-4)", marginTop: 2 }}>{formatAge(row.ms)}</div>
+              )}
+            </td>
+          </tr>
+        );
+      })}
+    </DataTable>
   );
 }
 
-/* ── Side pill ───────────────────────────────────────────────────────── */
+/* ── Wallet marks ────────────────────────────────────────────────────── */
 
-function SidePill({ side }: { side: "buy" | "sell" }) {
-  const isPos = side === "buy";
-  const label = side[0].toUpperCase() + side.slice(1);
+function AvatarStack({ wallets }: { wallets: WalletTag[] }) {
+  if (wallets.length === 0) return <span style={{ color: "var(--paper-4)" }}>—</span>;
+  const shown = wallets.slice(0, 3);
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 4,
-      padding: "2px 8px", borderRadius: 4,
-      background: isPos ? "var(--buy-w)" : "var(--sell-w)",
-      color: isPos ? "var(--buy)" : "var(--sell)",
-      fontSize: 10, fontWeight: 600,
-      letterSpacing: "0.04em", textTransform: "uppercase",
-      fontFamily: "var(--font-mono)",
-      border: `1px solid color-mix(in oklch, ${isPos ? "var(--buy)" : "var(--sell)"} 38%, transparent)`,
-      lineHeight: 1.4,
-    }}>{label}</span>
+    <Tooltip content={wallets.map((w) => w.label).join(", ")}>
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        {shown.map((w, i) => (
+          <span key={`${w.label}-${i}`} style={{ marginLeft: i === 0 ? 0 : -5, display: "inline-flex", borderRadius: "50%", boxShadow: "0 0 0 2px var(--ink-0)" }}>
+            <MiniAvatar wallet={w} />
+          </span>
+        ))}
+        {wallets.length > shown.length && (
+          <span className="mono" style={{ marginLeft: 5, fontSize: 10.5, color: "var(--paper-3)" }}>+{wallets.length - shown.length}</span>
+        )}
+      </span>
+    </Tooltip>
   );
 }
 
-/* ── Skeleton ────────────────────────────────────────────────────────── */
+/** One letter in the wallet's colour: the full avatar's two letters do not
+ *  read at table size. Opaque, so a stack of them overlaps cleanly. */
+function MiniAvatar({ wallet }: { wallet: WalletTag }) {
+  const color = walletAvatarColor(wallet.avatarIndex);
+  const initial = (wallet.label.match(/[a-z0-9]/i)?.[0] ?? "?").toUpperCase();
+  return (
+    <span aria-hidden style={{
+      width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      background: `color-mix(in srgb, ${color} 20%, var(--ink-1))`,
+      border: `1px solid color-mix(in srgb, ${color} 55%, transparent)`,
+      color, fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)", lineHeight: 1,
+    }}>{initial}</span>
+  );
+}
+
+function WalletChip({ wallet }: { wallet: WalletTag | undefined }) {
+  if (!wallet) return <span style={{ color: "var(--paper-4)" }}>—</span>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, maxWidth: 150 }}>
+      <MiniAvatar wallet={wallet} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--paper-2)" }}>{wallet.label}</span>
+    </span>
+  );
+}
+
+/* ── Empty and loading ───────────────────────────────────────────────── */
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <div style={{ padding: "40px 12px", fontSize: 12.5, color: "var(--paper-4)" }}>{children}</div>;
+}
 
 function TableSkeleton({ columns, rows }: { columns: number; rows: number }) {
   return (
-    <div style={{
-      background: "var(--ink-1)", border: "1px solid var(--line-soft)",
-      borderRadius: 12, padding: 12,
-      display: "flex", flexDirection: "column", gap: 8,
-    }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "14px 12px" }}>
       {Array.from({ length: rows }).map((_, r) => (
         <div key={r} style={{
           display: "grid", gap: 12,
@@ -389,7 +411,7 @@ function TableSkeleton({ columns, rows }: { columns: number; rows: number }) {
         }}>
           {Array.from({ length: columns }).map((_, c) => (
             <span key={c} className="skeleton" style={{
-              height: 14, borderRadius: 4,
+              height: 12, borderRadius: 4,
               width: c === 0 ? "60%" : c === 1 ? "40%" : "70%",
             }} />
           ))}

@@ -161,7 +161,7 @@ export function TradingPanel({ mint }: Props) {
     if (targets.length === 0) {
       pushToast({
         title: "NO WALLET",
-        body: "Pick the wallets that trade in the top bar, or add one in Wallets.",
+        body: "Pick the wallets that trade in the top bar, or add one in Portfolio.",
         tone: "sell",
       });
       return;

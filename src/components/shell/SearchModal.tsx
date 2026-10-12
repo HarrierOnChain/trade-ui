@@ -81,7 +81,7 @@ export function SearchModal() {
   const actions: Array<{ id: string; icon: React.ReactNode; label: string; hint: string; run: () => void }> = [
     { id: "monitor", icon: Icon.deploy(12), label: "Go to Monitor", hint: "G M", run: () => { setSearchOpen(false); navigate("/monitor"); } },
     { id: "portfolio", icon: Icon.portfolio(12), label: "Go to Portfolio", hint: "G P", run: () => { setSearchOpen(false); navigate("/portfolio"); } },
-    { id: "wallets", icon: Icon.wallet(12), label: "Go to Wallets", hint: "G W", run: () => { setSearchOpen(false); navigate("/wallets"); } },
+    { id: "wallets", icon: Icon.wallet(12), label: "Manage wallets", hint: "G W", run: () => { setSearchOpen(false); navigate("/portfolio"); } },
     { id: "swap", icon: Icon.swap(12), label: "Go to Swap", hint: "G S", run: () => { setSearchOpen(false); navigate("/swap"); } },
     { id: "lock", icon: Icon.lock(12), label: "Lock Trade UI", hint: "", run: () => { setSearchOpen(false); void lockNow(); } },
   ];

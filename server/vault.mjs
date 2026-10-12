@@ -31,12 +31,16 @@
  * Version 1 (the wallets directly under the password's key, no recovery key)
  * is rewritten as version 2 on its first unlock, still without a recovery key
  * until one is made (`newRecoveryKey`).
+ *
+ * Every wallet has its key. Address-only ("watch") entries, accepted until
+ * 2026-10-11, are left out when the vault opens and leave the file at its next
+ * write: they held no key, only an address and a label.
  */
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { constants as fsc } from "node:fs";
 import path from "node:path";
-import { decodeSecret, encodeSecret, generateKey, KeyError, parseAddress, parseSecret } from "./keys.mjs";
+import { decodeSecret, encodeSecret, generateKey, KeyError, parseSecret } from "./keys.mjs";
 
 export const VAULT_FILE = "vault.json";
 const FORMAT = "trade-ui-vault";
@@ -256,6 +260,7 @@ function parseData(plain) {
   if (!data || !Array.isArray(data.wallets)) {
     throw new VaultError("corrupt_vault", "The vault decrypted but its contents are malformed", 500);
   }
+  data.wallets = data.wallets.filter((w) => w && w.secret);
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   return data;
 }
@@ -654,7 +659,6 @@ export class Vault {
       family: w.family,
       address: w.address,
       label: w.label,
-      watchOnly: !w.secret,
       createdAt: w.createdAt,
     };
   }
@@ -663,11 +667,11 @@ export class Vault {
     return this.#need().wallets.map(Vault.publicView);
   }
 
-  /** Internal: the wallet with its decoded secret (null when watch-only). */
+  /** Internal: the wallet with its decoded secret. */
   get(id) {
     const w = this.#need().wallets.find((x) => x.id === id);
     if (!w) throw new VaultError("not_found", "Wallet not found", 404);
-    return { ...Vault.publicView(w), secret: w.secret ? decodeSecret(w.family, w.secret) : null };
+    return { ...Vault.publicView(w), secret: decodeSecret(w.family, w.secret) };
   }
 
   #exists(family, address) {
@@ -708,11 +712,7 @@ export class Vault {
     });
   }
 
-  /**
-   * Import keys and watch addresses in one go. Each item is
-   * `{ secret, label? }` or `{ address, label? }`. A key for an address that is
-   * already watched upgrades that wallet in place.
-   */
+  /** Import keys in one go. Each item is `{ secret, label? }`. */
   import(items) {
     if (!Array.isArray(items) || items.length === 0) throw new VaultError("bad_request", "Nothing to import");
     if (items.length > 500) throw new VaultError("bad_request", "Import at most 500 wallets at a time");
@@ -723,33 +723,19 @@ export class Vault {
         const item = items[i] || {};
         const label = cleanLabel(item.label);
         try {
-          if (item.secret != null) {
-            const k = parseSecret(String(item.secret));
-            const existing = this.#exists(k.family, k.address);
-            if (existing && existing.secret) throw new VaultError("duplicate", "Already in the vault");
-            if (existing) {
-              existing.secret = encodeSecret(k.family, k.secret);
-              if (label) existing.label = label;
-              created.push(existing);
-            } else {
-              this.#room(1);
-              const w = {
-                id: newId(), family: k.family, address: k.address, label,
-                secret: encodeSecret(k.family, k.secret), createdAt: new Date().toISOString(),
-              };
-              data.wallets.push(w);
-              created.push(w);
-            }
-            k.secret.fill(0);
-          } else if (item.address != null) {
-            const a = parseAddress(String(item.address));
-            if (this.#exists(a.family, a.address)) throw new VaultError("duplicate", "Already in the vault");
+          if (item.secret == null) throw new VaultError("bad_request", "Each item needs a private key");
+          const k = parseSecret(String(item.secret));
+          try {
+            if (this.#exists(k.family, k.address)) throw new VaultError("duplicate", "Already in the vault");
             this.#room(1);
-            const w = { id: newId(), family: a.family, address: a.address, label, secret: null, createdAt: new Date().toISOString() };
+            const w = {
+              id: newId(), family: k.family, address: k.address, label,
+              secret: encodeSecret(k.family, k.secret), createdAt: new Date().toISOString(),
+            };
             data.wallets.push(w);
             created.push(w);
-          } else {
-            throw new VaultError("bad_request", "Each item needs a secret or an address");
+          } finally {
+            k.secret.fill(0);
           }
         } catch (e) {
           if (e instanceof KeyError || e instanceof VaultError) errors.push({ index: i, code: e.code, message: e.message });

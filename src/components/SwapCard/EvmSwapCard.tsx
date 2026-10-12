@@ -159,7 +159,7 @@ export function EvmSwapCard({ chain }: { chain: ChainId }) {
     return () => clearTimeout(t);
   }, [amountText]);
 
-  const signers = useMemo(() => userWallets.wallets.filter((w) => !w.watchOnly), [userWallets.wallets]);
+  const signers = userWallets.wallets;
   const defaultId = userWallets.activeWallets[0]?.id ?? signers[0]?.id ?? null;
   const chosen = signers.find((w) => w.id === (signerId ?? defaultId)) ?? signers.find((w) => w.id === defaultId) ?? null;
 

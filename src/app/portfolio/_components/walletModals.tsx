@@ -1,17 +1,18 @@
 "use client";
 /**
- * The Wallets page's dialogs. Anything that hands out a key, moves funds or
- * throws a key away asks for the password again, the way a hardware wallet
+ * The portfolio's wallet dialogs. Anything that hands out a key, moves funds
+ * or throws a key away asks for the password again, the way a hardware wallet
  * asks for a confirmation on the device.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Btn, Icon, Modal } from "../../../components/atoms";
-import { Field, ModalNote, ModalShell, TextInput } from "../../portfolio/_components/atoms";
+import { Field, ModalNote, ModalShell, TextInput } from "./atoms";
 import { useApp } from "../../../contexts/AppContext";
 import { explorerTxUrl } from "../../../lib/chains";
 import { shortAddr } from "../../../lib/format";
 import { confirmSignature } from "../../../lib/swap/client";
-import { ApiError, vault, type ExportedKey, type ImportResult, type VaultWallet, type WalletFamily } from "../../../lib/vault/client";
+import { ApiError, vault, type ExportedKey, type ImportResult, type RuntimeConfig, type VaultWallet, type WalletFamily } from "../../../lib/vault/client";
+import { SecurityPanel } from "../../../components/vault/SecurityPanel";
 import { importItems, solToLamports, splitKeys } from "../../../lib/vault/keyText";
 
 const FAMILY_LABEL: Record<WalletFamily, string> = { sol: "Solana", evm: "EVM" };
@@ -235,8 +236,7 @@ export function ImportModal({ open, onClose, onImported }: {
           <TextInput value={label} onChange={setLabel} placeholder="Imported" />
         </Field>
         <ModalNote>
-          Seed phrases are not supported: export the account&apos;s private key from your wallet. An address you
-          only want to follow goes in <strong>Watch address</strong>.
+          Seed phrases are not supported: export the account&apos;s private key from your wallet.
         </ModalNote>
         {result && result.errors.length > 0 && (
           <div style={{
@@ -255,56 +255,6 @@ export function ImportModal({ open, onClose, onImported }: {
             {result.errors.length > 8 && <span style={{ fontSize: 11.5, color: "var(--paper-4)" }}>… and {result.errors.length - 8} more</span>}
           </div>
         )}
-        {error && <ErrorText>{error}</ErrorText>}
-      </ModalShell>
-    </Modal>
-  );
-}
-
-/* ── watch ──────────────────────────────────────────────────────────────── */
-
-export function WatchModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { pushToast } = useApp();
-  const [address, setAddress] = useState("");
-  const [label, setLabel] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) { setAddress(""); setLabel(""); setError(null); setBusy(false); }
-  }, [open]);
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await vault.import([{ address: address.trim(), label: label.trim() || undefined }]);
-      if (r.errors.length) throw new Error(r.errors[0].code === "duplicate" ? "That address is already in the vault." : r.errors[0].message);
-      pushToast({ title: "WATCHING", body: shortAddr(r.created[0].address, 6), tone: "buy" });
-      onClose();
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal open={open} onClose={onClose} width={460}>
-      <ModalShell
-        title="Watch an address"
-        onClose={onClose}
-        footer={<>
-          <Btn tone="ghost" onClick={onClose}>Cancel</Btn>
-          <Btn tone="primary" disabled={busy || !address.trim()} onClick={() => void submit()}>{busy ? "Adding…" : "Watch"}</Btn>
-        </>}
-      >
-        <Field label="Address" hint="A Solana or EVM address. Its balances and trades show up; it cannot trade or send.">
-          <TextInput value={address} onChange={setAddress} mono autoFocus placeholder="9WzD… or 0x…" />
-        </Field>
-        <Field label="Label" hint="Optional.">
-          <TextInput value={label} onChange={setLabel} placeholder="Cold wallet" />
-        </Field>
         {error && <ErrorText>{error}</ErrorText>}
       </ModalShell>
     </Modal>
@@ -599,15 +549,14 @@ export function DeleteModal({ wallet, onClose }: { wallet: VaultWallet | null; o
     setPassword(""); setBackedUp(false); setError(null); setBusy(false);
   }, [wallet]);
 
-  const hasKey = !!wallet && !wallet.watchOnly;
-  const ready = !busy && (!hasKey || (password.length > 0 && backedUp));
+  const ready = !busy && password.length > 0 && backedUp;
 
   async function submit() {
     if (!wallet || !ready) return;
     setBusy(true);
     setError(null);
     try {
-      await vault.remove(wallet.id, hasKey ? password : undefined);
+      await vault.remove(wallet.id, password);
       pushToast({ title: "WALLET REMOVED", body: wallet.label || shortAddr(wallet.address, 6), tone: "default" });
       onClose();
     } catch (e) {
@@ -621,34 +570,49 @@ export function DeleteModal({ wallet, onClose }: { wallet: VaultWallet | null; o
     <Modal open={!!wallet} onClose={onClose} width={460}>
       {wallet && (
         <ModalShell
-          title={hasKey ? "Delete wallet and its key" : "Stop watching"}
+          title="Delete wallet and its key"
           onClose={onClose}
           footer={<>
             <Btn tone="ghost" onClick={onClose}>Cancel</Btn>
-            <Btn tone="sell" disabled={!ready} onClick={() => void submit()}>{busy ? "Deleting…" : hasKey ? "Delete for good" : "Remove"}</Btn>
+            <Btn tone="sell" disabled={!ready} onClick={() => void submit()}>{busy ? "Deleting…" : "Delete for good"}</Btn>
           </>}
         >
           <span className="mono" style={{ fontSize: 11.5, color: "var(--paper-3)", wordBreak: "break-all" }}>{wallet.address}</span>
-          {hasKey ? (
-            <>
-              <ModalNote>
-                The key leaves the vault for good. Funds on this address stay on chain, but without an exported
-                copy of the key nobody can move them again.
-              </ModalNote>
-              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12.5, color: "var(--paper-2)", lineHeight: 1.5, cursor: "pointer" }}>
-                <input type="checkbox" checked={backedUp} onChange={(e) => setBackedUp(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--sell)" }} />
-                <span>I exported this key, or the wallet is empty.</span>
-              </label>
-              <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-                <PasswordField value={password} onChange={setPassword} autoFocus={false} label="Your password, to delete" />
-              </form>
-            </>
-          ) : (
-            <ModalNote>Only the address is removed from this list; there is no key to lose.</ModalNote>
-          )}
+          <ModalNote>
+            The key leaves the vault for good. Funds on this address stay on chain, but without an exported
+            copy of the key nobody can move them again.
+          </ModalNote>
+          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12.5, color: "var(--paper-2)", lineHeight: 1.5, cursor: "pointer" }}>
+            <input type="checkbox" checked={backedUp} onChange={(e) => setBackedUp(e.target.checked)} style={{ marginTop: 3, accentColor: "var(--sell)" }} />
+            <span>I exported this key, or the wallet is empty.</span>
+          </label>
+          <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+            <PasswordField value={password} onChange={setPassword} autoFocus={false} label="Your password, to delete" />
+          </form>
           {error && <ErrorText>{error}</ErrorText>}
         </ModalShell>
       )}
+    </Modal>
+  );
+}
+
+/* ── vault & security ───────────────────────────────────────────────────── */
+
+export function SecurityModal({ open, config, onConfig, onClose }: {
+  open: boolean;
+  config: RuntimeConfig | null;
+  onConfig: (c: RuntimeConfig) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} width={560}>
+      <ModalShell title="Vault & security" onClose={onClose}>
+        <SecurityPanel config={config} onConfig={onConfig} />
+        <ModalNote>
+          Backups: keep the recovery key offline and a copy of the vault file. Exported keys work
+          anywhere, even without Trade UI.
+        </ModalNote>
+      </ModalShell>
     </Modal>
   );
 }

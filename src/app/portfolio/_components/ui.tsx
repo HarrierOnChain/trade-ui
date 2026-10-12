@@ -91,7 +91,7 @@ export function MiniToggle<T extends string>({
 /* ── Data table chrome — Caesar muted-header tables ──────────────────── */
 
 export const dataCell: React.CSSProperties = {
-  padding: "11px 14px",
+  padding: "10px 12px",
   fontSize: 12,
   color: "var(--paper)",
   borderBottom: "1px solid var(--line-soft)",
@@ -106,18 +106,20 @@ export const dataCellRight: React.CSSProperties = {
 };
 
 export function DataTable({
-  headers, children, minWidth,
+  headers, children, minWidth, cards = true,
 }: {
   headers: Array<{ key: string; label: React.ReactNode; align?: "left" | "right" }>;
   children: React.ReactNode;
   minWidth?: number;
+  /** Stacked label/value cards on a phone; off for tables already narrow there. */
+  cards?: boolean;
 }) {
   return (
     <div className="scroll-x" style={{ overflowX: "auto" }}>
       {/* `table-cards` is inert above 480px; at ≤480px it flips this table to
           stacked label/value cards (using each <td>'s data-label) and neutralises
           its min-width so it never forces horizontal scroll on a phone. */}
-      <table className="table-cards" style={{
+      <table className={cards ? "table-cards" : undefined} style={{
         width: "100%", minWidth, borderCollapse: "separate", borderSpacing: 0,
         fontFamily: "var(--font-ui)",
       }}>
@@ -126,10 +128,10 @@ export function DataTable({
             {headers.map((h) => (
               <th key={h.key} style={{
                 position: "sticky", top: 0, zIndex: 1,
-                background: "var(--ink-2)",
+                background: "var(--ink-0)",
                 textAlign: h.align ?? "left",
-                padding: "11px 14px",
-                fontSize: 12, fontWeight: 600, color: "var(--paper-2)",
+                padding: "8px 12px",
+                fontSize: 11, fontWeight: 500, color: "var(--paper-4)",
                 borderBottom: "1px solid var(--line-soft)",
                 whiteSpace: "nowrap",
               }}>{h.label}</th>
@@ -151,17 +153,8 @@ export function EmptyRow({
 }) {
   return (
     <tr>
-      <td data-label="" colSpan={colSpan} style={{ textAlign: "center", padding: "44px 16px" }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: "50%", background: "var(--ink-2)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <div style={{ width: 22, height: 22, borderRadius: "50%", border: "2px solid var(--line)" }} />
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 500, color: "var(--paper-3)" }}>{title}</span>
-          {body && <span style={{ fontSize: 11, color: "var(--paper-4)" }}>{body}</span>}
-        </div>
+      <td data-label="" colSpan={colSpan} style={{ padding: "28px 12px", fontSize: 12.5, color: "var(--paper-4)" }}>
+        {title}{body ? ` ${body}` : ""}
       </td>
     </tr>
   );

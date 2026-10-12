@@ -164,13 +164,13 @@ export function parseSecret(input) {
     );
   }
   if (isEvmAddress(raw)) {
-    throw new KeyError("looks_like_address", "That is an address, not a private key: add it as a watch-only wallet");
+    throw new KeyError("looks_like_address", "That is an address, not a private key");
   }
 
   const bytes = fromBase58(raw);
   if (!bytes) throw new KeyError("invalid_secret", "Not a private key: expected base58, a JSON keypair or EVM hex");
   if (bytes.length === 32) {
-    throw new KeyError("looks_like_address", "That is an address, not a private key: add it as a watch-only wallet");
+    throw new KeyError("looks_like_address", "That is an address, not a private key");
   }
   if (bytes.length !== 64) {
     throw new KeyError("invalid_secret", `A Solana private key is 64 bytes, this one decodes to ${bytes.length}`);
@@ -178,17 +178,6 @@ export function parseSecret(input) {
   const secret = checkSolanaSecret(bytes);
   if (!secret) throw new KeyError("invalid_secret", "The key's public half does not match its private half");
   return { family: "sol", address: toBase58(secret.subarray(32)), secret };
-}
-
-/**
- * An address to watch (no key). The family comes from the format.
- * @returns {{ family: "sol" | "evm", address: string }}
- */
-export function parseAddress(input) {
-  const raw = String(input ?? "").trim();
-  if (isEvmAddress(raw)) return { family: "evm", address: checksumEvm(raw) };
-  if (isSolanaAddress(raw)) return { family: "sol", address: raw };
-  throw new KeyError("invalid_address", "Not a Solana or EVM address");
 }
 
 /**

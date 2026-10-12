@@ -27,12 +27,12 @@ export function useQuickSell(mint: string) {
       return;
     }
     // The wallet asked for, else the ones selected in the top bar: the same
-    // rule as the trading panel. Watch-only wallets never trade.
+    // rule as the trading panel.
     const platforms = walletId
-      ? userWallets.wallets.filter((w) => w.id === walletId && !w.watchOnly)
+      ? userWallets.wallets.filter((w) => w.id === walletId)
       : userWallets.activeWallets;
     if (platforms.length === 0) {
-      pushToast({ title: "NO WALLET", body: "Pick the wallets that trade in the top bar, or add one in Wallets.", tone: "sell" });
+      pushToast({ title: "NO WALLET", body: "Pick the wallets that trade in the top bar, or add one in Portfolio.", tone: "sell" });
       return;
     }
 

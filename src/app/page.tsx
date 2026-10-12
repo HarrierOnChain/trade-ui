@@ -2,7 +2,10 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const VALID_ROUTES = ["/monitor", "/portfolio", "/wallets", "/swap"];
+const VALID_ROUTES = ["/monitor", "/portfolio", "/swap"];
+
+// Wallets moved into the portfolio on 2026-10-11; saved routes still name it.
+const MOVED: Record<string, string> = { "/wallets": "/portfolio" };
 
 export default function HomePage() {
   const router = useRouter();
@@ -10,11 +13,13 @@ export default function HomePage() {
   useEffect(() => {
     let target = "/monitor";
     try {
-      const startup = window.localStorage.getItem("spool.startup.route") ?? "last";
+      const raw = window.localStorage.getItem("spool.startup.route") ?? "last";
+      const startup = MOVED[raw] ?? raw;
       if (startup !== "last" && VALID_ROUTES.includes(startup)) {
         target = startup;
       } else {
-        const saved = window.localStorage.getItem("spool.lastRoute");
+        const last = window.localStorage.getItem("spool.lastRoute");
+        const saved = last ? MOVED[last] ?? last : last;
         if (saved && VALID_ROUTES.some((r) => saved === r || saved.startsWith(r + "/"))) {
           target = saved;
         }

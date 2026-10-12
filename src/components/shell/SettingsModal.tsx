@@ -311,7 +311,6 @@ const STARTUP_OPTIONS: { value: string; label: string }[] = [
   { value: "last",        label: "Last visited" },
   { value: "/monitor",    label: "Monitor" },
   { value: "/portfolio",  label: "Portfolio" },
-  { value: "/wallets",    label: "Wallets" },
   { value: "/swap",       label: "Swap" },
 ];
 
@@ -452,7 +451,7 @@ function WalletsPanel({ onManage }: { onManage: () => void }) {
       <Row label="Wallets on this chain" hint="Keys live in the encrypted vault on this Trade UI's server, never in the browser.">
         <button
           type="button"
-          onClick={() => { onManage(); navigate("/wallets"); }}
+          onClick={() => { onManage(); navigate("/portfolio"); }}
           style={{ ...selectStyle, minWidth: 0, padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: 6 }}
         >
           {Icon.key(11)} Manage wallets
@@ -491,14 +490,6 @@ function WalletsPanel({ onManage }: { onManage: () => void }) {
                     {shortAddr(w.pubkey, 8)}
                   </span>
                 </div>
-                <span className="mono" style={{
-                  fontSize: 10, color: "var(--paper-2)",
-                  padding: "2px 6px",
-                  background: "var(--ink-2)", borderRadius: 4,
-                  textTransform: "uppercase", letterSpacing: "0.06em",
-                }}>
-                  {w.watchOnly ? "watch" : "key"}
-                </span>
                 <span className="mono" style={{
                   fontSize: 11, color: "var(--paper)", minWidth: 70, textAlign: "right",
                 }}>

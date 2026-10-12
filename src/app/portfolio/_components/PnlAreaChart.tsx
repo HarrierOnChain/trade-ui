@@ -59,7 +59,8 @@ export function PnlAreaChart({
   const up = realizedUsd >= 0;
   const stroke = up ? "var(--buy)" : "var(--sell)";
   const { line, area, zeroY } = buildPaths(series);
-  const hasData = series.length >= 2;
+  // A window of zero buckets is no PnL, not a flat line.
+  const hasData = series.length >= 2 && series.some((p) => p.v !== 0);
 
   return (
     <div style={{
@@ -71,11 +72,11 @@ export function PnlAreaChart({
         gap: 12, flexWrap: "wrap", flexShrink: 0,
       }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, minWidth: 0 }}>
-          <span className="eyebrow" style={{ fontSize: 9, color: "var(--paper-4)", letterSpacing: "0.1em" }}>
-            Realized · {tfLabel(timeframe)}
+          <span style={{ fontSize: 12, color: "var(--paper-4)" }}>
+            Realized PnL
           </span>
           <span className="mono" style={{
-            fontSize: 16, fontWeight: 600, lineHeight: 1,
+            fontSize: 14, fontWeight: 500, lineHeight: 1,
             color: realizedUsd === 0 ? "var(--paper-3)" : stroke,
             fontVariantNumeric: "tabular-nums",
           }}>
@@ -83,14 +84,11 @@ export function PnlAreaChart({
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           <div
             role="tablist"
             aria-label="PnL timeframe"
-            style={{
-              display: "inline-flex", gap: 3, padding: 3,
-              background: "var(--ink-2)", border: "1px solid var(--line-soft)", borderRadius: 999,
-            }}
+            style={{ display: "inline-flex", gap: 2 }}
           >
             {PNL_TIMEFRAMES.map((tf) => {
               const on = tf === timeframe;
@@ -101,12 +99,11 @@ export function PnlAreaChart({
                   aria-selected={on}
                   onClick={() => onTimeframe(tf)}
                   style={{
-                    padding: "4px 10px", borderRadius: 999, border: "none",
-                    background: on ? "var(--accent)" : "transparent",
-                    color: on ? "var(--ink-0)" : "var(--paper-3)",
-                    fontSize: 10, fontWeight: 600, fontFamily: "var(--font-mono)",
-                    letterSpacing: "0.04em", cursor: "pointer",
-                    transition: "background 120ms, color 120ms",
+                    padding: "3px 7px", borderRadius: 6, border: "none",
+                    background: on ? "var(--ink-2)" : "transparent",
+                    color: on ? "var(--paper)" : "var(--paper-4)",
+                    fontSize: 11, fontWeight: 500, fontFamily: "var(--font-mono)",
+                    cursor: "pointer", transition: "background 120ms, color 120ms",
                   }}
                 >{tfLabel(tf)}</button>
               );
@@ -118,20 +115,18 @@ export function PnlAreaChart({
             aria-label="PnL calendar"
             style={{
               display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-              background: "var(--ink-2)", border: "1px solid var(--line-soft)",
-              color: "var(--paper-3)", cursor: "pointer",
-              transition: "background 120ms, color 120ms, border-color 120ms",
+              width: 26, height: 26, borderRadius: 6, flexShrink: 0,
+              background: "transparent", border: 0,
+              color: "var(--paper-4)", cursor: "pointer",
+              transition: "background 120ms, color 120ms",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--accent-w)";
-              e.currentTarget.style.borderColor = "color-mix(in oklch, var(--accent) 40%, transparent)";
-              e.currentTarget.style.color = "var(--accent)";
+              e.currentTarget.style.background = "var(--ink-2)";
+              e.currentTarget.style.color = "var(--paper)";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = "var(--ink-2)";
-              e.currentTarget.style.borderColor = "var(--line-soft)";
-              e.currentTarget.style.color = "var(--paper-3)";
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = "var(--paper-4)";
             }}
           >
             {UiGlyph.calendar}

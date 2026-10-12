@@ -36,7 +36,6 @@ type NavItem = { id: string; label: string; path: string; icon: React.ReactNode 
 const NAV: NavItem[] = [
   { id: "monitor", label: "Monitor", path: "/monitor", icon: Icon.eyeLine(12) },
   { id: "portfolio", label: "Portfolio", path: "/portfolio", icon: Icon.portfolio(12) },
-  { id: "wallets", label: "Wallets", path: "/wallets", icon: Icon.wallet(12) },
   { id: "swap", label: "Swap", path: "/swap", icon: Icon.swap(12) },
 ];
 
@@ -364,7 +363,7 @@ function SettingsButton() {
           <SettingsMenuItem
             icon={Icon.wallet(14)}
             label="Wallets & security"
-            onClick={() => { setOpen(false); navigate("/wallets"); }}
+            onClick={() => { setOpen(false); navigate("/portfolio?security=1"); }}
           />
           <div style={{ height: 1, background: "var(--line-soft)", margin: "4px 6px" }} />
           <SettingsMenuItem

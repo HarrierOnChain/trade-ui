@@ -29,6 +29,10 @@ const nextConfig: NextConfig = {
     ];
     return config;
   },
+  // The Wallets page became part of the Portfolio on 2026-10-11.
+  async redirects() {
+    return [{ source: "/wallets", destination: "/portfolio", permanent: false }];
+  },
   async headers() {
     return [
       {

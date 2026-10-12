@@ -1,7 +1,7 @@
 "use client";
 /**
  * The lock's settings: when it locks by itself, the password, the recovery
- * key, lock now. Shown on the Wallets page and in Settings → Security.
+ * key, lock now. Shown from the Portfolio page and in Settings → Security.
  */
 import React, { useEffect, useState } from "react";
 import { Icon } from "../atoms";

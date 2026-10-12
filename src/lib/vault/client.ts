@@ -20,8 +20,6 @@ export interface VaultWallet {
   family: WalletFamily;
   address: string;
   label: string | null;
-  /** an address followed without its key: cannot sign */
-  watchOnly: boolean;
   createdAt: string;
 }
 
@@ -54,8 +52,7 @@ export interface RuntimeConfig {
 }
 
 export interface ImportItem {
-  secret?: string;
-  address?: string;
+  secret: string;
   label?: string;
 }
 

@@ -81,12 +81,12 @@ describe("vault", () => {
     const v = fresh();
     await v.create(PW);
     await v.generate("sol");
-    await v.import([{ address: generateKey("sol").address }]);
-    for (const w of v.list()) assert.deepEqual(Object.keys(w).sort(), ["address", "createdAt", "family", "id", "label", "watchOnly"]);
-    assert.deepEqual(v.list().map((w) => w.watchOnly), [false, true]);
+    await v.import([{ secret: toBase58(generateKey("sol").secret) }]);
+    assert.equal(v.list().length, 2);
+    for (const w of v.list()) assert.deepEqual(Object.keys(w).sort(), ["address", "createdAt", "family", "id", "label"]);
   });
 
-  test("import: keys, keypair files, watch addresses, duplicates and upgrades", async () => {
+  test("import: keys and keypair files; duplicates, garbage and addresses refused", async () => {
     const v = fresh();
     await v.create(PW);
     const a = generateKey("sol");
@@ -95,19 +95,18 @@ describe("vault", () => {
     const r = await v.import([
       { secret: toBase58(a.secret), label: "  A\n" },
       { secret: `0x${Buffer.from(b.secret).toString("hex")}` },
-      { address: c.address, label: "watched" },
+      { address: c.address, label: "an address" },
       { secret: toBase58(a.secret) },
       { secret: "garbage" },
+      { secret: c.address },
     ]);
-    assert.deepEqual(r.created.map((w) => w.address), [a.address, b.address, c.address]);
+    assert.deepEqual(r.created.map((w) => w.address), [a.address, b.address]);
     assert.equal(r.created[0].label, "A");
-    assert.deepEqual(r.errors.map((e) => [e.index, e.code]), [[3, "duplicate"], [4, "invalid_secret"]]);
-    // A watched wallet becomes a key wallet when its key is imported.
-    const up = await v.import([{ secret: JSON.stringify(Array.from(c.secret)) }]);
-    assert.equal(up.created[0].address, c.address);
-    assert.equal(v.list().find((w) => w.address === c.address).watchOnly, false);
+    assert.deepEqual(r.errors.map((e) => [e.index, e.code]), [[2, "bad_request"], [3, "duplicate"], [4, "invalid_secret"], [5, "looks_like_address"]]);
+    const kp = await v.import([{ secret: JSON.stringify(Array.from(c.secret)) }]);
+    assert.equal(kp.created[0].address, c.address);
     assert.equal(v.list().length, 3);
-    assert.deepEqual(v.get(up.created[0].id).secret, c.secret);
+    assert.deepEqual(v.get(kp.created[0].id).secret, c.secret);
   });
 
   test("generate, rename, remove — and every change is on disk", async () => {
@@ -284,7 +283,14 @@ describe("the recovery key", () => {
     const kdf = { name: "scrypt", ...KDF, salt: salt.toString("base64") };
     const key = await new Promise((res, rej) => crypto.scrypt(PW, salt, 32, { ...KDF, maxmem: 256 * 1024 * 1024 }, (e, k) => (e ? rej(e) : res(k))));
     const k = generateKey("sol");
-    const data = { wallets: [{ id: "w_0123456789abcdef", family: "sol", address: k.address, label: "old", secret: toBase58(k.secret), createdAt: "2026-10-01T00:00:00.000Z" }], settings: { autoLockMinutes: 30 } };
+    const data = {
+      wallets: [
+        { id: "w_0123456789abcdef", family: "sol", address: k.address, label: "old", secret: toBase58(k.secret), createdAt: "2026-10-01T00:00:00.000Z" },
+        // An address-only ("watch") entry: no longer a wallet, left out on open.
+        { id: "w_fedcba9876543210", family: "sol", address: generateKey("sol").address, label: "watched", secret: null, createdAt: "2026-10-01T00:00:00.000Z" },
+      ],
+      settings: { autoLockMinutes: 30 },
+    };
     const iv = crypto.randomBytes(12);
     const c = crypto.createCipheriv("aes-256-gcm", key, iv, { authTagLength: 16 });
     c.setAAD(Buffer.from(`trade-ui-vault/1|scrypt|${KDF.N}|${KDF.r}|${KDF.p}|${kdf.salt}`));
