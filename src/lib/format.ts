@@ -46,6 +46,14 @@ export function fmtPct(raw?: number | null): string {
   const v = asNum(raw);
   if (v == null) return "–";
   const s = v > 0 ? "+" : "";
+  // A launch measured from its first trade can move by millions of percent:
+  // compact like the money columns (+1.7B%, not +1715116846.1%).
+  const a = Math.abs(v);
+  if (a >= 1e12) return `${s}${(v / 1e12).toFixed(1)}T%`;
+  if (a >= 1e9) return `${s}${(v / 1e9).toFixed(1)}B%`;
+  if (a >= 1e6) return `${s}${(v / 1e6).toFixed(1)}M%`;
+  if (a >= 1e4) return `${s}${(v / 1e3).toFixed(1)}K%`;
+  if (a >= 1e3) return `${s}${v.toFixed(0)}%`;
   return `${s}${v.toFixed(1)}%`;
 }
 
