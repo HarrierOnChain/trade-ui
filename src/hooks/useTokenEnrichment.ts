@@ -66,7 +66,7 @@ const SHARE_KEYS = [
 ] as const;
 
 /** Contract checks the batch read carries. */
-const CHECK_KEYS = ["honeypot", "mintRenounced", "freezeRenounced"] as const;
+const CHECK_KEYS = ["honeypot", "mintRenounced", "freezeRenounced", "ownershipRenounced"] as const;
 
 const SOCIAL_KEYS = ["twitter", "website", "telegram", "discord"] as const;
 
