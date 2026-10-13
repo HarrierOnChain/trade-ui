@@ -206,6 +206,9 @@ export function ClientNavProvider({ children }: { children: React.ReactNode }) {
 }
 
 // ── page renderer — lives inside <main> ─────────────────────────────────────
+
+/** How many times ClientPages has mounted since the page loaded. */
+let shellMounts = 0;
 function PageFallback() {
   return (
     <div style={{
@@ -230,12 +233,17 @@ export function ClientPages({ nextChildren }: { nextChildren: React.ReactNode })
   // NOT whatever pushState last wrote to the URL. Pin it so a client nav to
   // another page (or away from it) cannot keep showing the previous RSC page.
   const ssrPathRef = useRef(nextPathname);
+  // Only the page load's first mount can trust that pin. When the shell is
+  // mounted again (a chain switch), Next's pathname has followed the
+  // pushState navigations while its children tree is still the page it
+  // rendered: /swap would show the Monitor. From then on, the lazy copies.
+  const [firstMount] = useState(() => shellMounts++ === 0);
   const ssrManagedId = resolvePageId(ssrPathRef.current);
   const isManaged = activePage !== null;
   const tokenPath = !isManaged ? parseTokenPath(activePath) : null;
   const isMobile = useIsMobile();
   const useSsrTree =
-    nextPathname === ssrPathRef.current && activePage === ssrManagedId;
+    firstMount && nextPathname === ssrPathRef.current && activePage === ssrManagedId;
 
   // On mobile each page becomes the vertical scroll container (the desktop
   // frame keeps everything fixed and clips, which traps stacked content with

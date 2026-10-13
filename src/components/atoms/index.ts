@@ -22,4 +22,5 @@ export { QuoteAssetIcon, QuoteAmount } from "./QuoteAssetIcon";
 // Other modules add atoms used elsewhere — re-export here so consumers
 // don't need to know the file layout.
 export { TokenChartHover } from "./TokenChartHover";
+export { TokenPreviewCard } from "./TokenPreviewCard";
 export { BrandMark } from "./BrandMark";

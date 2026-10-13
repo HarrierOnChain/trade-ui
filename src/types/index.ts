@@ -45,6 +45,8 @@ export interface TokenEvent {
   /** Solana: nobody can mint more / freeze holders. */
   mintRenounced?: boolean;
   freezeRenounced?: boolean;
+  /** EVM: the contract has no owner left to change it. */
+  ownershipRenounced?: boolean;
   signer?: string;
   slot?: number;
   priceChange?: number;

@@ -30,6 +30,7 @@ export interface BatchEnrichEntry {
   sellTaxPercent?: number;
   honeypot?: boolean;
   mintRenounced?: boolean;
+  ownershipRenounced?: boolean;
   freezeRenounced?: boolean;
   twitter?: string;
   website?: string;

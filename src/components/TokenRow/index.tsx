@@ -1,6 +1,6 @@
 "use client";
 import React, { memo, useEffect, useRef, useState } from "react";
-import { TokenAvatarFrame, Sparkline, Change, TokenSocialLinks, Icon, SolAmount, QuoteAmount, Tooltip, MayhemCountdown, ChainIcon } from "../atoms";
+import { TokenAvatarFrame, Sparkline, Change, TokenSocialLinks, Icon, SolAmount, QuoteAmount, Tooltip, MayhemCountdown, ChainIcon, TokenPreviewCard } from "../atoms";
 import { fmtMcap, fmtNum, fmtPrice, fmtSol, fmtUsd, shortAddr, tokenVolumeUsd } from "../../lib/format";
 import { formatAge, registerAge, unregisterAge } from "../../lib/ageRegistry";
 import { useLastSeen } from "../../contexts/LastSeenContext";
@@ -157,6 +157,8 @@ export const TokenRow = memo(function TokenRow({
         </span>
       )}
       {/* ── Column 1 — avatar + identity + meta strip ────────────────── */}
+      {/* Hovering the logo previews it large, with the token's checks. */}
+      <Tooltip content={<TokenPreviewCard token={t} />} placement="right" delay={220} maxWidth={262} disabled={isPhone}>
       <div style={{
         position: "relative", flexShrink: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -177,6 +179,7 @@ export const TokenRow = memo(function TokenRow({
         />
         <AvatarHideOverlay token={t} />
       </div>
+      </Tooltip>
 
       <div style={{ minWidth: 0, width: "100%", display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, paddingLeft: 6 }}>
         <TokenRowIdentity token={t} rowIndex={rowIndex} />
