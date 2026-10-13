@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
+import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { useDeployStream } from "../../hooks/useDeployStream";
 import { useSelectedToken } from "../../contexts/SelectedTokenContext";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
@@ -25,7 +26,9 @@ interface Props {
 export function DeployColumn({ onSelect, maxHeight = "100%", titleSlot }: Props) {
   const { get } = useFilters();
   const f = get("deploy");
-  const { tokens, loading, error } = useDeployStream(f);
+  const { tokens, loading, error, loadMore, hasMore } = useDeployStream(f);
+  // A page more of the board each time the list nears its bottom.
+  const { sentinelRef, rootRef } = useInfiniteScroll<HTMLDivElement, HTMLDivElement>(loadMore, hasMore);
   const { selectedMint } = useSelectedToken();
   const solPrice = useNativeUsd();
   const visibleMints = useMemo(
@@ -73,7 +76,7 @@ export function DeployColumn({ onSelect, maxHeight = "100%", titleSlot }: Props)
           </>
         }
       />
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", maxHeight }} {...handlers}>
+      <div ref={rootRef} style={{ flex: 1, overflowY: "auto", overflowX: "hidden", maxHeight }} {...handlers}>
         {error && <Empty>{error}</Empty>}
         {loading && tokens.length === 0 && <LoadingRows />}
         {!loading && displayed.length === 0 && !error && (
@@ -92,6 +95,7 @@ export function DeployColumn({ onSelect, maxHeight = "100%", titleSlot }: Props)
             active={t.mint_address === selectedMint}
           />
         ))}
+        <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
       </div>
     </Column>
   );

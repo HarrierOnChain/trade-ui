@@ -36,6 +36,13 @@ export function useFreezeOnHover<T extends { mint_address: string }>(
       const t = byMint.get(m);
       if (t) out.push(t);
     }
+    // Rows below the last frozen one join at the bottom: the ones scrolling
+    // loads (more of the board). New rows above it (fresh launches, rank
+    // climbers) wait for the pointer to leave, so nothing moves under it.
+    const frozen = new Set(snapshot);
+    let last = -1;
+    list.forEach((t, i) => { if (frozen.has(t.mint_address)) last = i; });
+    for (const t of list.slice(last + 1)) if (!frozen.has(t.mint_address)) out.push(t);
     return out;
   }, [snapshot, list]);
 
