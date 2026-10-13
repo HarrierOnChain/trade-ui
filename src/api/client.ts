@@ -164,6 +164,7 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
         honeypot: t.honeypot,
         mintRenounced: t.mintRenounced,
         freezeRenounced: t.freezeRenounced,
+        ownershipRenounced: t.ownershipRenounced,
         twitter: t.twitter ?? undefined,
         website: t.website ?? undefined,
         telegram: t.telegram ?? undefined,

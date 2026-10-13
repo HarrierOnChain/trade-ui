@@ -167,6 +167,7 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     event.honeypot = bool(safety.honeypot);
     event.mintRenounced = bool(safety.mintRenounced);
     event.freezeRenounced = bool(safety.freezeRenounced);
+    event.ownershipRenounced = bool(safety.ownershipRenounced);
   }
   return event;
 }
