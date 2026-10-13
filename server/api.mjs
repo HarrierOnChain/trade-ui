@@ -24,6 +24,12 @@
  *   GET  /api/evm/quote              session: the EVM router's quote, kept here
  *   GET  /api/evm/balance            session: an EVM wallet's balance of a token
  *   POST /api/evm/confirm            session: wait for an EVM transaction's receipt
+ *   GET  /api/launch[?chain=]        session: the launch router's chains and launchpads
+ *   POST /api/launch                 session + password: deploy a token and bundle
+ *                                    the first buys from vault wallets
+ *   GET  /api/launch/jobs/:id        session: a launch's progress
+ *   POST /api/launch/image           session: an image file (the body) → its public
+ *                                    URL for the launch router (server/launchMedia.mjs)
  *
  * Every other `/api/*` path needs a session too and goes on to Next.js.
  */
@@ -33,6 +39,8 @@ import { AUTO_LOCK_CHOICES, VaultError, checkNewPassword, parseRecoveryKey } fro
 import { SolanaError } from "./solana.mjs";
 import { EvmError } from "./evm.mjs";
 import { QuoteError } from "./quotes.mjs";
+import { LaunchError, MAX_WALLETS } from "./launch.mjs";
+import { MEDIA_MAX_BYTES, MediaError } from "./launchMedia.mjs";
 import { Auth, clientAddress, sessionCookie } from "./auth.mjs";
 
 const JSON_LIMIT = 256 * 1024;
@@ -97,6 +105,7 @@ function hostOnly(url) {
 }
 
 const WALLET_ROUTE = /^\/api\/wallets\/(w_[0-9a-f]{16})(?:\/(delete|export|swap|send))?$/;
+const LAUNCH_JOB_ROUTE = /^\/api\/launch\/jobs\/(l_[0-9a-f]{16})$/;
 
 /**
  * @param {{
@@ -105,12 +114,14 @@ const WALLET_ROUTE = /^\/api\/wallets\/(w_[0-9a-f]{16})(?:\/(delete|export|swap|
  *   solana: ReturnType<typeof import("./solana.mjs").createSolana>,
  *   quotes: ReturnType<typeof import("./quotes.mjs").createQuotes>,
  *   evm: ReturnType<typeof import("./evm.mjs").createEvm>,
+ *   launch: ReturnType<typeof import("./launch.mjs").createLaunch>,
+ *   media?: ReturnType<typeof import("./launchMedia.mjs").createLaunchMedia>,
  *   config: any,
  *   setupToken: () => string,
  *   version: string,
  * }} deps
  */
-export function createApi({ vault, auth, solana, quotes, evm, config, setupToken, version }) {
+export function createApi({ vault, auth, solana, quotes, evm, launch, media, config, setupToken, version }) {
   const ipKey = (req) => `ip:${clientAddress(req)}`;
   const cookieOpts = (req) => ({ secure: isSecure(req, config) });
 
@@ -266,6 +277,9 @@ export function createApi({ vault, auth, solana, quotes, evm, config, setupToken
       rpcHost: hostOnly(config.rpcUrl),
       evmRpcHosts: Object.fromEntries(Object.entries(config.evmRpc).map(([c, r]) => [c, hostOnly(r.http)])),
       apiKeyConfigured: Boolean(config.apiKey),
+      // A token image can be uploaded for a launch only from a public address:
+      // the launch router downloads it from here (server/launchMedia.mjs).
+      launchUploads: Boolean(config.publicUrl && media),
       vaultFile: vault.file,
       recoveryKeySet: vault.hasRecoveryKey,
       autoLockChoices: AUTO_LOCK_CHOICES,
@@ -331,6 +345,63 @@ export function createApi({ vault, auth, solana, quotes, evm, config, setupToken
     const gone = new AbortController();
     res.once("close", () => gone.abort());
     sendJson(res, 200, await evm.confirm(String(body.chain || ""), body.hash, { signal: gone.signal }));
+  }
+
+  async function launchCatalog(req, res) {
+    requireSession(req);
+    const chain = new URL(req.url || "/", "http://local").searchParams.get("chain") || "";
+    sendJson(res, 200, { data: await launch.catalog(chain) });
+  }
+
+  /**
+   * A token image picked from disk, kept and served at a public URL the
+   * launch router can download (it has no upload route). Needs this Trade
+   * UI's public address: from localhost Raze's server cannot reach it.
+   */
+  async function launchImage(req, res) {
+    requireSession(req);
+    if (!media) throw new HttpError(404, "not_found", "Not found");
+    if (!config.publicUrl) {
+      throw new HttpError(409, "no_public_url",
+        "Uploading needs a public address: Raze's server downloads the image from this Trade UI. "
+        + "Set TRADE_UI_PUBLIC_URL (a VPS behind HTTPS), or paste an image URL instead.");
+    }
+    if (!String(req.headers["content-type"] || "").startsWith("image/")) throw new HttpError(415, "bad_request", "Send the image file");
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > MEDIA_MAX_BYTES) throw new HttpError(413, "bad_request", "Images up to 4 MB");
+      chunks.push(chunk);
+    }
+    const kept = media.put(Buffer.concat(chunks));
+    auth.touch();
+    sendJson(res, 200, { url: `${config.publicUrl}${kept.path}`, bytes: kept.bytes });
+  }
+
+  /** Deploy and bundle: the password again, since it spends from many wallets at once. */
+  async function launchStart(req, res) {
+    const token = requireSession(req);
+    const body = await readJson(req);
+    await requirePassword(token, body.password);
+    const ids = Array.isArray(body.walletIds) ? body.walletIds : [];
+    if (!ids.length) throw new HttpError(400, "bad_request", "Pick the creator wallet");
+    if (ids.length > MAX_WALLETS) throw new HttpError(400, "bad_request", `At most ${MAX_WALLETS} wallets, the creator included`);
+    if (new Set(ids).size !== ids.length) throw new HttpError(400, "bad_request", "A wallet appears twice");
+    const wallets = [];
+    try {
+      for (const id of ids) {
+        if (typeof id !== "string" || !/^w_[0-9a-f]{16}$/.test(id)) throw new HttpError(400, "bad_request", "Unknown wallet");
+        wallets.push(vault.get(id));
+      }
+      auth.touch();
+      const stillUnlocked = () => auth.sessionOf(req) === token;
+      sendJson(res, 200, launch.start(body, wallets, { stillUnlocked }));
+    } catch (e) {
+      // The job owns the keys once it starts; before that, they go here.
+      for (const w of wallets) w.secret?.fill(0);
+      throw e;
+    }
   }
 
   async function walletRoute(req, res, id, action) {
@@ -408,6 +479,9 @@ export function createApi({ vault, auth, solana, quotes, evm, config, setupToken
     "GET /api/evm/quote": evmQuote,
     "GET /api/evm/balance": evmBalance,
     "POST /api/evm/confirm": evmConfirm,
+    "GET /api/launch": launchCatalog,
+    "POST /api/launch": launchStart,
+    "POST /api/launch/image": launchImage,
     "GET /api/wallets": listWallets,
     "POST /api/wallets/generate": generate,
     "POST /api/wallets/import": importWallets,
@@ -420,13 +494,17 @@ export function createApi({ vault, auth, solana, quotes, evm, config, setupToken
   return async function handle(req, res, pathname) {
     const fn = routes[`${req.method} ${pathname}`];
     const m = fn ? null : WALLET_ROUTE.exec(pathname);
+    const lj = fn || m ? null : LAUNCH_JOB_ROUTE.exec(pathname);
     const ours = fn || m || pathname.startsWith("/api/auth/") || pathname === "/api/wallets" || pathname.startsWith("/api/wallets/")
-      || pathname.startsWith("/api/evm/");
+      || pathname.startsWith("/api/evm/") || pathname === "/api/launch" || pathname.startsWith("/api/launch/");
     if (!ours) return false;
     try {
       if (fn) await fn(req, res);
       else if (m) await walletRoute(req, res, m[1], m[2]);
-      else throw new HttpError(404, "not_found", "Not found");
+      else if (lj && req.method === "GET") {
+        requireSession(req);
+        sendJson(res, 200, launch.job(lj[1]));
+      } else throw new HttpError(404, "not_found", "Not found");
     } catch (e) {
       if (res.headersSent) {
         res.destroy();
@@ -438,6 +516,8 @@ export function createApi({ vault, auth, solana, quotes, evm, config, setupToken
       else if (e instanceof SolanaError) sendError(res, e.status, e.code, e.message);
       else if (e instanceof EvmError) sendError(res, e.status, e.code, e.message);
       else if (e instanceof QuoteError) sendError(res, e.status, e.code, e.message);
+      else if (e instanceof LaunchError) sendError(res, e.status, e.code, e.message);
+      else if (e instanceof MediaError) sendError(res, e.status, e.code, e.message);
       else {
         console.error("[trade-ui] request failed:", e);
         sendError(res, 500, "internal", "Something went wrong on the server");

@@ -43,6 +43,9 @@ export interface RuntimeConfig {
   /** the host of each EVM chain's RPC */
   evmRpcHosts: Record<string, string>;
   apiKeyConfigured: boolean;
+  /** an image picked from disk can be uploaded for a launch (the server has a
+   *  public address the launch router can download it from) */
+  launchUploads?: boolean;
   vaultFile: string;
   recoveryKeySet: boolean;
   autoLockChoices: number[];
@@ -198,6 +201,109 @@ export const vault = {
       ...(lamports === "max" ? { amount: "max" } : { lamports }),
       password,
     }),
+};
+
+// ── launches (server/launch.mjs) ────────────────────────────────────────
+
+/** One chain of the launch router's catalog (`GET /launch`). */
+export interface LaunchChain {
+  slug: string;
+  aliases?: string[];
+  networkId?: number;
+  family: "solana" | "evm";
+  /** launchpads with a builder */
+  platforms: string[];
+  /** catalogued launchpads without one (the router answers 501) */
+  unwired?: string[];
+}
+
+export type LaunchLegStatus = "signed" | "sent" | "confirmed" | "failed" | "skipped" | "unknown";
+
+export interface LaunchLeg {
+  kind: string;
+  wallet: string;
+  walletId: string | null;
+  /** Solana signature, or EVM transaction hash */
+  signature: string | null;
+  version: number | "legacy";
+  status: LaunchLegStatus;
+  error: string | null;
+}
+
+export interface LaunchJob {
+  id: string;
+  chain: string;
+  platform: string;
+  mode: "safe" | "fast";
+  stage: "queued" | "build" | "provision" | "sign" | "create" | "buys" | "confirm" | "done" | "partial" | "failed";
+  mint: string | null;
+  pool: string | null;
+  legs: LaunchLeg[];
+  log: string[];
+  error: string | null;
+  done: boolean;
+  startedAt: number;
+}
+
+export interface LaunchForm {
+  chain: string;
+  platform: string;
+  /** creator first */
+  walletIds: string[];
+  /** one per wallet, whole units of the quote */
+  amounts: number[];
+  token: {
+    name: string;
+    symbol: string;
+    description?: string;
+    image?: string;
+    metadataUri?: string;
+    twitter?: string;
+    telegram?: string;
+    website?: string;
+  };
+  slippageBps?: number;
+  computeUnitPrice?: number;
+  mintKey?: string;
+  sendMode: "safe" | "fast";
+  quoteMint?: string;
+  mayhem?: boolean;
+  holderReward?: boolean;
+  bonkType?: string;
+  rewardTaxBps?: number;
+  feeClaimers?: Array<{ provider: string; username: string; bps: number }>;
+  pairToken?: string;
+  creatorTaxBps?: number;
+  buybackEnabled?: boolean;
+}
+
+export const launchApi = {
+  catalog: () => request<{ data: { chains: LaunchChain[] } }>("GET", "/api/launch").then((r) => r.data.chains ?? []),
+  /** Deploy and bundle; the server answers at once with the job to follow. */
+  start: (form: LaunchForm, password: string) => request<{ id: string }>("POST", "/api/launch", { ...form, password }),
+  job: (id: string, signal?: AbortSignal) => request<LaunchJob>("GET", `/api/launch/jobs/${id}`, undefined, signal),
+  /** A token image from disk → the public URL this server serves it at, for
+   *  the launch router to download. */
+  async uploadImage(file: File): Promise<{ url: string; bytes: number }> {
+    let r: Response;
+    try {
+      r = await fetch(withBasePath("/api/launch/image"), {
+        method: "POST",
+        headers: { accept: "application/json", "x-trade-ui": "1", "content-type": file.type || "application/octet-stream" },
+        body: file,
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+    } catch {
+      throw new ApiError(0, "offline", "Trade UI's server is not reachable");
+    }
+    const j = await r.json().catch(() => null) as { url?: string; bytes?: number; error?: { code?: string; message?: string } } | null;
+    if (!r.ok || !j?.url) {
+      if (r.status === 401 && j?.error?.code === "locked") announceLocked();
+      throw new ApiError(r.status, j?.error?.code || `http_${r.status}`, j?.error?.message || `HTTP ${r.status}`);
+    }
+    return { url: j.url, bytes: j.bytes ?? file.size };
+  },
 };
 
 // ── EVM swaps (server/evm.mjs) ──────────────────────────────────────────

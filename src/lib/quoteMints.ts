@@ -7,9 +7,10 @@
  * back to the native SOL path on the Raze router.
  *
  * The active chain is read from the module-level mirror in `chains.ts` (same
- * pattern the data fetchers use). The top-bar chain switch hard-reloads, so
- * `getActiveChain()` is correct at render/module-init time and callers don't
- * have to thread `chain` through.
+ * pattern the data fetchers use). A chain switch sets it, then mounts the
+ * whole tree again (ChainContext), so `getActiveChain()` is correct at render
+ * time and callers don't have to thread `chain` through. Do not read it at
+ * module init: that runs once per page load, not per chain.
  */
 import { type ChainId, getActiveChain } from "./chains";
 

@@ -37,6 +37,7 @@ const NAV: NavItem[] = [
   { id: "monitor", label: "Monitor", path: "/monitor", icon: Icon.eyeLine(12) },
   { id: "portfolio", label: "Portfolio", path: "/portfolio", icon: Icon.portfolio(12) },
   { id: "swap", label: "Swap", path: "/swap", icon: Icon.swap(12) },
+  { id: "bundler", label: "Bundler", path: "/bundler", icon: Icon.rocket(12) },
 ];
 
 export function TopBar() {
@@ -454,281 +455,218 @@ function useActiveWalletBalances() {
   return { quoteBalances };
 }
 
-function UnifiedChainBar({
-  anchorRef,
-  renderBar,
-}: {
-  anchorRef: React.RefObject<HTMLDivElement | null>;
-  renderBar: (segments: React.ReactNode) => React.ReactNode;
-}) {
-  const { chainId, setChain, chains } = useChain();
+/** Close a popover on a click outside `ref` or on Escape. */
+function useDismiss(ref: React.RefObject<HTMLElement | null>, open: boolean, close: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [ref, open, close]);
+}
+
+const popover: React.CSSProperties = {
+  position: "absolute",
+  top: "calc(100% + 6px)",
+  background: "var(--ink-1)",
+  border: "1px solid var(--line)",
+  borderRadius: 8,
+  boxShadow: "0 16px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)",
+  padding: 4,
+  zIndex: 50,
+};
+
+/** The active chain (its logo and ticker) and a list to switch. */
+function ChainPicker() {
+  const { chain, chainId, setChain, chains } = useChain();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(rootRef, open, close);
+
+  return (
+    <div ref={rootRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Chain: ${chain.name}`}
+        title={`Chain: ${chain.name}`}
+        onClick={() => setOpen((o) => !o)}
+        className="mono"
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          height: 32, padding: "0 8px",
+          background: open ? "var(--ink-2)" : "transparent",
+          border: 0, borderRadius: 6,
+          color: "var(--paper)", fontSize: 12, fontWeight: 600, letterSpacing: "0.02em",
+          cursor: "pointer", transition: "background 120ms",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ink-2)"; }}
+        onMouseLeave={(e) => { if (!open) e.currentTarget.style.background = "transparent"; }}
+      >
+        <ChainIcon id={chainId} size={16} />
+        {chain.label}
+        <ChainChevron open={open} />
+      </button>
+      {open && (
+        <div role="listbox" aria-label="Chain" style={{ ...popover, right: 0, width: 200 }}>
+          {chains.map((c) => {
+            const active = c.id === chainId;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => { setOpen(false); if (!active) setChain(c.id); }}
+                style={{
+                  display: "grid", gridTemplateColumns: "18px minmax(0, 1fr) auto 8px",
+                  alignItems: "center", gap: 9,
+                  width: "100%", minHeight: 32, padding: "6px 8px",
+                  border: 0, borderRadius: 5,
+                  background: active ? "var(--ink-2)" : "transparent",
+                  color: active ? "var(--paper)" : "var(--paper-2)",
+                  fontSize: 12, textAlign: "left", cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--ink-2)"; }}
+                onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+              >
+                <ChainIcon id={c.id} size={16} />
+                <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                <span className="mono" style={{ fontSize: 10, color: "var(--paper-4)", letterSpacing: "0.04em" }}>{c.label}</span>
+                <ActiveDot on={active} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActiveDot({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        width: 7, height: 7, borderRadius: 999,
+        background: on ? "var(--accent)" : "transparent",
+        boxShadow: on ? "0 0 7px color-mix(in oklch, var(--accent) 65%, transparent)" : "none",
+      }}
+    />
+  );
+}
+
+/**
+ * The trading wallets' balance in the coin trades pay with (the chain's coin,
+ * or a stablecoin picked here), and the menu to pick the wallets and that coin.
+ */
+function WalletBalanceMenu() {
+  const { chainId } = useChain();
+  const { activeWallets } = useUserWallets();
   const { quoteBalances } = useActiveWalletBalances();
-  const [quoteOpen, setQuoteOpen] = useState(false);
-  const rootRef = anchorRef;
+  const [open, setOpen] = useState(false);
+  const pillRef = useRef<HTMLButtonElement | null>(null);
   const [buyInputLabel, setBuyInputLabel] = useUserPreference<string>(PREF_KEYS.buyInputMint, defaultQuoteMint().label);
   const [, setSellOutputLabel] = useUserPreference<string>(PREF_KEYS.sellOutputMint, defaultQuoteMint().label);
   const activeQuote = findQuoteMint(buyInputLabel, chainId);
   const quotes = quoteMints(chainId);
-  const canSwitchQuote = quotes.length > 1;
+  const bal = quoteBalances[activeQuote.label];
+  const balText = bal?.loading ? "…" : formatQuoteBalance(bal?.value ?? 0);
 
   const selectQuote = (label: string) => {
     setBuyInputLabel(label);
     setSellOutputLabel(label);
-    setQuoteOpen(false);
   };
 
-  const switchChain = (id: typeof chainId) => {
-    if (id === chainId) return;
-    setQuoteOpen(false);
-    setChain(id);
-  };
-
-  useEffect(() => {
-    if (!quoteOpen) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) {
-        setQuoteOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setQuoteOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [quoteOpen, rootRef]);
-
-  const quoteBal = quoteBalances[activeQuote.label];
-  const quoteLoading = !!quoteBal?.loading;
-  const quoteValue = quoteBal?.value ?? 0;
-
-  const chainSegments = (
-    <>
-      {chains.map((c, i) => {
-        const active = c.id === chainId;
-        return (
-          <React.Fragment key={c.id}>
-            {i > 0 && (
-              <span
-                aria-hidden="true"
-                style={{ width: 1, alignSelf: "stretch", background: "var(--line-soft)", flexShrink: 0, margin: "6px 0" }}
-              />
-            )}
-            <Tooltip
-              content={
-                active
-                  ? canSwitchQuote
-                    ? `${c.name} · ${activeQuote.label} quote — click to switch`
-                    : `${c.name} · active chain`
-                  : `Switch to ${c.name}`
-              }
-              placement="bottom"
-            >
-              <button
-                type="button"
-                aria-pressed={active}
-                aria-label={c.name}
-                aria-haspopup={active && canSwitchQuote ? "listbox" : undefined}
-                aria-expanded={active && canSwitchQuote ? quoteOpen : undefined}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (active && canSwitchQuote) {
-                    setQuoteOpen((o) => !o);
-                    return;
-                  }
-                  if (!active) switchChain(c.id);
-                }}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: active ? "0 10px" : "0 8px",
-                  height: 30,
-                  background: "transparent",
-                  border: 0,
-                  cursor: "pointer",
-                  opacity: active ? 1 : 0.45,
-                  transition: "opacity 150ms",
-                }}
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.opacity = "0.7";
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.opacity = "0.45";
-                }}
-              >
-                {active
-                  ? <QuoteMintIcon label={activeQuote.label} size={14} />
-                  : <ChainIcon id={c.id} size={14} />}
-                {active && (
-                  <span
-                    className="mono"
-                    style={{
-                      fontSize: 11,
-                      color: "var(--paper)",
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {quoteLoading ? "…" : formatQuoteBalance(quoteValue)}
-                  </span>
-                )}
-                {!active && (
-                  <span
-                    className="mono"
-                    style={{ fontSize: 10, color: "var(--paper-3)", letterSpacing: "0.04em" }}
-                  >
-                    {c.label}
-                  </span>
-                )}
-                {active && canSwitchQuote && <ChainChevron open={quoteOpen} />}
-              </button>
-            </Tooltip>
-          </React.Fragment>
-        );
-      })}
-    </>
-  );
-
-  const quoteDropdown = quoteOpen ? (
-    <div
-      role="listbox"
-      aria-label={`Quote on ${chains.find((c) => c.id === chainId)?.name ?? "chain"}`}
-      style={{
-        position: "absolute",
-        top: "100%",
-        left: 0,
-        marginTop: 4,
-        width: 168,
-        background: "var(--ink-1)",
-        border: "1px solid var(--line-soft)",
-        borderRadius: 6,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-        padding: 4,
-        zIndex: 50,
-      }}
-    >
+  const payWith = quotes.length > 1 ? (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+      <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.8, color: "var(--paper-4)", textTransform: "uppercase", marginRight: 2 }}>
+        Pay with
+      </span>
       {quotes.map((q) => {
-        const active = activeQuote.label === q.label;
-        const bal = quoteBalances[q.label];
+        const active = q.label === activeQuote.label;
+        const b = quoteBalances[q.label];
         return (
-          <button
-            key={q.label}
-            type="button"
-            role="option"
-            aria-selected={active}
-            onClick={(e) => { e.stopPropagation(); selectQuote(q.label); }}
-            className="mono"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "18px minmax(0, 1fr) auto 8px",
-              alignItems: "center",
-              gap: 8,
-              width: "100%",
-              minHeight: 30,
-              padding: "5px 8px",
-              border: 0,
-              background: active ? "var(--ink-2)" : "transparent",
-              color: active ? "var(--paper)" : "var(--paper-2)",
-              fontSize: 11,
-              cursor: "pointer",
-              borderRadius: 4,
-              textAlign: "left",
-            }}
-            onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "var(--ink-2)"; }}
-            onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
-          >
-            <QuoteMintIcon label={q.label} size={16} />
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", fontWeight: 600 }}>
-              {q.label}
-            </span>
-            <span style={{ color: "var(--paper-3)", fontVariantNumeric: "tabular-nums" }}>
-              {bal?.loading ? "…" : formatQuoteBalance(bal?.value ?? 0)}
-            </span>
-            <span
-              aria-hidden="true"
+          <Tooltip key={q.label} content={`${q.label}: ${b?.loading ? "…" : formatQuoteBalance(b?.value ?? 0)}`} placement="top">
+            <button
+              type="button"
+              aria-pressed={active}
+              onClick={() => selectQuote(q.label)}
+              className="mono"
               style={{
-                width: 8,
-                height: 8,
-                borderRadius: 999,
-                background: active ? "var(--accent)" : "transparent",
-                boxShadow: active ? "0 0 7px color-mix(in oklch, var(--accent) 65%, transparent)" : "none",
+                display: "inline-flex", alignItems: "center", gap: 4,
+                height: 22, padding: "0 6px",
+                background: active ? "var(--ink-2)" : "transparent",
+                border: `1px solid ${active ? "var(--line)" : "transparent"}`,
+                borderRadius: 5,
+                color: active ? "var(--paper)" : "var(--paper-3)",
+                fontSize: 10.5, cursor: "pointer",
               }}
-            />
-          </button>
+            >
+              <QuoteMintIcon label={q.label} size={12} />
+              {q.label}
+            </button>
+          </Tooltip>
         );
       })}
     </div>
-  ) : null;
+  ) : undefined;
 
   return (
-    <>
-      {renderBar(chainSegments)}
-      {quoteDropdown}
-    </>
+    <div style={{ position: "relative" }}>
+      <button
+        ref={pillRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label={`${activeWallets.length} trading wallets, ${balText} ${activeQuote.label}`}
+        title={`${activeWallets.length} trading wallet${activeWallets.length === 1 ? "" : "s"} · ${balText} ${activeQuote.label}`}
+        onClick={() => setOpen((o) => !o)}
+        className="mono"
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 7,
+          height: 32, padding: "0 9px 0 10px",
+          background: "var(--ink-0)",
+          border: `1px solid ${open ? "var(--line)" : "var(--line-soft)"}`,
+          borderRadius: 8,
+          color: "var(--paper)", fontSize: 12, fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          cursor: "pointer", transition: "border-color 120ms",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--line)"; }}
+        onMouseLeave={(e) => { if (!open) e.currentTarget.style.borderColor = "var(--line-soft)"; }}
+      >
+        <span style={{ color: "var(--paper-3)", display: "inline-flex" }}>{Icon.wallet(13)}</span>
+        <QuoteMintIcon label={activeQuote.label} size={14} />
+        {balText}
+        <ChainChevron open={open} />
+      </button>
+      {open && (
+        <WalletSelectorPopup
+          anchorRef={pillRef}
+          inline
+          footer={payWith}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </div>
   );
 }
 
 function ConnectedMenu() {
-  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
-  const menuRootRef = useRef<HTMLDivElement | null>(null);
-  const walletBarRef = useRef<HTMLDivElement | null>(null);
-
   return (
-    <div ref={menuRootRef} style={{ position: "relative", display: "inline-block" }}>
-      <UnifiedChainBar
-        anchorRef={menuRootRef}
-        renderBar={(segments) => (
-            <div
-              ref={walletBarRef}
-              style={{
-                display: "inline-flex", alignItems: "center",
-                height: 32, padding: 0, gap: 0,
-                background: "var(--ink-0)",
-                border: "1px solid var(--line-soft)",
-                borderRadius: 6,
-                transition: "border-color 120ms",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--line)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--line-soft)"; }}
-            >
-              {segments}
-              <span style={{ width: 1, alignSelf: "stretch", background: "var(--line-soft)", flexShrink: 0, margin: "6px 0" }} />
-              <Tooltip content="Wallets that trade" placement="bottom">
-                <button
-                  type="button"
-                  aria-label="Select the wallets that trade"
-                  aria-haspopup="dialog"
-                  aria-expanded={walletPickerOpen}
-                  onClick={() => setWalletPickerOpen((v) => !v)}
-                  style={{
-                    display: "inline-flex", alignItems: "center",
-                    height: 30, padding: "0 9px",
-                    background: "transparent", border: 0,
-                    color: "var(--paper-3)", cursor: "pointer",
-                    transition: "color 120ms",
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--paper)")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--paper-3)")}
-                >
-                  {Icon.wallet(13)}
-                </button>
-              </Tooltip>
-            </div>
-        )}
-      />
-      {walletPickerOpen && (
-        <WalletSelectorPopup
-          anchorRef={walletBarRef}
-          inline
-          onClose={() => setWalletPickerOpen(false)}
-        />
-      )}
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <ChainPicker />
+      <WalletBalanceMenu />
     </div>
   );
 }

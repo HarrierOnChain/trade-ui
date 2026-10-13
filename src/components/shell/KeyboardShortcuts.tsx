@@ -32,6 +32,7 @@ export function KeyboardShortcuts() {
           if (k === "p") navRef.current("/portfolio");
           if (k === "w") navRef.current("/portfolio");
           if (k === "s") navRef.current("/swap");
+          if (k === "b") navRef.current("/bundler");
           window.removeEventListener("keydown", next);
         };
         window.addEventListener("keydown", next);

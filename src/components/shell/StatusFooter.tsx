@@ -9,7 +9,7 @@ import { useChainSentiment } from "../../hooks/useChainSentiment";
 import { useNativeSpots, useSolPrice, type NativeSpots } from "../../hooks/useSolPrice";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
 import { useChain } from "../../contexts/ChainContext";
-import { CHAINS, type ChainId, nativeSymbol } from "../../lib/chains";
+import { CHAIN_CHANGED_EVENT, CHAINS, type ChainId, nativeSymbol } from "../../lib/chains";
 import { ChainIcon, Icon, PlatformLogo, TokenIcon, Tooltip } from "../atoms";
 import { TokenChartPopup } from "../TokenRow/TokenChartPopup";
 import { useApp } from "../../contexts/AppContext";
@@ -654,6 +654,10 @@ interface HoldingMeta {
 }
 
 const holdingMetaCache = new Map<string, HoldingMeta>();
+// Keyed by address, and one 0x address can be a token on several EVM chains.
+if (typeof window !== "undefined") {
+  window.addEventListener(CHAIN_CHANGED_EVENT, () => holdingMetaCache.clear());
+}
 
 function loadHoldingMeta(mint: string, _solPrice: number | null): Promise<HoldingMeta> {
   const cached = holdingMetaCache.get(mint);

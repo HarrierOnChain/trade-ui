@@ -175,6 +175,27 @@ export const fetchBatchTokenEnrich = async (mints: string[], _sparklineLimit = 0
   return { success: true, data };
 };
 
+/**
+ * Token images from the batch read, keyed by address (EVM lowercase): one
+ * call per 50 tokens. A token the API leaves out, or has no image for, is
+ * absent.
+ */
+export async function fetchTokenImages(c: string, addresses: string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(addresses.filter(Boolean))];
+  const out: Record<string, string> = {};
+  for (let i = 0; i < unique.length; i += BATCH_IDS) {
+    const slice = unique.slice(i, i + BATCH_IDS);
+    const res = await get<unknown>("/tokens", { ids: slice.map((m) => `${c}:${m}`).join(",") }, 10 * 60_000);
+    for (const row of rows(res.data)) {
+      const t = apiTokenToEvent(row, 0);
+      if (!t.mint_address || !t.image) continue;
+      const asked = slice.find((m) => m.toLowerCase() === t.mint_address.toLowerCase()) ?? t.mint_address;
+      out[c === "sol" ? asked : asked.toLowerCase()] = t.image;
+    }
+  }
+  return out;
+}
+
 /** A whole board; the columns filter it themselves (hooks/useLaunchpadBoard). */
 async function listBoard(board: "new" | "graduating" | "graduated", limit: number): Promise<{ data: TokenEvent[] }> {
   const c = chain();

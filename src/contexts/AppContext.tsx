@@ -5,7 +5,9 @@ export interface Toast {
   id: string;
   title: string;
   body?: React.ReactNode;
-  tone?: "buy" | "sell" | "default";
+  /** `buy` / `sell`: trade fills (the user can turn those off); `success` /
+   *  `error`: the outcome of anything else. */
+  tone?: "buy" | "sell" | "success" | "error" | "default";
   duration?: number;
 }
 

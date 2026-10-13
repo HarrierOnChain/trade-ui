@@ -312,6 +312,7 @@ const STARTUP_OPTIONS: { value: string; label: string }[] = [
   { value: "/monitor",    label: "Monitor" },
   { value: "/portfolio",  label: "Portfolio" },
   { value: "/swap",       label: "Swap" },
+  { value: "/bundler",    label: "Bundler" },
 ];
 
 function GeneralPanel() {

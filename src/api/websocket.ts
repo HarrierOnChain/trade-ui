@@ -2,6 +2,10 @@
 
 import { CHAIN_CHANGED_EVENT, getActiveChain } from "../lib/chains";
 import { markStreamOpen } from "../lib/streamSettle";
+import { preloadTokenImage } from "../lib/tokenImages";
+
+/** How many rows of a board snapshot get their logos preloaded. */
+const SNAPSHOT_PRELOAD = 30;
 import {
   apiCandle,
   apiHolderToHolder,
@@ -545,12 +549,15 @@ export class RazeWebSocket {
         const native = nativeUsdSync(chain);
         if (type === "snapshot") {
           const rows = Array.isArray(f.data) ? f.data : [];
+          const tokens = rows.map((r) => apiTokenToEvent(asRecord(r) ?? {}, native)).filter((t) => t.mint_address);
+          // The rows a column shows first: their logos start downloading now.
+          for (const t of tokens.slice(0, SNAPSHOT_PRELOAD)) preloadTokenImage(t.image);
           this.dispatch(event, {
             type: event,
             kind: "snapshot",
             board: spec.board,
             chain,
-            rows: rows.map((r) => apiTokenToEvent(asRecord(r) ?? {}, native)).filter((t) => t.mint_address),
+            rows: tokens,
           });
           return;
         }
@@ -558,6 +565,9 @@ export class RazeWebSocket {
         if (!row) return;
         const token = apiTokenToEvent(row, native);
         if (!token.mint_address) return;
+        // A launch's logo starts downloading before its row renders (and while
+        // a hovered column holds new rows back).
+        preloadTokenImage(token.image);
         this.dispatch(event, { ...token, type: event, kind: type, board: spec.board });
         return;
       }

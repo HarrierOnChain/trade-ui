@@ -23,6 +23,8 @@ import { Auth } from "./server/auth.mjs";
 import { createSolana } from "./server/solana.mjs";
 import { createQuotes } from "./server/quotes.mjs";
 import { createEvm } from "./server/evm.mjs";
+import { createLaunch } from "./server/launch.mjs";
+import { createLaunchMedia } from "./server/launchMedia.mjs";
 import { createApi, sendError } from "./server/api.mjs";
 import { createGate } from "./server/gate.mjs";
 import { silenceOkRequestLogs } from "./server/dev-log.mjs";
@@ -54,19 +56,22 @@ let gate;
 const vault = new Vault({ dir: config.dataDir });
 const quotes = createQuotes(config);
 const evm = createEvm(config);
+const solana = createSolana(config);
+const launch = createLaunch(config, { solana, evm });
+const media = createLaunchMedia();
 const auth = new Auth({
   vault,
   onLock: (reason) => {
     gate?.closeSockets();
     quotes.book.clear();
     evm.book.clear();
+    launch.clear();
     console.log(`[trade-ui] locked (${reason})`);
   },
 });
 auth.startIdleTimer();
 
-const solana = createSolana(config);
-const api = createApi({ vault, auth, solana, quotes, evm, config, setupToken: () => config.setupToken, version: VERSION });
+const api = createApi({ vault, auth, solana, quotes, evm, launch, media, config, setupToken: () => config.setupToken, version: VERSION });
 
 const { default: next } = await import("next");
 let conf;
@@ -83,7 +88,7 @@ if (!config.dev) {
 }
 const app = next({ dev: config.dev, dir: root, hostname: config.host, port: config.port, ...(conf ? { conf } : {}) });
 const handle = app.getRequestHandler();
-gate = createGate({ config, auth, api, next: handle, secret: gateSecret });
+gate = createGate({ config, auth, api, next: handle, secret: gateSecret, media });
 
 await app.prepare();
 const server = http.createServer((req, res) => {

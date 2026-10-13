@@ -25,6 +25,7 @@ import { TokenPageHost } from "./TokenPageHost";
 const MonitorPage = lazy(() => import("../../app/monitor/page"));
 const PortfolioPage = lazy(() => import("../../app/portfolio/page"));
 const SwapPage = lazy(() => import("../../app/swap/page"));
+const BundlerPage = lazy(() => import("../../app/bundler/page"));
 
 interface PageDef {
   id: string;
@@ -41,6 +42,7 @@ const PAGES: PageDef[] = [
   { id: "monitor",    path: "/monitor",    title: "Monitor",    Component: MonitorPage },
   { id: "portfolio",  path: "/portfolio",  title: "Portfolio",  Component: PortfolioPage },
   { id: "swap",       path: "/swap",       title: "Swap",       Component: SwapPage },
+  { id: "bundler",    path: "/bundler",    title: "Bundler",    Component: BundlerPage },
 ];
 
 // Fired after navigate() rewrites the URL via pushState so query-param readers
@@ -110,12 +112,16 @@ export function ClientNavProvider({ children }: { children: React.ReactNode }) {
   const nextPathname = usePathname();
   const router = useRouter();
 
-  const [activePage, setActivePage] = useState<string | null>(() => resolvePageId(nextPathname));
+  // Where the browser is: on the first load the same as Next's pathname; when
+  // the shell remounts (a chain switch), Next's may still name the page it
+  // last rendered, behind the pushState navigations it did not see.
+  const [startPath] = useState(() => (typeof window === "undefined" ? nextPathname : window.location.pathname));
+  const [activePage, setActivePage] = useState<string | null>(() => resolvePageId(startPath));
   const [mounted, setMounted] = useState<Set<string>>(() => {
-    const id = resolvePageId(nextPathname);
+    const id = resolvePageId(startPath);
     return id ? new Set([id]) : new Set();
   });
-  const [clientPath, setClientPath] = useState(nextPathname);
+  const [clientPath, setClientPath] = useState(startPath);
 
   // Persist last meaningful route for session restore.
   useEffect(() => {

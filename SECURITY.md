@@ -48,8 +48,9 @@ same browser…) and what they get.
   on the same machine, the client's address is the proxy's last
   `X-Forwarded-For` entry; from anywhere else that header is ignored.
 - **Passwords asked again** for what cannot be undone: exporting a key,
-  deleting a wallet that has one, sending SOL. Trades do not ask: they are the
-  point of a trading terminal.
+  deleting a wallet that has one, sending SOL, launching a token (it spends
+  from up to 50 wallets at once). Trades do not ask: they are the point of a
+  trading terminal.
 - **What the server signs.** Only (1) a swap transaction it has just received
   from the configured router (`RAZE_ROUTER_BASE`) for that wallet, after
   checking that the wallet is its one and only signer, (2) on the EVM chains,
@@ -58,9 +59,28 @@ same browser…) and what they get.
   one: this wallet and chain, the quote's amount and minimum, approvals only
   of the input token, only to the venue's router named in the quote and for
   at most the amount, the swap to that router with the quote's value, and a
-  bounded gas limit; and (3) a SOL
-  transfer it builds itself. There is no endpoint that signs bytes sent by the
-  browser.
+  bounded gas limit; (3) a SOL
+  transfer it builds itself; and (4) a launch the router's launch routes
+  (`RAZE_ROUTER_BASE/launch`) have just built for the wallets the password
+  confirmed: on Solana only the empty signature slots, each of which must be
+  one of those wallets, in transactions paid by one of them (the mint's and
+  Bags' slots come signed); on Robinhood Chain only the deployer's
+  transactions to the launch's factory or router (an approval: of the pair
+  token), with a bounded gas limit and a value of at most the dev buy plus
+  the launch fee. There is no endpoint that signs bytes sent by the browser.
+- **What a launch sends to Raze.** The wallets' addresses, the token's
+  metadata, and the RPC URL the router reads the chain through
+  (`LAUNCH_RPC_URL`, else `SOLANA_RPC_URL`): Raze's server calls it, so a key
+  in that URL is seen by Raze. Give it a separate URL if that matters. A
+  vanity mint's secret, when you enter one, goes to the router too: it signs
+  the create.
+- **One path without a session: uploaded token images.** An image uploaded on
+  the Bundler (session required, only with `TRADE_UI_PUBLIC_URL` set) is
+  served at `/launch-media/<128-bit random id>.<ext>` to anyone with the URL,
+  since Raze's server downloads it with no session: only PNG, JPEG, GIF or
+  WebP recognised by their bytes, at most 4 MB, as an inert image
+  (`nosniff`, a sandboxing CSP), kept in memory 30 minutes. A token's logo is
+  public once launched anyway.
 - **What a swap may be.** The quote is the router's: the server asks for it,
   keeps it for a minute and gives the browser a random token for it. A trade
   names the token, and the router builds that quote as it gave it: a browser

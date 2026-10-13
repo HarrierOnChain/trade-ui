@@ -542,6 +542,8 @@ input, textarea { font-family: inherit; color: inherit; }
 }
 .toast-card--buy  { --toast-accent: var(--buy);   --toast-accent-w: var(--buy-w); }
 .toast-card--sell { --toast-accent: var(--sell);  --toast-accent-w: var(--sell-w); }
+.toast-card--success { --toast-accent: var(--buy);  --toast-accent-w: var(--buy-w); }
+.toast-card--error   { --toast-accent: var(--sell); --toast-accent-w: var(--sell-w); }
 
 .toast-card__rail {
   position: absolute;
