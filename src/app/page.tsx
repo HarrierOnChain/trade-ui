@@ -2,7 +2,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-const VALID_ROUTES = ["/monitor", "/portfolio", "/swap"];
+const VALID_ROUTES = ["/monitor", "/portfolio", "/swap", "/bundler"];
 
 // Wallets moved into the portfolio on 2026-10-11; saved routes still name it.
 const MOVED: Record<string, string> = { "/wallets": "/portfolio" };

@@ -73,6 +73,9 @@ export function loadConfig({ root, argv = process.argv, env = process.env }) {
   const routerBase = httpUrl(env.RAZE_ROUTER_BASE, "https://router.raze.bot", "RAZE_ROUTER_BASE");
   const rpcUrl = httpUrl(env.SOLANA_RPC_URL, "https://api.mainnet-beta.solana.com", "SOLANA_RPC_URL");
   const rpcWsUrl = String(env.SOLANA_WS_URL || "").trim() || rpcUrl.replace(/^http/, "ws");
+  // The RPC the launch router reads the chain through, from Raze's server:
+  // it must be reachable from there (and it sees this URL).
+  const launchRpcUrl = httpUrl(env.LAUNCH_RPC_URL, rpcUrl, "LAUNCH_RPC_URL");
   const routerEvmBase = httpUrl(env.RAZE_ROUTER_EVM_BASE, "https://router.raze.bot/evm", "RAZE_ROUTER_EVM_BASE");
   // One RPC per EVM chain (EVM_RPC_URL_ETH, _BSC, _BASE, _ROBINHOOD), and a
   // WebSocket for new blocks (EVM_WS_URL_*): by default your RPC's own with
@@ -113,6 +116,7 @@ export function loadConfig({ root, argv = process.argv, env = process.env }) {
     routerBase,
     rpcUrl,
     rpcWsUrl,
+    launchRpcUrl,
     routerEvmBase,
     evmRpc,
     priorityMaxLamports: Number.isFinite(priorityMax) && priorityMax >= 0 ? Math.floor(priorityMax) : 500_000,

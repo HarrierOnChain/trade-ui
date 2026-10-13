@@ -38,18 +38,22 @@ export function ToastRail() {
   );
 }
 
-type ToneKey = "buy" | "sell" | "default";
+type ToneKey = "buy" | "sell" | "success" | "error" | "default";
+
+const KICKER: Record<ToneKey, string> = { buy: "BUY", sell: "SELL", success: "DONE", error: "ERROR", default: "INFO" };
+/** The cue each tone plays: fills and outcomes share the two tones. */
+const SOUND: Record<ToneKey, "buy" | "sell" | "default"> = { buy: "buy", sell: "sell", success: "buy", error: "sell", default: "default" };
 
 function ToastCard({ toast: t }: { toast: ReturnType<typeof useApp>["toasts"][number] }) {
   const [sound] = useNotifSound();
   const [volume] = useNotifVolume();
   const tone: ToneKey = t.tone ?? "default";
   const duration = t.duration ?? 4200;
-  const kicker = tone === "buy" ? "BUY" : tone === "sell" ? "SELL" : "INFO";
+  const kicker = KICKER[tone];
 
   // Play the configured cue once when the toast first appears.
   useEffect(() => {
-    if (sound) playNotifTone(tone, volume / 100);
+    if (sound) playNotifTone(SOUND[tone], volume / 100);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

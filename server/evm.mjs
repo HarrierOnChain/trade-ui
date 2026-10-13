@@ -375,9 +375,46 @@ export function createEvm(config, deps = {}) {
     return { maxFeePerGas: base * 2n + prio, maxPriorityFeePerGas: prio };
   }
 
+  /**
+   * Sign `txs` (checked already) as EIP-1559 transactions of `wallet`, with
+   * consecutive nonces from the pending count, and send them in order.
+   * `stillUnlocked` is asked right before signing.
+   *
+   * @returns {Promise<string[]>} the hashes, in order
+   */
+  function signAndSend(chain, wallet, txs, fee, { stillUnlocked = () => true, what = (i, n) => (i < n - 1 ? "the approval" : "the swap") } = {}) {
+    const chainId = EVM_CHAINS[chain].chainId;
+    return serial(wallet.address, async () => {
+      const pending = BigInt(await rpc(chain, "eth_getTransactionCount", [wallet.address, "pending"]));
+      const key = `${chain}:${lower(wallet.address)}`;
+      const start = pending > (nextNonce.get(key) ?? 0n) ? pending : nextNonce.get(key);
+      let nonce = start;
+      if (!stillUnlocked()) throw new EvmError("locked", "Locked: enter your password", 401);
+      const signed = txs.map((tx) => {
+        const s = signEip1559({ chainId: BigInt(chainId), nonce, ...fee, ...tx }, wallet.secret);
+        nonce += 1n;
+        return s;
+      });
+      const sent = [];
+      for (const s of signed) {
+        try {
+          await rpc(chain, "eth_sendRawTransaction", [s.raw]);
+        } catch (e) {
+          if (sent.length) nextNonce.set(key, start + BigInt(sent.length));
+          const msg = e instanceof Error ? e.message : String(e);
+          throw new EvmError("rpc", `Could not send ${what(sent.length, signed.length)}: ${msg.replace(/^\w+ RPC: /, "")}`, 422);
+        }
+        sent.push(s.hash);
+      }
+      nextNonce.set(key, nonce);
+      return sent;
+    });
+  }
+
   return {
     book,
     rpc,
+    signAndSend,
 
     /** → router `GET /quote`. Resolves `{ status, body }` to send as JSON. */
     async quote(searchParams) {
@@ -420,41 +457,16 @@ export function createEvm(config, deps = {}) {
       if (status !== 200) throw new EvmError("router", describeRouterError(status, j), status === 409 ? 409 : 502);
       const txs = checkedTransactions(j, { quote, owner: wallet.address, chainId });
       const fee = await fees(chain, j);
-
-      return serial(wallet.address, async () => {
-        const pending = BigInt(await rpc(chain, "eth_getTransactionCount", [wallet.address, "pending"]));
-        const key = `${chain}:${lower(wallet.address)}`;
-        const start = pending > (nextNonce.get(key) ?? 0n) ? pending : nextNonce.get(key);
-        let nonce = start;
-        if (!stillUnlocked()) throw new EvmError("locked", "Locked: enter your password", 401);
-        const signed = txs.map((tx) => {
-          const s = signEip1559({ chainId: BigInt(chainId), nonce, ...fee, ...tx }, wallet.secret);
-          nonce += 1n;
-          return s;
-        });
-        const sent = [];
-        for (const s of signed) {
-          try {
-            await rpc(chain, "eth_sendRawTransaction", [s.raw]);
-          } catch (e) {
-            if (sent.length) nextNonce.set(key, start + BigInt(sent.length));
-            const msg = e instanceof Error ? e.message : String(e);
-            const which = sent.length < signed.length - 1 ? "the approval" : "the swap";
-            throw new EvmError("rpc", `Could not send ${which}: ${msg.replace(/^\w+ RPC: /, "")}`, 422);
-          }
-          sent.push(s.hash);
-        }
-        nextNonce.set(key, nonce);
-        return {
-          signature: sent[sent.length - 1],
-          hash: sent[sent.length - 1],
-          approvals: sent.slice(0, -1),
-          chain,
-          inAmount: quote.inAmount,
-          outAmount: j.simulation?.outAmount ?? quote.outAmount,
-          otherAmountThreshold: quote.otherAmountThreshold,
-        };
-      });
+      const sent = await signAndSend(chain, wallet, txs, fee, { stillUnlocked });
+      return {
+        signature: sent[sent.length - 1],
+        hash: sent[sent.length - 1],
+        approvals: sent.slice(0, -1),
+        chain,
+        inAmount: quote.inAmount,
+        outAmount: j.simulation?.outAmount ?? quote.outAmount,
+        otherAmountThreshold: quote.otherAmountThreshold,
+      };
     },
 
     /**
