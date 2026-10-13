@@ -2,10 +2,14 @@
 // Shared Raze API types
 // ─────────────────────────────────────────────
 
-/** A stats window's opening price and change (the API's `Window`). */
+/** One stats window (the API's `Window`). */
 export interface TokenWindow {
   openPriceUsd?: number;
   priceChangePercent?: number;
+  volumeUsd?: number;
+  buys?: number;
+  sells?: number;
+  trades?: number;
 }
 
 export type WindowKey = "1m" | "5m" | "1h" | "6h" | "24h";

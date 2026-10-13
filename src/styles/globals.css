@@ -802,3 +802,7 @@ input, textarea { font-family: inherit; color: inherit; }
      columns; nothing extra needed here. */
   .toast-rail { bottom: max(10px, calc(var(--safe-b) + 36px)); }
 }
+
+/* Discover table rows */
+.discover-row { transition: background 120ms; }
+.discover-row:hover, .discover-row:focus-visible { background: var(--ink-1); outline: none; }

@@ -33,7 +33,7 @@ export function prefetchRoutes() {
 
     // Next.js page route JS — prefetch via link tags so the router
     // doesn't need to fetch them on navigation.
-    const routes = ["/monitor", "/portfolio", "/swap", "/bundler"];
+    const routes = ["/discover", "/trenches", "/portfolio", "/swap", "/bundler"];
     for (const href of routes) {
       const link = document.createElement("link");
       link.rel = "prefetch";

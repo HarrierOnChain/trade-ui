@@ -263,7 +263,7 @@ On Solana the Raze router swaps; on Ethereum, BNB Chain, Base and Robinhood
 the Raze EVM router does (below, [On the EVM chains](#on-the-evm-chains)).
 
 Where you trade: the token page's panel (market buy and sell, presets, the
-floating Instant Trade panel), the ⚡ quick buy on monitor rows and the
+floating Instant Trade panel), the ⚡ quick buy on Trenches and Discover rows and the
 sidebar's quick buy / sell, and `/swap` for any pair.
 
 Every trade is the same path:
@@ -384,7 +384,7 @@ directly: the API routes refuse to serve without the lock in front of them.
 | --- | --- |
 | `server.mjs` | The server: Next.js behind the gate. |
 | `server/` | The lock (`auth.mjs`), the vault (`vault.mjs`, `keys.mjs`), the routes (`api.mjs`), the gate (`gate.mjs`), kept quotes (`quotes.mjs`), swaps and transfers (`solana.mjs`), launches (`launch.mjs`), the WebSocket proxies. |
-| `src/app/` | Pages (`monitor`, `token`, `portfolio` with the wallets, `swap`, `bundler`) and the proxy routes under `api/`. |
+| `src/app/` | Pages (`discover`, `trenches`, `token`, `portfolio` with the wallets, `swap`, `bundler`) and the proxy routes under `api/`. |
 | `src/components/shell/LockGate.tsx` | The lock screen and first run. |
 | `src/lib/vault/` | The browser's client for the lock and the wallets. |
 | `electron/` | The desktop shell and its first-run window. |
