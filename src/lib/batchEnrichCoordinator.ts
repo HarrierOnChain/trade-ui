@@ -1,4 +1,5 @@
 import { fetchBatchTokenEnrich } from "../api/client";
+import { CHAIN_CHANGED_EVENT } from "./chains";
 
 export interface BatchEnrichEntry {
   name?: string;
@@ -50,6 +51,19 @@ const DEBOUNCE_MS = 300;
 
 export function resetBatchEnrichClaims(): void {
   GLOBAL_CLAIMED.clear();
+}
+
+// Claims are by address, and one 0x address can be a token on several EVM
+// chains: a chain switch starts over (a reload used to). The queued batch was
+// for the previous chain's rows, which are gone.
+if (typeof window !== "undefined") {
+  window.addEventListener(CHAIN_CHANGED_EVENT, () => {
+    GLOBAL_CLAIMED.clear();
+    pending = new Set();
+    callbacks = [];
+    if (timer) clearTimeout(timer);
+    timer = null;
+  });
 }
 
 export function queueBatchEnrich(mints: string[], onResult: PatchCallback): void {

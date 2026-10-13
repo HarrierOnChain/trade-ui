@@ -23,6 +23,7 @@ Raze API key in the server's configuration, and one password for the vault.
 - [Configuration](#configuration)
 - [The lock and the wallets](#the-lock-and-the-wallets)
 - [Swaps](#swaps)
+- [Bundler](#bundler)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Security](SECURITY.md) · [License](LICENSE)
@@ -32,7 +33,7 @@ Raze API key in the server's configuration, and one password for the vault.
 ```
  browser ──────────────► Trade UI server (server.mjs) ──────► api.raze.bot   market data, REST + WebSocket
   │ pages, charts,         │ the lock: password → session          (RAZE_API_KEY added here)
-  │ addresses only         │ the vault: encrypted keys      ──────► router.raze.bot  quotes, swap builds (/evm: EVM)
+  │ addresses only         │ the vault: encrypted keys      ──────► router.raze.bot  quotes, swap builds (/evm: EVM), launches
   │                        │ signs swaps and transfers      ──────► Solana / EVM RPCs  send, confirm, balances
   └─ never sees a key      └─ data/vault.json (0600)
 ```
@@ -189,6 +190,7 @@ None of it reaches the browser.
 | `EVM_WS_URL_ETH`, `_BSC`, `_BASE`, `_ROBINHOOD` | your RPC's with `ws(s)://`, else publicnode's | New blocks (`newHeads`), on which a sent swap's receipt is read. |
 | `SOLANA_RPC_URL` | `https://api.mainnet-beta.solana.com` | Sends and confirms, reads balances. Must accept v1 transactions (SIMD-0385). Use your own for real volume; a key in the URL stays on the server. |
 | `SOLANA_WS_URL` | the RPC URL with `ws(s)://` | Confirmations. |
+| `LAUNCH_RPC_URL` | `SOLANA_RPC_URL` | The Solana RPC the launch router reads the chain through, called from Raze's server: it must be public, and Raze sees its URL. |
 | `SWAP_PRIORITY_MAX_LAMPORTS` | `500000` | Cap of the router's priority-fee estimate when you set none. |
 | `SWAP_ALLOW_SPLIT` | off | `1` lets a quote split across two routes. |
 | `SWAP_MAX_SLIPPAGE_BPS` | `5000` | The most slippage a quote may ask for (5000 = 50 %). |
@@ -283,8 +285,8 @@ Every trade is the same path:
 The priority fee is the panel's ⛽ value (total lamports); slippage is the 🔥
 value, up to `SWAP_MAX_SLIPPAGE_BPS` (50 % unless you set it). A sell by % reads the exact token balance: 100% sells every last unit.
 Market orders only: a trade is swapped on the router when you press the button.
-Trade UI has no limit orders, no automations (TP/SL ladders, market making), no
-wallet or X trackers, and it does not launch tokens.
+Trade UI has no limit orders, no automations (TP/SL ladders, market making), and
+no wallet or X trackers. It launches tokens on the [Bundler](#bundler) page.
 
 ### On the EVM chains
 
@@ -315,6 +317,55 @@ the other denominations). Slippage tops out at 50 %. A token you pay with is
 approved for the exact amount before the swap, in its own transaction; the
 priority fee setting is Solana's (the router suggests EVM fees).
 
+## Bundler
+
+Top bar → **Bundler** (or `G B`) deploys a token and bundles the first buys
+from vault wallets, through the Raze router's launch routes
+(`RAZE_ROUTER_BASE/launch`, same key). Nothing else is called: Raze builds,
+the vault signs, your RPC sends.
+
+| Chain | Launchpads | Who buys |
+| --- | --- | --- |
+| Solana | Pump.fun (SOL or USDC, Mayhem, holder rewards), Raydium LaunchLab (LetsBonk, Bonkers, Balanced, StonkFun), USD1, Bags (Meteora DBC, fee claimers) | The creator inside the create, then one buy per bundle wallet, up to 50 wallets |
+| Robinhood Chain | pons.family V2 | The deployer only; the other wallets are exempt from the snipe tax |
+
+Ethereum, BNB Chain and Base have no launch builder on the router yet; the
+page says so.
+
+1. **Token** — name, ticker, an image URL (public http(s) or ipfs: Raze
+   downloads it and uploads image and metadata to IPFS), description, links;
+   or a ready metadata URI under *Advanced*. Click (or drop a file on) the
+   logo to upload one instead: PNG, JPEG, GIF or WebP up to 4 MB, kept 30
+   minutes and served at `TRADE_UI_PUBLIC_URL/launch-media/<random id>` for
+   Raze to download. That needs Trade UI on a public address; from
+   localhost, paste a URL.
+2. **Wallets** — the creator and its buy, then the bundle wallets and an
+   amount each (*Set all*, *Randomize* ±15%). *Create* adds fresh wallets to
+   the vault; fund them from the Portfolio first. A wallet that looks short of
+   its buy plus fees turns red.
+3. **Launch** (password) — `POST /api/launch`: the server builds on the router
+   with the wallets' addresses and `LAUNCH_RPC_URL`, signs every empty
+   signature slot with the vault's keys (the mint's comes signed; a slot or
+   fee payer outside the launch is refused) and sends:
+   - **Safe** (default): the create, its confirmation, then the buys, each
+     simulated first; a buy that would fail costs nothing.
+   - **Same block**: the buys right behind the create, without simulation, to
+     land in its block or the next. A buy that arrives first fails and pays
+     its fee.
+
+   The page follows the job (`GET /api/launch/jobs/:id`): each transaction's
+   signature and status, then the mint and a link to its token page. Bags
+   runs in two steps: its fee-share config lands first, then the launch.
+
+Not here: Jito bundles (Raze's router can add a tip to the last buy, but
+landing a bundle needs a block engine, which is neither Raze nor an RPC),
+vanity mint grinding (paste a vanity mint's secret under *Advanced*), and
+funding many wallets at once.
+
+As of October 2026 Raze's live launch route still runs its previous Solana
+build (v0 transactions, no `legs`, base58 even when base64 is asked): the
+server reads either.
+
 ## Development
 
 ```bash
@@ -332,8 +383,8 @@ directly: the API routes refuse to serve without the lock in front of them.
 | Path | |
 | --- | --- |
 | `server.mjs` | The server: Next.js behind the gate. |
-| `server/` | The lock (`auth.mjs`), the vault (`vault.mjs`, `keys.mjs`), the routes (`api.mjs`), the gate (`gate.mjs`), kept quotes (`quotes.mjs`), swaps and transfers (`solana.mjs`), the WebSocket proxies. |
-| `src/app/` | Pages (`monitor`, `token`, `portfolio` with the wallets, `swap`) and the proxy routes under `api/`. |
+| `server/` | The lock (`auth.mjs`), the vault (`vault.mjs`, `keys.mjs`), the routes (`api.mjs`), the gate (`gate.mjs`), kept quotes (`quotes.mjs`), swaps and transfers (`solana.mjs`), launches (`launch.mjs`), the WebSocket proxies. |
+| `src/app/` | Pages (`monitor`, `token`, `portfolio` with the wallets, `swap`, `bundler`) and the proxy routes under `api/`. |
 | `src/components/shell/LockGate.tsx` | The lock screen and first run. |
 | `src/lib/vault/` | The browser's client for the lock and the wallets. |
 | `electron/` | The desktop shell and its first-run window. |

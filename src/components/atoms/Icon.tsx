@@ -456,15 +456,24 @@ export const Icon = {
     </svg>
   ),
   base: (s = 14) => (
-    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ display: "block" }}>
-      <circle cx="8" cy="8" r="8" fill="#0052FF" />
-      <circle cx="8" cy="8" r="3.15" fill="#fff" />
+    // Base's mark since its 2025 rebrand, "the Square": #0000FF, slightly
+    // rounded corners (as @web3icons/core draws it). Inset a little so it
+    // weighs the same as the round chain marks beside it.
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
+      <rect x="2" y="2" width="20" height="20" rx="2" fill="#0000FF" />
     </svg>
   ),
   robinhood: (s = 14) => (
-    <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true" style={{ display: "block" }}>
-      <circle cx="8" cy="8" r="8" fill="#00C805" />
-      <path d="M4.4 9.6c1.6-3.4 4.2-5.1 7.2-5.4-.2 1.7-1 3.3-2.4 4.6 1.5-.1 2.7.3 3.4 1.2-2.2.4-4.1-.1-5.6-1.5-.3 1.4-.2 2.7.4 3.9-1.8-.9-2.8-2.3-3-2.8Z" fill="#fff" />
+    // Robinhood's feather (Simple Icons, from press.robinhood.com) on the
+    // brand's lime, #CCFF00.
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "block" }}>
+      <circle cx="12" cy="12" r="12" fill="#CCFF00" />
+      <g transform="translate(5.04 5.04) scale(0.58)">
+        <path
+          fill="#000"
+          d="M2.84 24h.53c.096 0 .192-.048.224-.128C7.591 13.696 11.94 8.656 14.67 5.638c.112-.128.064-.225-.096-.225h-4.88a.55.55 0 0 0-.45.225L5.746 9.972c-.514.642-.642 1.236-.642 2.086v4.43c-1.14 3.194-1.862 5.361-2.392 7.32-.032.125.016.192.129.192M20.447.646c-.754-.802-4.157-.834-5.73-.224a3 3 0 0 0-.786.465 41 41 0 0 0-3.323 3.178c-.112.113-.064.225.097.225h5.409c.497 0 .786.289.786.786v6.1c0 .16.128.208.225.064l3.258-4.254c.53-.69.69-.898.835-1.861.192-1.413.08-3.58-.77-4.479m-6.982 16.18 2.231-3.676a.7.7 0 0 0 .064-.29V6.73c0-.16-.112-.225-.224-.097-3.355 3.74-5.971 7.672-8.395 12.407-.06.12.016.225.16.177l5.009-1.54c.565-.174.882-.402 1.155-.852"
+        />
+      </g>
     </svg>
   ),
   usdc: (s = 12) => (

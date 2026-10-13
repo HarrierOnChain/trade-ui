@@ -154,6 +154,9 @@ export function TokenAvatarFrame({
           <span
             style={{
               position: "absolute",
+              // Above overlays drawn on the avatar (the monitor row's hide
+              // buttons dim and blur it on hover).
+              zIndex: 2,
               left: badgeInset,
               top: badgeInset,
               width: badgeSize,

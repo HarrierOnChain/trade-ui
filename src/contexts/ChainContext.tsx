@@ -22,7 +22,9 @@ import {
 } from "../lib/chains";
 
 export interface SetChainOpts {
-  /** Default true. A token URL passes false so the page keeps its state. */
+  /** Default true: everything below the provider mounts again for the new
+   *  chain (what a reload used to do). A token URL passes false so the page
+   *  keeps its state. */
   reload?: boolean;
 }
 
@@ -78,20 +80,31 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener(CHAIN_CHANGED_EVENT, onChanged);
   }, []);
 
+  /** Bumped on a chain switch: the key every component below is mounted under. */
+  const [generation, setGeneration] = useState(0);
+
   const setChain = useCallback((id: ChainId, opts?: SetChainOpts) => {
     if (id === chainId) return;
+    // A chain switch changes EVERY data surface (deploys, trending, holders,
+    // top traders, token info, OHLC, live prices, chain health, …), and many
+    // of those hooks key only off `mint`/mount, not the chain. Instead of
+    // reloading the page, the whole tree below is mounted again under a new
+    // key: every hook starts over against the new chain, as after a reload,
+    // with no page load, no re-parse and the lock untouched. Module-level
+    // caches follow CHAIN_CHANGED_EVENT (fired by writeStoredChain). Token
+    // URLs pass `reload: false`: they align the chain to themselves and keep
+    // their page.
+    const remount = opts?.reload !== false;
+    // A token page names its chain in the URL and would switch straight back:
+    // a switch from there lands on the monitor of the new chain.
+    if (remount && typeof window !== "undefined" && window.location.pathname.startsWith("/token/")) {
+      window.history.replaceState(null, "", "/monitor");
+    }
     setActiveChain(id);
     writeStoredChain(id);
-    // A chain switch changes EVERY data surface (deploys, trending, holders,
-    // top traders, token info, OHLC, live prices, chain health, …). Many of
-    // those hooks key only off `mint`/mount — not the chain — so an in-place
-    // state update left them showing the previous chain's data. Reload so the
-    // whole tree re-initialises against the now-persisted chain: the only way
-    // to guarantee nothing stays stale. Static chunks are cached, so this is a
-    // re-parse, not a re-download. Token URLs skip the reload so they can keep
-    // local state.
-    if (opts?.reload !== false && typeof window !== "undefined") {
-      window.location.reload();
+    if (remount) {
+      setChainIdState(id);
+      setGeneration((g) => g + 1);
       return;
     }
     startTransition(() => setChainIdState(id));
@@ -102,7 +115,11 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
     [chainId, setChain],
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={value}>
+      <React.Fragment key={generation}>{children}</React.Fragment>
+    </Ctx.Provider>
+  );
 }
 
 export function useChain() {

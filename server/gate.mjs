@@ -9,6 +9,8 @@
  *     which reaches Next.js with the gate's secret header (the route handlers
  *     check it; any copy sent by a client is dropped first).
  *   - `/api/ws`, `/api/solana/ws`: a session, then the proxies.
+ *   - `/launch-media/<id>.<ext>`: an image uploaded for a launch, served
+ *     without a session to the launch router that downloads it.
  *   - A lock ends every stream and socket a session opened, finished or not.
  */
 import { hostAllowed } from "./config.mjs";
@@ -47,9 +49,10 @@ function refuseHost(res) {
  *   api: (req: any, res: any, pathname: string) => Promise<boolean>,
  *   next: (req: any, res: any) => unknown,
  *   secret: string,
+ *   media?: ReturnType<typeof import("./launchMedia.mjs").createLaunchMedia>,
  * }} deps
  */
-export function createGate({ config, auth, api, next, secret }) {
+export function createGate({ config, auth, api, next, secret, media }) {
   /** Sockets and responses a session holds open, ended when the vault locks. */
   const live = new Set();
   const track = (...items) => {
@@ -71,6 +74,10 @@ export function createGate({ config, auth, api, next, secret }) {
     if (!hostAllowed(config, req.headers.host)) return refuseHost(res);
     if (hsts) res.setHeader("strict-transport-security", "max-age=31536000");
     delete req.headers[GATE_HEADER];
+
+    // A launch's uploaded token image, for the launch router to download:
+    // no session (Raze has none), only an unguessable id (server/launchMedia.mjs).
+    if (media && media.serve(req, res, pathname)) return;
 
     if (pathname.startsWith("/api/")) {
       if (!SAFE_METHODS.has(req.method || "GET") && (req.headers["x-trade-ui"] !== "1" || !originOk(req))) {

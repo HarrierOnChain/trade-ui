@@ -31,6 +31,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Token images are served from the API's /media: open the connection
+            while the page loads, not when the first icon asks for it. */}
+        <link rel="preconnect" href="https://api.raze.bot" />
+        <link rel="dns-prefetch" href="https://api.raze.bot" />
+      </head>
       <body suppressHydrationWarning>
         <Shell>{children}</Shell>
       </body>

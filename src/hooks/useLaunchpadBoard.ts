@@ -27,6 +27,16 @@ export interface BoardOptions {
   order: (a: TokenEvent, b: TokenEvent) => number;
   /** The column's filters: a row that fails them does not take a slot. */
   filters?: ColumnFilters;
+  /**
+   * A second board whose rows join this one when `admit` takes them (the
+   * Migrating column on EVM chains: the `new` board's curves already well on
+   * their way, below the API's 50%). A row on the main board always wins.
+   */
+  extra?: {
+    event: Extract<WsEventType, "deploy">;
+    fetch: (limit: number) => Promise<{ data: TokenEvent[] }>;
+    admit: (t: TokenEvent) => boolean;
+  } | null;
 }
 
 export function sameRow(a: TokenEvent, b: TokenEvent): boolean {
@@ -52,7 +62,7 @@ export function sameRow(a: TokenEvent, b: TokenEvent): boolean {
  * first decoration) lets a row in, and once measured a row that fails gives
  * its slot to the next one. Fields a frame does not carry survive it.
  */
-export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions) {
+export function useLaunchpadBoard({ event, fetch, order, filters, extra }: BoardOptions) {
   const { chainId } = useChain();
   const pageVisible = useClientPageVisible();
   const [tokens, setTokens] = useState<TokenEvent[]>([]);
@@ -61,6 +71,11 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
   const [enrichKey, setEnrichKey] = useState(0);
 
   const boardRef = useRef(new Map<string, TokenEvent>());
+  /** The `extra` board, whole; `render` admits its rows. */
+  const extraRef = useRef(new Map<string, TokenEvent>());
+  const extraOptsRef = useRef(extra);
+  extraOptsRef.current = extra;
+  const extraEvent = extra?.event ?? null;
   /** Last rendered version of each row, so a row that leaves the top MAX and
    *  comes back keeps what enrichment filled in. */
   const renderedRef = useRef(new Map<string, TokenEvent>());
@@ -79,7 +94,14 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
     const gate = f && isFiltering(f) ? f : null;
     setTokens((prev) => {
       for (const t of prev) renderedRef.current.set(t.mint_address, t);
-      const rows = [...boardRef.current.values()].map((t) => {
+      const admit = extraOptsRef.current?.admit;
+      const joined = [...boardRef.current.values()];
+      if (admit) {
+        for (const [mint, t] of extraRef.current) {
+          if (!boardRef.current.has(mint) && admit(t)) joined.push(t);
+        }
+      }
+      const rows = joined.map((t) => {
         const old = renderedRef.current.get(t.mint_address);
         return { t, old, view: old ? mergeLiveFrame(old, t) : t };
       });
@@ -95,7 +117,7 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
         return sameRow(old, view) ? old : view;
       });
       if (renderedRef.current.size > 500) {
-        const keep = new Set(boardRef.current.keys());
+        const keep = new Set([...boardRef.current.keys(), ...extraRef.current.keys()]);
         for (const k of renderedRef.current.keys()) if (!keep.has(k)) renderedRef.current.delete(k);
       }
       if (next.length === prev.length && next.every((t, i) => t === prev[i])) return prev;
@@ -148,6 +170,61 @@ export function useLaunchpadBoard({ event, fetch, order, filters }: BoardOptions
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId, pageVisible]);
+
+  // The extra board: primed once, then live, into its own map. Its rows reach
+  // the column only through `admit` (in render).
+  useEffect(() => {
+    extraRef.current = new Map();
+    const opts = extraOptsRef.current;
+    if (!pageVisible || !extraEvent || !opts) return;
+    let cancelled = false;
+    let snapshotSeen = false;
+    opts.fetch(PRIME_LIMIT)
+      .then((res) => {
+        if (cancelled || snapshotSeen) return;
+        for (const t of res.data) if (t.mint_address) extraRef.current.set(t.mint_address, t);
+        schedule();
+      })
+      .catch(() => { /* the main board still shows */ });
+
+    const ws = RazeWebSocket.getInstance();
+    ws.connect();
+    ws.subscribe([extraEvent]);
+    const off = ws.on(extraEvent, (msg) => {
+      if (msg.kind === "snapshot") {
+        if (msg.chain && msg.chain !== chainId) return;
+        const next = new Map<string, TokenEvent>();
+        for (const t of (Array.isArray(msg.rows) ? msg.rows : []) as TokenEvent[]) {
+          if (!t.mint_address) continue;
+          const had = extraRef.current.get(t.mint_address);
+          next.set(t.mint_address, had ? mergeLiveFrame(had, t) : t);
+        }
+        extraRef.current = next;
+        snapshotSeen = true;
+        schedule();
+        return;
+      }
+      const t = msg as unknown as TokenEvent & { kind?: string; type?: string; board?: string };
+      const mint = t.mint_address;
+      if (!mint || (t.chain && t.chain !== chainId)) return;
+      if (msg.kind === "remove") {
+        if (extraRef.current.delete(mint)) schedule();
+        return;
+      }
+      const { kind: _k, type: _t, board: _b, ...row } = t;
+      const had = extraRef.current.get(mint);
+      const merged = had ? mergeLiveFrame(had, row) : row;
+      extraRef.current.set(mint, merged);
+      // Only a row the column could show is worth a render.
+      if (boardRef.current.has(mint) || opts.admit(merged) || (had && opts.admit(had))) schedule();
+    });
+    return () => {
+      cancelled = true;
+      off();
+      ws.unsubscribe([extraEvent]);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extraEvent, chainId, pageVisible]);
 
   // Live board.
   useEffect(() => {
