@@ -9,6 +9,7 @@ import { fetchSearchWithMetadataFallback } from "../../api/search";
 import { MINT_RE } from "../../lib/swap/quote";
 import { shortAddr } from "../../lib/format";
 import { KNOWN_TOKENS, learnToken, type SwapToken } from "./tokens";
+import { useTokenImages } from "../../hooks/useTokenImages";
 
 export function TokenPicker({
   open,
@@ -70,6 +71,8 @@ export function TokenPicker({
   }, [q]);
 
   const list = (rows ?? KNOWN_TOKENS).filter((t) => t.mint !== exclude);
+  // Rows without an image (the curated list, a pasted mint): the API's logos.
+  const logo = useTokenImages("sol", list.filter((t) => !t.image).map((t) => t.mint));
 
   return (
     <Modal open={open} onClose={onClose} width={420}>
@@ -101,8 +104,9 @@ export function TokenPicker({
             key={t.mint}
             type="button"
             onClick={() => {
-              learnToken(t);
-              onPick(t);
+              const picked = t.image ? t : { ...t, image: logo(t.mint) };
+              learnToken(picked);
+              onPick(picked);
             }}
             style={{
               display: "flex", alignItems: "center", gap: 10,
@@ -113,7 +117,7 @@ export function TokenPicker({
             onMouseEnter={(e) => (e.currentTarget.style.background = "var(--ink-2)")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
           >
-            <TokenIcon token={{ mint_address: t.mint, symbol: t.symbol, image: t.image ?? undefined, chain: "sol" }} size={24} />
+            <TokenIcon token={{ mint_address: t.mint, symbol: t.symbol, image: t.image ?? logo(t.mint) ?? undefined, chain: "sol" }} size={24} />
             <span style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
               <span style={{ fontSize: 13, fontWeight: 600 }}>{t.symbol}</span>
               <span style={{ fontSize: 11, color: "var(--paper-3)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

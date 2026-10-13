@@ -34,6 +34,7 @@ import {
 import { useClientNav } from "../shell/ClientPages";
 import { TokenPicker } from "./TokenPicker";
 import { STABLES, tokenFor, type SwapToken } from "./tokens";
+import { useTokenImages } from "../../hooks/useTokenImages";
 
 const SLIPPAGE_PRESETS = [10, 50, 100]; // bps
 /** A quote older than this is not built: wait for the next one. */
@@ -124,6 +125,9 @@ function DRow({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function TokenButton({ token, onClick }: { token: SwapToken; onClick: () => void }) {
+  // The curated tokens carry no image: their logos come from the API's batch read.
+  const logo = useTokenImages("sol", [token.image ? null : token.mint]);
+  const image = token.image ?? logo(token.mint);
   return (
     <button
       type="button"
@@ -135,7 +139,7 @@ function TokenButton({ token, onClick }: { token: SwapToken; onClick: () => void
         color: "var(--paper)", fontSize: 13, fontWeight: 600, cursor: "pointer",
       }}
     >
-      <TokenIcon token={{ mint_address: token.mint, symbol: token.symbol, image: token.image ?? undefined, chain: "sol" }} size={22} />
+      <TokenIcon token={{ mint_address: token.mint, symbol: token.symbol, image: image ?? undefined, chain: "sol" }} size={22} />
       {token.symbol}
       <span aria-hidden style={{ color: "var(--paper-4)", fontSize: 10 }}>▾</span>
     </button>

@@ -18,6 +18,8 @@ import { toRaw, toUi } from "../../lib/swap/quote";
 import { useDocumentHidden } from "../../lib/swap/useSwapQuote";
 import { evmMintId, evmRouteLabel, evmRoutes, vault } from "../../lib/vault/client";
 import { useEvmDecimals, useEvmQuote } from "../../lib/evm/useEvmQuote";
+import { useTokenImages } from "../../hooks/useTokenImages";
+import { QuoteAssetIcon, TokenIcon } from "../atoms";
 
 const SLIPPAGE_PRESETS = [10, 50, 100]; // bps
 /** A preview quote older than this is not traded: a fresh one is asked. */
@@ -95,8 +97,16 @@ function TokenSelect({ chain, choice, address, onChoice, onAddress }: {
   onChoice: (v: string) => void;
   onAddress: (v: string) => void;
 }) {
+  const token = tokenOf(chain, choice, address);
+  const logo = useTokenImages(chain, [token]);
+  const image = logo(token);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+      {image || choice === CUSTOM ? (
+        <TokenIcon token={{ mint_address: token ?? address, symbol: labelOf(choice, address), image, chain }} size={22} />
+      ) : (
+        <QuoteAssetIcon label={choice} size={22} />
+      )}
       <select
         value={choice}
         onChange={(e) => onChoice(e.target.value)}
