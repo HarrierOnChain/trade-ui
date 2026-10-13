@@ -1,13 +1,14 @@
-export type ColumnType = "trending" | "deploy" | "migrating" | "migration" | "watchlist";
+/** The Trenches columns: a launch's life, always these three in this order.
+ *  (Trending and Watchlist columns are gone: the ranking is the Discover
+ *  page, starred tokens are in the ticker bar.) */
+export type ColumnType = "deploy" | "migrating" | "migration";
 
-export const COLUMN_TYPES: ColumnType[] = ["trending", "deploy", "migrating", "migration", "watchlist"];
+export const COLUMN_TYPES: ColumnType[] = ["deploy", "migrating", "migration"];
 
 export const COLUMN_LABEL: Record<ColumnType, string> = {
-  trending: "Trending",
   deploy: "New Deploys",
   migrating: "Migrating",
   migration: "Migrated",
-  watchlist: "Watchlist",
 };
 
 export interface SlotStyle {
@@ -47,7 +48,6 @@ export interface MonitorTemplate {
 }
 
 export const STORAGE_KEY = "monitor:template:v2";
-const LEGACY_KEY = "monitor:column-layout";
 
 export const DEFAULT_SLOT_STYLE: SlotStyle = {
   flex: 1,
@@ -71,20 +71,27 @@ export const DEFAULT_CONTAINER_STYLE: ContainerStyle = {
   background: "transparent",
 };
 
-const DEFAULT_TYPES: ColumnType[] = ["deploy", "migrating", "migration"];
-
 export function defaultTemplate(): MonitorTemplate {
   return {
     version: 1,
     name: "Default",
     container: { ...DEFAULT_CONTAINER_STYLE },
-    slots: DEFAULT_TYPES.map((t) => ({
-      id: makeId(),
-      type: t,
-      style: { ...DEFAULT_SLOT_STYLE },
-      card: { ...DEFAULT_CARD_STYLE },
-    })),
+    slots: launchColumns([]),
   };
+}
+
+/**
+ * The three columns in their order, each with the style a saved column of
+ * its type had (the first one, if a layout had several), else the default.
+ * Saved Trending or Watchlist columns are dropped.
+ */
+export function launchColumns(saved: Slot[]): Slot[] {
+  return COLUMN_TYPES.map((type) => {
+    const had = saved.find((s) => s.type === type);
+    return had
+      ? { ...had, type }
+      : { id: makeId(), type, style: { ...DEFAULT_SLOT_STYLE }, card: { ...DEFAULT_CARD_STYLE } };
+  });
 }
 
 export function makeId(): string {
@@ -160,12 +167,11 @@ export function sanitizeTemplate(raw: unknown): MonitorTemplate {
       card: sanitizeCardStyle(so.card),
     });
   }
-  if (slots.length === 0) return defaultTemplate();
   return {
     version: 1,
     name: typeof o.name === "string" ? o.name.slice(0, 60) : "Custom",
     container: sanitizeContainerStyle(o.container),
-    slots,
+    slots: launchColumns(slots),
   };
 }
 
@@ -174,28 +180,6 @@ export function loadTemplate(): MonitorTemplate {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return sanitizeTemplate(JSON.parse(raw));
-    const legacy = localStorage.getItem(LEGACY_KEY);
-    if (legacy) {
-      const parsed = JSON.parse(legacy);
-      if (Array.isArray(parsed)) {
-        const seen = new Set<ColumnType>();
-        const slots: Slot[] = [];
-        for (const t of parsed) {
-          if (isColumnType(t) && !seen.has(t)) {
-            slots.push({ id: makeId(), type: t, style: { ...DEFAULT_SLOT_STYLE }, card: { ...DEFAULT_CARD_STYLE } });
-            seen.add(t);
-          }
-        }
-        if (slots.length > 0) {
-          return {
-            version: 1,
-            name: "Default",
-            container: { ...DEFAULT_CONTAINER_STYLE },
-            slots,
-          };
-        }
-      }
-    }
   } catch {}
   return defaultTemplate();
 }

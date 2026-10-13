@@ -31,7 +31,7 @@ interface PageDef {
 }
 
 const CUSTOMIZE_PAGES: PageDef[] = [
-  { id: "monitor", label: "Monitor", template: "Default 3-column", description: "Live deploy, migration and mayhem feeds.", editPath: "/monitor?edit=1" },
+  { id: "monitor", label: "Trenches", template: "Default 3-column", description: "Live deploy, migration and mayhem feeds.", editPath: "/trenches?edit=1" },
 ];
 
 /* ───────────── modal ───────────── */

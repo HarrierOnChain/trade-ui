@@ -10,8 +10,10 @@ import { noteRows } from "../lib/columnSeen";
 import { useMetaEnrichment } from "./useMetaEnrichment";
 import type { TokenEvent } from "../types";
 
-/** Rows a column renders; the board itself holds more (the API's 100). */
-const MAX = 20;
+/** Rows a column renders at first, and how many more each scroll to the
+ *  bottom adds, up to the whole board (the API's 100). */
+export const COLUMN_PAGE = 20;
+export const COLUMN_CAP = 100;
 /** Coalesce a burst of board frames (the `new` board moves ~20×/s). */
 const FLUSH_MS = 150;
 /** The REST prime: `new` and `graduated` keep the latest 100 per chain. */
@@ -54,7 +56,8 @@ export function sameRow(a: TokenEvent, b: TokenEvent): boolean {
  * (new → graduating → graduated) or drops off the end. REST only primes the
  * board once, before the snapshot arrives — nothing here polls.
  *
- * The full board lives in a ref; the column renders the top `MAX` rows, in
+ * The full board lives in a ref; the column renders the top `limit` rows
+ * (`COLUMN_PAGE`, more as it scrolls, up to the board), in
  * `order`, that pass its filters, so a removed or filtered-out row is replaced
  * by the next one instead of leaving a hole. Rows carry the whole token row
  * (stats, pool, safety) as `/tokens` gives it; a value the API has not
@@ -76,7 +79,7 @@ export function useLaunchpadBoard({ event, fetch, order, filters, extra }: Board
   const extraOptsRef = useRef(extra);
   extraOptsRef.current = extra;
   const extraEvent = extra?.event ?? null;
-  /** Last rendered version of each row, so a row that leaves the top MAX and
+  /** Last rendered version of each row, so a row that leaves the shown rows and
    *  comes back keeps what enrichment filled in. */
   const renderedRef = useRef(new Map<string, TokenEvent>());
   const snapshotSeenRef = useRef(false);
@@ -87,6 +90,10 @@ export function useLaunchpadBoard({ event, fetch, order, filters, extra }: Board
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const filtersKey = JSON.stringify(filters ?? null);
+  /** Rows shown: a page at first, a page more per scroll to the bottom. */
+  const [limit, setLimit] = useState(COLUMN_PAGE);
+  const limitRef = useRef(limit);
+  limitRef.current = limit;
 
   const render = () => {
     flushRef.current = null;
@@ -109,7 +116,7 @@ export function useLaunchpadBoard({ event, fetch, order, filters, extra }: Board
         ? rows.filter((r) => passesFilters(r.view, gate, { optimistic: true }))
         : rows)
         .sort((a, b) => orderRef.current(a.view, b.view))
-        .slice(0, MAX);
+        .slice(0, limitRef.current);
       const next = wanted.map(({ t, old, view }) => {
         if (!old) return t;
         // A row the live feed just added keeps its entry flag until rendered.
@@ -145,6 +152,8 @@ export function useLaunchpadBoard({ event, fetch, order, filters, extra }: Board
     renderedRef.current = new Map();
     snapshotSeenRef.current = false;
     enrichMintsRef.current = "";
+    limitRef.current = COLUMN_PAGE;
+    setLimit(COLUMN_PAGE);
     setTokens([]);
     setError(null);
     if (!pageVisible) {
@@ -275,11 +284,18 @@ export function useLaunchpadBoard({ event, fetch, order, filters, extra }: Board
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event, chainId, pageVisible]);
 
-  // Re-pick the visible rows when the filters change (no refetch needed).
+  // Re-pick the visible rows when the filters or the page change (no refetch).
   useEffect(() => {
     schedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey]);
+  }, [filtersKey, limit]);
+
+  /** Show a page more of the board (the column scrolled to its bottom). */
+  const loadMore = useCallback(() => {
+    setLimit((l) => Math.min(COLUMN_CAP, l + COLUMN_PAGE));
+  }, []);
+  // A full page may have more behind it; a short one is the whole board.
+  const hasMore = tokens.length >= limit && limit < COLUMN_CAP;
 
   // New rows in view: their metadata (socials a board row may lack). Rendered
   // rows tell the filter modal what exists.
@@ -292,9 +308,9 @@ export function useLaunchpadBoard({ event, fetch, order, filters, extra }: Board
     if (tokens.some((t) => !before.has(t.mint_address))) setEnrichKey((k) => k + 1);
   }, [event, tokens]);
 
-  useMetaEnrichment(tokens, setEnriched, MAX, enrichKey);
+  useMetaEnrichment(tokens, setEnriched, limit, enrichKey);
 
-  return { tokens, loading: pageVisible ? loading : false, error };
+  return { tokens, loading: pageVisible ? loading : false, error, loadMore, hasMore };
 }
 
 const ms = (iso?: string) => (iso ? Date.parse(iso) || 0 : 0);

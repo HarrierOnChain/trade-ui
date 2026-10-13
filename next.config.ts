@@ -29,9 +29,13 @@ const nextConfig: NextConfig = {
     ];
     return config;
   },
-  // The Wallets page became part of the Portfolio on 2026-10-11.
+  // Pages that moved: Wallets into the Portfolio (2026-10-11), Monitor to Trenches.
   async redirects() {
-    return [{ source: "/wallets", destination: "/portfolio", permanent: false }];
+    return [
+      { source: "/wallets", destination: "/portfolio", permanent: false },
+      // The live columns became Trenches on 2026-10-13; Discover is the ranking.
+      { source: "/monitor", destination: "/trenches", permanent: false },
+    ];
   },
   async headers() {
     return [

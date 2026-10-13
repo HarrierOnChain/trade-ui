@@ -34,7 +34,8 @@ const SIDEBAR_PAGE_KEY = "spool.sidebar.page";
 type NavItem = { id: string; label: string; path: string; icon: React.ReactNode };
 
 const NAV: NavItem[] = [
-  { id: "monitor", label: "Monitor", path: "/monitor", icon: Icon.eyeLine(12) },
+  { id: "discover", label: "Discover", path: "/discover", icon: Icon.trend(12) },
+  { id: "monitor", label: "Trenches", path: "/trenches", icon: Icon.eyeLine(12) },
   { id: "portfolio", label: "Portfolio", path: "/portfolio", icon: Icon.portfolio(12) },
   { id: "swap", label: "Swap", path: "/swap", icon: Icon.swap(12) },
   { id: "bundler", label: "Bundler", path: "/bundler", icon: Icon.rocket(12) },
@@ -105,7 +106,7 @@ export function TopBar() {
           >
             <HamburgerIcon />
           </button>
-          <BrandMark ref={brandRef} size={40} ariaLabel="Go to Monitor" onClick={() => navigate("/monitor")} />
+          <BrandMark ref={brandRef} size={40} ariaLabel="Go to Trenches" onClick={() => navigate("/trenches")} />
           <div style={{ flex: 1, minWidth: 0 }} />
           <HeaderSearchButton onOpen={openSearch} />
           <ConnectedMenu />
@@ -164,7 +165,7 @@ export function TopBar() {
             ref={brandRef}
             size={48}
             ariaLabel="Go to Monitor"
-            onClick={() => navigate("/monitor")}
+            onClick={() => navigate("/trenches")}
           />
         </div>
         <ScrollableNav

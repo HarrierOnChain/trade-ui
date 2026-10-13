@@ -96,9 +96,9 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
     // their page.
     const remount = opts?.reload !== false;
     // A token page names its chain in the URL and would switch straight back:
-    // a switch from there lands on the monitor of the new chain.
+    // a switch from there lands on the new chain's Trenches.
     if (remount && typeof window !== "undefined" && window.location.pathname.startsWith("/token/")) {
-      window.history.replaceState(null, "", "/monitor");
+      window.history.replaceState(null, "", "/trenches");
     }
     setActiveChain(id);
     writeStoredChain(id);

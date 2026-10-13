@@ -28,7 +28,8 @@ export function KeyboardShortcuts() {
       if (e.key.toLowerCase() === "g" && !inField) {
         const next = (ev: KeyboardEvent) => {
           const k = ev.key.toLowerCase();
-          if (k === "m") navRef.current("/monitor");
+          if (k === "t" || k === "m") navRef.current("/trenches");
+          if (k === "d") navRef.current("/discover");
           if (k === "p") navRef.current("/portfolio");
           if (k === "w") navRef.current("/portfolio");
           if (k === "s") navRef.current("/swap");

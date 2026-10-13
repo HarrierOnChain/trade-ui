@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useState } from "react";
+import { useInfiniteScroll } from "../../hooks/useInfiniteScroll";
 import { useMigrationStream } from "../../hooks/useMigrationStream";
 import { useSelectedToken } from "../../contexts/SelectedTokenContext";
 import { useLiveTradePrices } from "../../hooks/useLiveTradePrices";
@@ -25,7 +26,9 @@ interface Props {
 export function MigrationColumn({ onSelect, maxHeight = "100%", titleSlot }: Props) {
   const { get } = useFilters();
   const f = get("migration");
-  const { tokens, loading, error } = useMigrationStream(f);
+  const { tokens, loading, error, loadMore, hasMore } = useMigrationStream(f);
+  // A page more of the board each time the list nears its bottom.
+  const { sentinelRef, rootRef } = useInfiniteScroll<HTMLDivElement, HTMLDivElement>(loadMore, hasMore);
   const { selectedMint } = useSelectedToken();
   const solPrice = useNativeUsd();
   const visibleMints = useMemo(
@@ -65,7 +68,7 @@ export function MigrationColumn({ onSelect, maxHeight = "100%", titleSlot }: Pro
           </>
         }
       />
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", maxHeight }} {...handlers}>
+      <div ref={rootRef} style={{ flex: 1, overflowY: "auto", overflowX: "hidden", maxHeight }} {...handlers}>
         {error && <Empty>{error}</Empty>}
         {loading && tokens.length === 0 && <LoadingRows />}
         {!loading && displayed.length === 0 && !error && (
@@ -85,6 +88,7 @@ export function MigrationColumn({ onSelect, maxHeight = "100%", titleSlot }: Pro
             showMigrated
           />
         ))}
+        <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
       </div>
     </Column>
   );

@@ -2,15 +2,12 @@
 import React, { useState } from "react";
 import {
   COLUMN_LABEL,
-  COLUMN_TYPES,
   DEFAULT_CARD_STYLE,
   DEFAULT_SLOT_STYLE,
   defaultTemplate,
   exportTemplate,
   importTemplate,
-  makeId,
   type CardStyle,
-  type ColumnType,
   type ContainerStyle,
   type MonitorTemplate,
   type Slot,
@@ -48,20 +45,6 @@ export function EditorToolbar({
   const [showIO, setShowIO] = useState<"import" | "export" | null>(null);
   const isPhone = useIsPhone();
 
-  const addColumn = () => {
-    const used = new Set(template.slots.map((s) => s.type));
-    const fresh = COLUMN_TYPES.find((t) => !used.has(t)) ?? "deploy";
-    setTemplate({
-      ...template,
-      slots: [...template.slots, {
-        id: makeId(),
-        type: fresh,
-        style: { ...DEFAULT_SLOT_STYLE },
-        card: { ...DEFAULT_CARD_STYLE },
-      }],
-    });
-  };
-
   const reset = () => setTemplate(defaultTemplate());
 
   const allSparkOn = template.slots.length > 0 && template.slots.every((s) => s.card.showSparkline);
@@ -88,9 +71,6 @@ export function EditorToolbar({
         flexShrink: 0,
       }}>
         {!isPhone && <div style={{ flex: 1 }} />}
-        <ToolbarBtn kind="accent" onClick={addColumn} label="Add column" compact={isPhone}>
-          {isPhone ? "+" : "+ Add column"}
-        </ToolbarBtn>
         <ToolbarBtn
           kind={allSparkOn ? "accent" : "ghost"}
           onClick={toggleSparklines}
@@ -247,55 +227,31 @@ function IOModal({
 }
 
 // ── Per-column overlay ─────────────────────────────────────────────────
+/** Edit mode over one column: click to pick it for the style panel. The
+ *  columns are fixed (New, Migrating, Migrated): no reorder, add or remove. */
 export function SlotOverlay({
   slot,
   selected,
-  canRemove,
   onSelect,
-  onRemove,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  isDropTarget,
 }: {
   slot: Slot;
   selected: boolean;
-  canRemove: boolean;
   onSelect: () => void;
-  onRemove: () => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDrop: (e: React.DragEvent) => void;
-  isDropTarget: boolean;
 }) {
   return (
     <div
       onClick={onSelect}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
       style={{
         position: "absolute", inset: 0,
         zIndex: 30,
         cursor: "pointer",
-        background: isDropTarget
-          ? "oklch(0.85 0.15 145 / 0.08)"
-          : selected
-            ? "oklch(0.85 0.15 145 / 0.04)"
-            : "transparent",
-        outline: selected
-          ? "2px solid var(--accent)"
-          : isDropTarget
-            ? "2px dashed var(--accent)"
-            : "1px dashed oklch(0.85 0.15 145 / 0.3)",
+        background: selected ? "oklch(0.85 0.15 145 / 0.04)" : "transparent",
+        outline: selected ? "2px solid var(--accent)" : "1px dashed oklch(0.85 0.15 145 / 0.3)",
         outlineOffset: -2,
         transition: "background 120ms ease, outline-color 120ms ease",
       }}
     >
       <div
-        draggable
-        onDragStart={onDragStart}
-        onClick={(e) => e.stopPropagation()}
-        title="Drag to reorder"
         style={{
           position: "absolute", top: 8, left: "50%",
           transform: "translateX(-50%)",
@@ -306,65 +262,16 @@ export function SlotOverlay({
           color: "var(--accent)",
           fontSize: 11,
           fontWeight: 700,
-          cursor: "grab",
-          display: "flex", alignItems: "center", gap: 6,
           userSelect: "none",
           boxShadow: "0 0 18px color-mix(in oklch, var(--accent) 40%, transparent), 0 6px 18px color-mix(in oklch, black 50%, transparent)",
-          transition: "background 120ms, box-shadow 120ms",
           zIndex: 5,
         }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "color-mix(in oklch, var(--accent) 30%, transparent)";
-          e.currentTarget.style.boxShadow = "0 0 22px color-mix(in oklch, var(--accent) 55%, transparent)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "color-mix(in oklch, var(--accent) 16%, transparent)";
-          e.currentTarget.style.boxShadow = "0 0 14px color-mix(in oklch, var(--accent) 35%, transparent)";
-        }}
       >
-        <DragDots />
         <span className="mono" style={{ letterSpacing: "0.08em" }}>
           {COLUMN_LABEL[slot.type]}
         </span>
       </div>
-      {canRemove && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-          title="Remove column"
-          style={{
-            position: "absolute", top: 6, right: 6,
-            width: 24, height: 24,
-            background: "color-mix(in oklch, var(--accent) 16%, transparent)",
-            border: "1px solid var(--accent)",
-            borderRadius: 999,
-            color: "var(--accent)",
-            cursor: "pointer",
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            fontSize: 15, lineHeight: 1, fontWeight: 700,
-            boxShadow: "0 0 14px color-mix(in oklch, var(--accent) 35%, transparent)",
-            transition: "background 120ms, box-shadow 120ms",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "color-mix(in oklch, var(--accent) 36%, transparent)";
-            e.currentTarget.style.boxShadow = "0 0 22px color-mix(in oklch, var(--accent) 60%, transparent)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "color-mix(in oklch, var(--accent) 16%, transparent)";
-            e.currentTarget.style.boxShadow = "0 0 14px color-mix(in oklch, var(--accent) 35%, transparent)";
-          }}
-        >×</button>
-      )}
     </div>
-  );
-}
-
-function DragDots() {
-  return (
-    <svg width="8" height="10" viewBox="0 0 8 10" fill="currentColor" aria-hidden>
-      <circle cx="2" cy="2" r="1" /><circle cx="6" cy="2" r="1" />
-      <circle cx="2" cy="5" r="1" /><circle cx="6" cy="5" r="1" />
-      <circle cx="2" cy="8" r="1" /><circle cx="6" cy="8" r="1" />
-    </svg>
   );
 }
 
@@ -396,19 +303,6 @@ export function StylePanel({
     setTemplate({
       ...template,
       slots: template.slots.map((s) => s.id === slot.id ? { ...s, card: { ...s.card, ...patch } } : s),
-    });
-  };
-
-  const updateSlotType = (type: ColumnType) => {
-    if (!slot) return;
-    const dup = template.slots.findIndex((s) => s.type === type && s.id !== slot.id);
-    setTemplate({
-      ...template,
-      slots: template.slots.map((s, i) => {
-        if (s.id === slot.id) return { ...s, type };
-        if (i === dup) return { ...s, type: slot.type };
-        return s;
-      }),
     });
   };
 
@@ -564,7 +458,6 @@ export function StylePanel({
         )}
         {slot && (
           <>
-            <FeedRow value={slot.type} onChange={updateSlotType} />
             <NumRow label="Flex weight" value={slot.style.flex} min={0.25} max={6} step={0.25}
               onChange={(v) => updateSlotStyle({ flex: v })} />
             <NumRow label="Padding X" value={slot.style.paddingX} min={0} max={48}
@@ -773,36 +666,5 @@ function SwatchRow({
         ))}
       </div>
     </div>
-  );
-}
-
-function FeedRow({
-  value, onChange,
-}: {
-  value: ColumnType;
-  onChange: (t: ColumnType) => void;
-}) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "var(--paper-3)" }}>
-      <span style={{ flex: 1 }}>Feed</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value as ColumnType)}
-        style={{
-          flex: 2,
-          background: "var(--ink-1)",
-          border: "1px solid var(--line-soft)",
-          color: "var(--paper)",
-          borderRadius: 4,
-          padding: "4px 6px",
-          fontSize: 11,
-          outline: "none",
-        }}
-      >
-        {COLUMN_TYPES.map((t) => (
-          <option key={t} value={t}>{COLUMN_LABEL[t]}</option>
-        ))}
-      </select>
-    </label>
   );
 }

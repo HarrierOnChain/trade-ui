@@ -292,6 +292,18 @@ export function trendingInterval(period: TrendingPeriod): string {
   }
 }
 
+/** Ranking windows of `/trending`, and what it can rank by. */
+export type RankInterval = "1m" | "5m" | "1h" | "6h" | "24h";
+export type RankSort = "trades" | "volume" | "marketCap" | "holders" | "priceChange" | "liquidity" | "age";
+
+/** `/trending` over one window, ranked by `sort` (the Discover page). */
+export async function fetchRanking(interval: RankInterval, sort: RankSort, limit = 100): Promise<TokenEvent[]> {
+  const c = chain();
+  const native = await nativeUsd(c).catch(() => 0);
+  const { data } = await get<unknown>("/trending", { chain: c, limit, interval, sort }, 5_000);
+  return rows(data).map((r) => apiTokenToEvent(r, native)).filter((t) => t.mint_address);
+}
+
 export const fetchTrending = async (period: TrendingPeriod = "daily", limit = 50): Promise<{ data: TokenEvent[] }> => {
   const c = chain();
   const native = await nativeUsd(c).catch(() => 0);

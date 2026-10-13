@@ -2,11 +2,11 @@
 
 /* ─────────────────────────────────────────────────────────────
    Token watchlist registry
-   A user-owned set of pinned token mints rendered by the
-   WatchlistColumn. Each entry stores a snapshot of the
-   TokenEvent at add-time so the row can render immediately
+   A user-owned set of pinned (starred) token mints, shown in
+   the ticker bar and the footer. Each entry stores a snapshot
+   of the TokenEvent at add-time so it renders immediately
    without re-fetching; live prices come in via the standard
-   useLiveTradePrices hook once the column mounts.
+   useLiveTradePrices hook.
 
    Mirrors `hiddenTokens.ts` for storage semantics — a single
    localStorage key, cross-tab sync via the `storage` event,
