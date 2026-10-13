@@ -44,7 +44,16 @@ jobs:
       - run: npm run build
       - run: npm run bundle
       - name: Package
-        run: npx electron-builder --publish never
+        shell: bash
+        # A secret that is not set still defines its variable, as "": on macOS
+        # electron-builder then takes CSC_LINK="" for the certificate's path
+        # (the working directory: "… not a file"). Unset the empty ones, so a
+        # build without signing secrets is an unsigned build on every OS.
+        run: |
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          npx electron-builder --publish never
         env:
           # Signing, when configured: macOS (CSC_LINK, CSC_KEY_PASSWORD,
           # APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID) and Windows
