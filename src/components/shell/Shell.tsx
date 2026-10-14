@@ -23,7 +23,7 @@ import { ThemeStudioModal } from "./ThemeStudioModal";
 import { NotificationsModal } from "./NotificationsModal";
 import { prefetchRoutes } from "../../lib/prefetchRoutes";
 import { ClientNavProvider, ClientPages } from "./ClientPages";
-import { PageLifecycleReload } from "./PageLifecycleReload";
+import { PageLifecycleRefresh } from "./PageLifecycleRefresh";
 
 export function Shell({ children }: { children: React.ReactNode }) {
   // Nothing below the gate mounts, fetches or opens a socket until this
@@ -37,7 +37,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <SelectedTokenProvider>
               <AppZoomProvider>
                 <UserWalletsProvider>
-                  <PageLifecycleReload />
+                  <PageLifecycleRefresh />
                   <PrefetchOnMount />
                   <ThemeAccentApplier />
                   <ThemeFontApplier />

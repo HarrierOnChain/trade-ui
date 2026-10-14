@@ -20,6 +20,7 @@ import {
   setActiveChain,
   writeStoredChain,
 } from "../lib/chains";
+import { SOFT_REFRESH_EVENT } from "../lib/softRefresh";
 
 export interface SetChainOpts {
   /** Default true: everything below the provider mounts again for the new
@@ -82,6 +83,13 @@ export function ChainProvider({ children }: { children: React.ReactNode }) {
 
   /** Bumped on a chain switch: the key every component below is mounted under. */
   const [generation, setGeneration] = useState(0);
+
+  // A soft refresh (src/lib/softRefresh.ts): the same remount, same chain.
+  useEffect(() => {
+    const onRefresh = () => setGeneration((g) => g + 1);
+    window.addEventListener(SOFT_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(SOFT_REFRESH_EVENT, onRefresh);
+  }, []);
 
   const setChain = useCallback((id: ChainId, opts?: SetChainOpts) => {
     if (id === chainId) return;

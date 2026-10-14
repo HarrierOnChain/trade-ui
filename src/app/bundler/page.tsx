@@ -23,6 +23,7 @@ import { shortAddr } from "../../lib/format";
 import { tokenHref } from "../../lib/tokenHref";
 import { costSizes, estimateLaunchCost, type LaunchCost } from "../../lib/launchCosts";
 import { useRent } from "../../hooks/useRent";
+import { holdSoftRefresh } from "../../lib/softRefresh";
 import {
   ApiError,
   auth,
@@ -455,6 +456,11 @@ export default function BundlerPage() {
     }
     return f;
   }
+
+  // A launch in progress keeps the app from refreshing under it on return:
+  // its progress lives here (src/lib/softRefresh.ts).
+  const launching = jobId != null && !job?.done;
+  useEffect(() => (launching ? holdSoftRefresh() : undefined), [launching]);
 
   // Follow the job until it is done.
   useEffect(() => {
