@@ -19,7 +19,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./server/config.mjs";
 import { Vault } from "./server/vault.mjs";
-import { Auth } from "./server/auth.mjs";
+import { Auth, trustProxies } from "./server/auth.mjs";
 import { createSolana } from "./server/solana.mjs";
 import { createQuotes } from "./server/quotes.mjs";
 import { createEvm } from "./server/evm.mjs";
@@ -38,6 +38,12 @@ try {
   process.exit(1);
 }
 process.env.NODE_ENV = config.dev ? "development" : "production";
+try {
+  trustProxies(config.trustedProxies);
+} catch (e) {
+  console.error(`[trade-ui] ${e instanceof Error ? e.message : e}`);
+  process.exit(1);
+}
 if (config.dev) silenceOkRequestLogs();
 
 // The Next.js route handlers run in this process and read these.

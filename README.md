@@ -128,6 +128,11 @@ The [unit](deploy/trade-ui.service) runs it as its own user, listening on
   answers `localhost` and IP addresses, and a domain only once it is told
   about it (protection against DNS rebinding); with an `https://` address it
   also marks its cookie `Secure` and sends HSTS.
+- A proxy in another container (a shared Caddy on a Docker network): set
+  `TRADE_UI_TRUSTED_PROXIES` to its network range, or every wrong password
+  counts against the proxy's address, yours included.
+  [deploy/docker-compose.shared.yml](deploy/docker-compose.shared.yml) runs
+  Trade UI on such a box, joining the proxy's network with no ports of its own.
 - Nginx instead of Caddy: pass `Host`, `X-Forwarded-Proto`, and the WebSocket
   upgrade (`proxy_http_version 1.1`, `Upgrade`, `Connection`).
 - Choose a long password: the server can be reached by anyone who finds it.
@@ -199,6 +204,7 @@ None of it reaches the browser.
 | `TRADE_UI_DATA_DIR` | `./data` | The vault's folder. |
 | `TRADE_UI_PUBLIC_URL` | — | The address you open it at, when it is a domain name (needed then). |
 | `TRADE_UI_ALLOWED_HOSTS` | — | More host names to answer for, comma-separated. |
+| `TRADE_UI_TRUSTED_PROXIES` | — | Addresses or CIDR ranges of a reverse proxy that is not on this machine's loopback (another container), comma-separated: its `X-Forwarded-For` names the client, for the password throttle. |
 | `TRADE_UI_SETUP_TOKEN` | random | A fixed first-run setup code (automation). |
 
 The EVM defaults: Ethereum and Robinhood `https://ethereum-rpc.publicnode.com`

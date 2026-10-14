@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { Auth, clientAddress, lockoutDelayMs, sessionCookie, SESSION_COOKIE } from "../server/auth.mjs";
+import { Auth, clientAddress, lockoutDelayMs, sessionCookie, SESSION_COOKIE, trustProxies } from "../server/auth.mjs";
 import { Vault } from "../server/vault.mjs";
 
 const KDF = { N: 1 << 10, r: 8, p: 1 };
@@ -100,6 +100,27 @@ describe("auth", () => {
     assert.equal(clientAddress(req("127.0.0.1", "6.6.6.6, 198.51.100.1")), "198.51.100.1");
     assert.equal(clientAddress(req("::1", "not-an-ip")), "::1");
     assert.equal(clientAddress(req("127.0.0.1")), "127.0.0.1");
+  });
+
+  test("TRADE_UI_TRUSTED_PROXIES: a proxy in another container is believed, nobody else", () => {
+    const req = (remote, xff) => ({ socket: { remoteAddress: remote }, headers: xff ? { "x-forwarded-for": xff } : {} });
+    trustProxies(["172.18.0.0/16", "fd00::1"]);
+    try {
+      // The Docker network's Caddy, as IPv4 and as an IPv4-mapped peer.
+      assert.equal(clientAddress(req("172.18.0.3", "203.0.113.9")), "203.0.113.9");
+      assert.equal(clientAddress(req("::ffff:172.18.0.3", "6.6.6.6, 198.51.100.4")), "198.51.100.4");
+      assert.equal(clientAddress(req("fd00::1", "2001:db8::7")), "2001:db8::7");
+      // Outside the ranges, a forwarded address is the client's own claim.
+      assert.equal(clientAddress(req("172.19.0.3", "203.0.113.9")), "172.19.0.3");
+      assert.equal(clientAddress(req("203.0.113.7", "1.2.3.4")), "203.0.113.7");
+      // Loopback still counts.
+      assert.equal(clientAddress(req("127.0.0.1", "198.51.100.1")), "198.51.100.1");
+    } finally {
+      trustProxies([]);
+    }
+    assert.equal(clientAddress(req("172.18.0.3", "203.0.113.9")), "172.18.0.3");
+    assert.throws(() => trustProxies(["caddy"]), /not an address/);
+    assert.throws(() => trustProxies(["172.18.0.0/33"]), /not an address/);
   });
 
   test("a session lives while the vault is unlocked; lock ends them all", async () => {

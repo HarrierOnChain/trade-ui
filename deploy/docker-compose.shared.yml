@@ -1,0 +1,48 @@
+# Trade UI on a box whose ports 80/443 belong to a shared Caddy container
+# (another project's compose, on the external network below): this joins
+# that network and publishes no ports of its own, so the only way in is
+# HTTPS through that Caddy, whose site block is:
+#
+#   your.domain {
+#   	reverse_proxy trade-ui-web:3000
+#   }
+#
+# .env next to the repo root needs RAZE_API_KEY, TRADE_UI_PUBLIC_URL (the
+# https address) and TRADE_UI_TRUSTED_PROXIES (the network's range, e.g.
+# 172.18.0.0/16: Caddy is not on loopback, and the password throttle needs
+# the client's address it forwards).
+#
+#   cd /opt/trade-ui && docker compose -f deploy/docker-compose.shared.yml up -d --build
+#   docker logs trade-ui-web    # the first-run link with the setup code
+#
+# The network's name is set by the project that owns Caddy; override it with
+# EDGE_NETWORK in the shell or a top-level .env.
+
+name: trade-ui
+
+services:
+  web:
+    build: ..
+    # The container name is the proxy's target: a service name can be shared
+    # with a neighbouring project on the same network, a container name cannot.
+    container_name: trade-ui-web
+    env_file: ../.env
+    environment:
+      HOST: 0.0.0.0
+      TRADE_UI_DATA_DIR: /data
+    restart: unless-stopped
+    volumes:
+      - trade-ui-data:/data
+    # The unlocked key lives in the server's memory: no core dumps of it.
+    ulimits:
+      core: 0
+    networks:
+      - edge
+
+volumes:
+  trade-ui-data:
+
+networks:
+  edge:
+    name: ${EDGE_NETWORK:-okei_default}
+    external: true
