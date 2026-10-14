@@ -54,14 +54,53 @@ function isLoopbackAddress(a) {
   return a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1";
 }
 
+/** Proxies besides loopback whose `X-Forwarded-For` is believed
+ *  (TRADE_UI_TRUSTED_PROXIES): a reverse proxy in another container. */
+let trustedProxies = null;
+
 /**
- * Who is asking, for the password throttle. Behind a reverse proxy on this
- * machine every connection comes from loopback: then the proxy's last
- * `X-Forwarded-For` entry, which a client cannot forge, is the address.
+ * Trust the `X-Forwarded-For` of connections from these addresses or CIDR
+ * ranges (IPv4 or IPv6), as loopback's is. Throws on an entry that is
+ * neither.
+ * @param {string[]} entries
+ */
+export function trustProxies(entries) {
+  if (!entries.length) {
+    trustedProxies = null;
+    return;
+  }
+  const list = new net.BlockList();
+  for (const e of entries) {
+    const [addr, bits] = e.split("/");
+    const family = net.isIPv6(addr) ? "ipv6" : net.isIPv4(addr) ? "ipv4" : null;
+    const max = family === "ipv6" ? 128 : 32;
+    if (!family || (bits != null && !(/^[0-9]{1,3}$/.test(bits) && Number(bits) <= max))) {
+      throw new Error(`TRADE_UI_TRUSTED_PROXIES: "${e}" is not an address or a CIDR range`);
+    }
+    if (bits == null) list.addAddress(addr, family);
+    else list.addSubnet(addr, Number(bits), family);
+  }
+  trustedProxies = list;
+}
+
+function isTrustedProxy(a) {
+  if (isLoopbackAddress(a)) return true;
+  if (!trustedProxies) return false;
+  // An IPv4 peer on a dual-stack socket reads as ::ffff:a.b.c.d.
+  const v4 = a.startsWith("::ffff:") ? a.slice(7) : a;
+  if (net.isIPv4(v4)) return trustedProxies.check(v4, "ipv4");
+  return net.isIPv6(a) && trustedProxies.check(a, "ipv6");
+}
+
+/**
+ * Who is asking, for the password throttle. Behind a reverse proxy every
+ * connection comes from the proxy (loopback on this machine, or an address
+ * in TRADE_UI_TRUSTED_PROXIES): then the proxy's last `X-Forwarded-For`
+ * entry, which a client cannot forge, is the address.
  */
 export function clientAddress(req) {
   const remote = String(req.socket?.remoteAddress || "");
-  if (isLoopbackAddress(remote)) {
+  if (isTrustedProxy(remote)) {
     const xff = String(req.headers["x-forwarded-for"] || "");
     const last = xff.split(",").map((s) => s.trim()).filter(Boolean).pop();
     if (last && net.isIP(last)) return last;
