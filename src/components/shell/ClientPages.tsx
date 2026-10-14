@@ -22,7 +22,8 @@ import { parseTokenPath } from "../../lib/tokenHref";
 import { TokenPageHost } from "./TokenPageHost";
 
 // ── lazy pages ──────────────────────────────────────────────────────────────
-const MonitorPage = lazy(() => import("../../app/monitor/page"));
+const MonitorPage = lazy(() => import("../../app/trenches/page"));
+const DiscoverPage = lazy(() => import("../../app/discover/page"));
 const PortfolioPage = lazy(() => import("../../app/portfolio/page"));
 const SwapPage = lazy(() => import("../../app/swap/page"));
 const BundlerPage = lazy(() => import("../../app/bundler/page"));
@@ -39,7 +40,9 @@ interface PageDef {
 }
 
 const PAGES: PageDef[] = [
-  { id: "monitor",    path: "/monitor",    title: "Monitor",    Component: MonitorPage },
+  { id: "discover",   path: "/discover",   title: "Discover",   Component: DiscoverPage },
+  // The live columns; the id stays "monitor" (saved layouts and settings key on it).
+  { id: "monitor",    path: "/trenches",   title: "Trenches",   Component: MonitorPage },
   { id: "portfolio",  path: "/portfolio",  title: "Portfolio",  Component: PortfolioPage },
   { id: "swap",       path: "/swap",       title: "Swap",       Component: SwapPage },
   { id: "bundler",    path: "/bundler",    title: "Bundler",    Component: BundlerPage },
@@ -98,7 +101,7 @@ export function useClientSearchParams(): URLSearchParams {
     const sync = () => setParams(new URLSearchParams(window.location.search));
     sync();
     // `navigate()` mutates the URL with pushState (which fires no popstate), so
-    // a query-only change on the SAME page — e.g. /monitor → /monitor?edit=1 —
+    // a query-only change on the SAME page — e.g. /trenches → /trenches?edit=1 —
     // leaves activePath unchanged and would otherwise never re-read. Listen for
     // the shell's own nav signal to catch those.
     window.addEventListener(SPOOL_NAV_EVENT, sync);

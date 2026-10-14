@@ -141,7 +141,16 @@ export function apiTokenToEvent(row: Rec, native: number): TokenEvent {
     const windows: Partial<Record<WindowKey, TokenWindow>> = {};
     for (const k of ["1m", "5m", "1h", "6h", "24h"] as const) {
       const w = asRecord(stats[k]);
-      if (w) windows[k] = { openPriceUsd: num(w.openPriceUsd), priceChangePercent: num(w.priceChangePercent) };
+      if (w) {
+        windows[k] = {
+          openPriceUsd: num(w.openPriceUsd),
+          priceChangePercent: num(w.priceChangePercent),
+          volumeUsd: num(w.volumeUsd),
+          buys: num(w.buys),
+          sells: num(w.sells),
+          trades: num(w.trades),
+        };
+      }
     }
     event.windows = windows;
   }

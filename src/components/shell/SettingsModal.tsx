@@ -309,7 +309,8 @@ const DEFAULT_STARTUP_ROUTE = "last";
 
 const STARTUP_OPTIONS: { value: string; label: string }[] = [
   { value: "last",        label: "Last visited" },
-  { value: "/monitor",    label: "Monitor" },
+  { value: "/discover",   label: "Discover" },
+  { value: "/trenches",   label: "Trenches" },
   { value: "/portfolio",  label: "Portfolio" },
   { value: "/swap",       label: "Swap" },
   { value: "/bundler",    label: "Bundler" },
