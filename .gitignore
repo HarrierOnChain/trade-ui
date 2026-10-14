@@ -18,3 +18,5 @@ yarn-error.log*
 # Trade UI
 /data/
 /release/
+# Per-instance env files of a shared-box deploy (deploy/docker-compose.shared.yml): keys.
+/instances/

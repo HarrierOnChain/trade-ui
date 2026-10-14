@@ -15,18 +15,31 @@
 #   cd /opt/trade-ui && docker compose -f deploy/docker-compose.shared.yml up -d --build
 #   docker logs trade-ui-web    # the first-run link with the setup code
 #
+# More than one Trade UI on the box: each one a vault of its own, for one
+# person, at its own address. Same checkout and image; its own project (-p,
+# which names its volume), container, env file and Caddy block:
+#
+#   TRADE_UI_CONTAINER=trade-ui-alice TRADE_UI_ENV_FILE=../instances/alice.env \
+#     docker compose -p trade-ui-alice -f deploy/docker-compose.shared.yml up -d --no-build
+#
+#   alice.your.domain {
+#   	reverse_proxy trade-ui-alice:3000
+#   }
+#
 # The network's name is set by the project that owns Caddy; override it with
-# EDGE_NETWORK in the shell or a top-level .env.
+# EDGE_NETWORK.
 
 name: trade-ui
 
 services:
   web:
     build: ..
+    # One image for every instance on the box: built once, by the first.
+    image: trade-ui-web:latest
     # The container name is the proxy's target: a service name can be shared
     # with a neighbouring project on the same network, a container name cannot.
-    container_name: trade-ui-web
-    env_file: ../.env
+    container_name: ${TRADE_UI_CONTAINER:-trade-ui-web}
+    env_file: ${TRADE_UI_ENV_FILE:-../.env}
     environment:
       HOST: 0.0.0.0
       TRADE_UI_DATA_DIR: /data
@@ -40,6 +53,7 @@ services:
       - edge
 
 volumes:
+  # Prefixed with the project's name: each instance has its own vault.
   trade-ui-data:
 
 networks:
