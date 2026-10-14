@@ -8,7 +8,7 @@
     "dev": "node server.mjs --dev",
     "build": "next build",
     "start": "node server.mjs",
-    "test": "node --test \"test/*.test.mjs\" src/lib/trades.test.ts src/lib/swap/swap.test.ts src/lib/vault/keyText.test.ts src/lib/evm/plan.test.ts src/lib/tokenFilters.test.ts",
+    "test": "node --test \"test/*.test.mjs\" src/lib/trades.test.ts src/lib/swap/swap.test.ts src/lib/vault/keyText.test.ts src/lib/evm/plan.test.ts src/lib/tokenFilters.test.ts src/lib/launchCosts.test.ts",
     "typecheck": "tsc --noEmit",
     "bundle": "node scripts/bundle-server.mjs",
     "electron": "electron .",
