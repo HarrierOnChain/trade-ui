@@ -16,11 +16,13 @@ import { usePageTitle } from "../../hooks/usePageTitle";
 import { useChain } from "../../contexts/ChainContext";
 import { useApp } from "../../contexts/AppContext";
 import { useUserWallets, type UserWallet } from "../../hooks/useUserWallets";
-import { Btn, Icon, Modal, ModalHeader } from "../../components/atoms";
+import { Btn, Icon, Modal, ModalHeader, Tooltip } from "../../components/atoms";
 import { useClientNav } from "../../components/shell/ClientPages";
 import { CHAINS, explorerAccountUrl, explorerTxUrl, type ChainId } from "../../lib/chains";
 import { shortAddr } from "../../lib/format";
 import { tokenHref } from "../../lib/tokenHref";
+import { costSizes, estimateLaunchCost, type LaunchCost } from "../../lib/launchCosts";
+import { useRent } from "../../hooks/useRent";
 import {
   ApiError,
   auth,
@@ -34,10 +36,6 @@ import {
 
 const MAX_WALLETS = 50;
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-/** Rough network cost per Solana wallet beyond its buy (fees, token account rent). */
-const SOL_OVERHEAD = 0.005;
-/** The creator also pays the create (mint, curve and metadata rent). */
-const SOL_CREATE_OVERHEAD = 0.03;
 const DRAFT_KEY = "bundler.draft.v1";
 const NO_UPLOAD_NOTE =
   "Uploading works when Trade UI runs on a public address (TRADE_UI_PUBLIC_URL): Raze's server downloads "
@@ -335,12 +333,27 @@ export default function BundlerPage() {
   const badAmount = devBuy === null || picked.some((w) => amountOf(w) === null);
   const total = (devBuy ?? 0) + picked.reduce((s, w) => s + (amountOf(w) ?? 0), 0);
 
-  /** A wallet whose native balance looks short of its buy and fees. */
+  // What the launch costs besides the buys: rent of the accounts it creates
+  // (read from the RPC) and the fees at the chosen priority.
+  const { rent, live: rentLive } = useRent(isEvm ? [] : costSizes(draft.platform, draft.bonkType));
+  const buyingBundle = picked.filter((w) => (amountOf(w) ?? 0) > 0).length;
+  const cost: LaunchCost | null = isEvm ? null : estimateLaunchCost({
+    platform: draft.platform,
+    bonkType: draft.platform === "raydium" ? draft.bonkType : undefined,
+    rent,
+    cuPrice: PRIORITY.find((p) => p.id === draft.priority)?.value,
+    creatorBuys: (devBuy ?? 0) > 0,
+    buyers: buyingBundle,
+  });
+
+  /** A wallet whose native balance looks short of its buy and its costs
+   *  (in a stablecoin quote the buy is not SOL, the costs still are). */
   const short = (w: UserWallet, buy: number, isCreator: boolean): boolean => {
     const b = balances[w.id];
-    if (!b || b.loading || !nativeQuote) return false;
-    const need = buy + (isEvm ? 0.0007 : SOL_OVERHEAD + (isCreator ? SOL_CREATE_OVERHEAD : 0));
-    return b.sol < need;
+    if (!b || b.loading) return false;
+    if (isEvm) return nativeQuote && b.sol < buy + 0.0007;
+    const costs = isCreator ? cost!.creatorSol : cost!.perBuyerSol;
+    return b.sol < (nativeQuote ? buy : 0) + costs;
   };
 
   const tooMany = picked.length + 1 > MAX_WALLETS;
@@ -771,8 +784,12 @@ export default function BundlerPage() {
           <Section title="Summary">
             <SRow label="Wallets">{1 + (isEvm ? 0 : picked.length)} buying{isEvm && picked.length ? ` · ${picked.length} exempt` : ""}</SRow>
             <SRow label="Total buys">{badAmount ? "—" : `${fmtAmt(total)} ${quoteLabel}`}</SRow>
-            {!isEvm && nativeQuote && (
-              <SRow label="Plus network costs">≈ {fmtAmt(SOL_CREATE_OVERHEAD + SOL_OVERHEAD * (1 + picked.length), 3)} SOL</SRow>
+            {cost && (
+              <SRow label="Plus network costs">
+                <Tooltip content={<CostBreakdown cost={cost} live={rentLive} />} placement="top" maxWidth={340}>
+                  <span style={{ cursor: "help", borderBottom: "1px dotted var(--paper-4)" }}>≈ {fmtAmt(cost.totalSol, 4)} SOL</span>
+                </Tooltip>
+              </SRow>
             )}
             <SRow label="Transactions">{isEvm ? "1–2 (approve, launch)" : `${1 + picked.filter((w) => (amountOf(w) ?? 0) > 0).length}`}</SRow>
             {tooMany && <Warn>At most {MAX_WALLETS} wallets, the creator included.</Warn>}
@@ -1110,5 +1127,38 @@ function ConfirmModal({ open, summary, onClose, onConfirm }: {
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** The cost estimate, line by line: what the creator pays besides its buy,
+ *  what each bundle wallet does, and where the rent came from. */
+function CostBreakdown({ cost, live }: { cost: LaunchCost; live: boolean }) {
+  const line = (l: { label: string; sol: number }, i: number) => (
+    <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <span style={{ color: "var(--paper-3)" }}>{l.label}</span>
+      <span className="mono" style={{ whiteSpace: "nowrap" }}>{fmtAmt(l.sol, 5)}</span>
+    </div>
+  );
+  const head = (text: string, sol: number) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: 700, color: "var(--paper)", marginTop: 6 }}>
+      <span>{text}</span>
+      <span className="mono">{fmtAmt(sol, 5)} SOL</span>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11, padding: "2px 0" }}>
+      {head("Creator", cost.creatorSol)}
+      {cost.creator.map(line)}
+      {cost.buyers > 0 && (
+        <>
+          {head(`Each bundle wallet × ${cost.buyers}`, cost.perBuyerSol)}
+          {cost.perBuyer.map(line)}
+        </>
+      )}
+      <div style={{ color: "var(--paper-4)", marginTop: 6, lineHeight: 1.45 }}>
+        {live ? "Rent read from your RPC." : "Rent at the rate measured on mainnet (the RPC did not answer)."}{" "}
+        A wallet that already holds the token account, or traded on Pump.fun before, pays less.
+      </div>
+    </div>
   );
 }

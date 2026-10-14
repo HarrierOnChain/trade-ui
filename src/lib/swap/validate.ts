@@ -5,13 +5,15 @@
  */
 
 /** JSON-RPC methods `/api/solana/rpc` forwards: the confirmation fallback and
- *  the reads a trade needs (exact token balances, decimals). Sending is the
- *  server's own job (server/solana.mjs). */
+ *  the reads a trade needs (exact token balances, decimals), and the rent of
+ *  an account size (the Bundler's cost estimate). Sending is the server's own
+ *  job (server/solana.mjs). */
 export const RPC_METHODS = new Set([
   "getSignatureStatuses",
   "getBalance",
   "getTokenAccountsByOwner",
   "getAccountInfo",
+  "getMinimumBalanceForRentExemption",
 ]);
 
 /** A single JSON-RPC request whose method is whitelisted. */

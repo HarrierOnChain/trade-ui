@@ -41,6 +41,7 @@
     "src/lib/swap/swap.test.ts",
     "src/lib/vault/keyText.test.ts",
     "src/lib/evm/plan.test.ts",
-    "src/lib/tokenFilters.test.ts"
+    "src/lib/tokenFilters.test.ts",
+    "src/lib/launchCosts.test.ts"
   ]
 }
