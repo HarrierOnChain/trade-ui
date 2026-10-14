@@ -104,6 +104,13 @@ export function loadConfig({ root, argv = process.argv, env = process.env }) {
     }
   }
 
+  // A reverse proxy that is not on loopback (another container): its
+  // X-Forwarded-For names the client. Checked by server/auth.mjs.
+  const trustedProxies = String(env.TRADE_UI_TRUSTED_PROXIES || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const priorityMax = Number(env.SWAP_PRIORITY_MAX_LAMPORTS || 500_000);
   const slipCap = Number(env.SWAP_MAX_SLIPPAGE_BPS || 5000);
 
@@ -125,6 +132,7 @@ export function loadConfig({ root, argv = process.argv, env = process.env }) {
     dataDir: path.resolve(root, String(env.TRADE_UI_DATA_DIR || "").trim() || "data"),
     publicUrl,
     allowedHosts,
+    trustedProxies,
     loopbackOnly: isLoopback(host),
     setupToken: String(env.TRADE_UI_SETUP_TOKEN || "").trim() || crypto.randomBytes(12).toString("base64url"),
     desktop: env.TRADE_UI_DESKTOP === "1",
