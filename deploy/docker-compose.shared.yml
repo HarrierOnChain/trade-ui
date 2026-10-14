@@ -1,0 +1,62 @@
+# Trade UI on a box whose ports 80/443 belong to a shared Caddy container
+# (another project's compose, on the external network below): this joins
+# that network and publishes no ports of its own, so the only way in is
+# HTTPS through that Caddy, whose site block is:
+#
+#   your.domain {
+#   	reverse_proxy trade-ui-web:3000
+#   }
+#
+# .env next to the repo root needs RAZE_API_KEY, TRADE_UI_PUBLIC_URL (the
+# https address) and TRADE_UI_TRUSTED_PROXIES (the network's range, e.g.
+# 172.18.0.0/16: Caddy is not on loopback, and the password throttle needs
+# the client's address it forwards).
+#
+#   cd /opt/trade-ui && docker compose -f deploy/docker-compose.shared.yml up -d --build
+#   docker logs trade-ui-web    # the first-run link with the setup code
+#
+# More than one Trade UI on the box: each one a vault of its own, for one
+# person, at its own address. Same checkout and image; its own project (-p,
+# which names its volume), container, env file and Caddy block:
+#
+#   TRADE_UI_CONTAINER=trade-ui-alice TRADE_UI_ENV_FILE=../instances/alice.env \
+#     docker compose -p trade-ui-alice -f deploy/docker-compose.shared.yml up -d --no-build
+#
+#   alice.your.domain {
+#   	reverse_proxy trade-ui-alice:3000
+#   }
+#
+# The network's name is set by the project that owns Caddy; override it with
+# EDGE_NETWORK.
+
+name: trade-ui
+
+services:
+  web:
+    build: ..
+    # One image for every instance on the box: built once, by the first.
+    image: trade-ui-web:latest
+    # The container name is the proxy's target: a service name can be shared
+    # with a neighbouring project on the same network, a container name cannot.
+    container_name: ${TRADE_UI_CONTAINER:-trade-ui-web}
+    env_file: ${TRADE_UI_ENV_FILE:-../.env}
+    environment:
+      HOST: 0.0.0.0
+      TRADE_UI_DATA_DIR: /data
+    restart: unless-stopped
+    volumes:
+      - trade-ui-data:/data
+    # The unlocked key lives in the server's memory: no core dumps of it.
+    ulimits:
+      core: 0
+    networks:
+      - edge
+
+volumes:
+  # Prefixed with the project's name: each instance has its own vault.
+  trade-ui-data:
+
+networks:
+  edge:
+    name: ${EDGE_NETWORK:-okei_default}
+    external: true
