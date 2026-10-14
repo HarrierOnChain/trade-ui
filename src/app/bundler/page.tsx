@@ -935,6 +935,28 @@ function LogoPicker({ image, canUpload, onUploaded, onError, onUnavailable }: {
   );
 }
 
+/** Copy `text`; the button says so for a moment. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1400);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      aria-label={copied ? "Copied" : "Copy the mint address"}
+      style={{ ...chip, padding: "2px 8px", color: copied ? "var(--buy)" : chip.color }}
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => setCopied(true), () => {});
+      }}
+    >
+      {copied ? "✓ Copied" : "Copy"}
+    </button>
+  );
+}
+
 function SRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0" }}>
@@ -1009,7 +1031,7 @@ function Progress({ job, chainId, wallets }: { job: LaunchJob; chainId: ChainId;
           <a href={explorerAccountUrl(job.mint, chainId)} target="_blank" rel="noreferrer" style={{ ...mono, fontSize: 12, color: "var(--paper)" }}>
             {shortAddr(job.mint, 6)}
           </a>
-          <button type="button" style={{ ...chip, padding: "2px 8px" }} onClick={() => void navigator.clipboard?.writeText(job.mint!)}>Copy</button>
+          <CopyButton text={job.mint} />
           {finished && job.stage !== "failed" && (
             <Btn tone="primary" size="xs" onClick={() => navigate(tokenHref(job.mint!, chainId))}>Open token page</Btn>
           )}
