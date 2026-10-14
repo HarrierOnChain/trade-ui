@@ -7,6 +7,7 @@ import { getActiveChain } from "../../lib/chains";
 import { useUserWallets, type UserWallet } from "../../hooks/useUserWallets";
 import { WalletAvatar } from "../WalletAvatar";
 import { useClientNav } from "../shell/ClientPages";
+import { useApp } from "../../contexts/AppContext";
 
 interface Props {
   anchorRef: React.RefObject<HTMLElement | null>;
@@ -226,13 +227,24 @@ function WalletRow({
   const baseBg = active ? "rgba(242,200,107,0.05)" : "transparent";
   const hoverBg = active ? "rgba(242,200,107,0.09)" : "var(--ink-2)";
 
+  const { pushToast } = useApp();
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copiedTimer.current) clearTimeout(copiedTimer.current); }, []);
+
   async function copy(e: React.MouseEvent) {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(wallet.pubkey);
     } catch {
-      /* ignore */
+      pushToast({ title: "COULD NOT COPY", body: "The browser refused the clipboard", tone: "error" });
+      return;
     }
+    // Said where the click was, and in the toast rail.
+    setCopied(true);
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    copiedTimer.current = setTimeout(() => setCopied(false), 1400);
+    pushToast({ title: "ADDRESS COPIED", body: `${wallet.displayLabel} · ${shortAddr(wallet.pubkey, 6)}`, tone: "success", duration: 2200 });
   }
 
   return (
@@ -300,6 +312,8 @@ function WalletRow({
           role="button"
           tabIndex={-1}
           onClick={copy}
+          aria-label={copied ? "Address copied" : `Copy ${wallet.pubkey}`}
+          title={copied ? "Copied" : "Copy address"}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -307,20 +321,20 @@ function WalletRow({
             cursor: "pointer",
             fontFamily: "var(--font-mono)",
             fontSize: 9,
-            color: "var(--paper-4)",
+            color: copied ? "var(--buy)" : "var(--paper-4)",
             transition: "color 100ms",
             lineHeight: 1,
           }}
-          onMouseEnter={(e) =>
-            (e.currentTarget.style.color = "var(--paper-2)")
-          }
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.color = "var(--paper-4)")
-          }
+          onMouseEnter={(e) => {
+            if (!copied) e.currentTarget.style.color = "var(--paper-2)";
+          }}
+          onMouseLeave={(e) => {
+            if (!copied) e.currentTarget.style.color = "var(--paper-4)";
+          }}
         >
-          {shortAddr(wallet.pubkey, 5)}
+          {copied ? "Copied" : shortAddr(wallet.pubkey, 5)}
           <span style={{ display: "inline-flex", lineHeight: 0, marginLeft: 1 }}>
-            {Icon.copy(7)}
+            {copied ? Icon.check(8) : Icon.copy(7)}
           </span>
         </span>
       </div>

@@ -319,7 +319,7 @@ export default function PortfolioPage() {
   const actions = useMemo<WalletActions>(() => ({
     onCopy: (address) => {
       navigator.clipboard.writeText(address)
-        .then(() => pushToast({ title: "COPIED", body: shortAddr(address, 6), tone: "buy" }))
+        .then(() => pushToast({ title: "ADDRESS COPIED", body: shortAddr(address, 6), tone: "success", duration: 2200 }))
         .catch(() => {});
     },
     onSend: setSendW,
